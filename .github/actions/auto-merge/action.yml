@@ -1,0 +1,136 @@
+# ============================================================================
+# 🤖 Auto-Merge Action
+# ============================================================================
+# Reusable composite action for automatically merging approved PRs.
+# Uses pascalgn/automerge-action for reliable auto-merge functionality.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/auto-merge@master
+#     with:
+#       github-token: ${{ secrets.GITHUB_TOKEN }}
+# ============================================================================
+
+name: "🤖 Auto-Merge"
+description: "Automatically merge approved PRs with required labels"
+
+inputs:
+  github-token:
+    description: "GitHub token for merging"
+    required: true
+  merge-labels:
+    description: "Labels that trigger merge (comma-separated)"
+    required: false
+    default: "automerge"
+  blocking-labels:
+    description: "Labels that block merge (comma-separated)"
+    required: false
+    default: "wip,do-not-merge"
+  merge-method:
+    description: "Merge method (merge, squash, rebase)"
+    required: false
+    default: "squash"
+  delete-branch:
+    description: "Delete branch after merge"
+    required: false
+    default: "true"
+  required-approvals:
+    description: "Number of required approvals"
+    required: false
+    default: "1"
+  update-method:
+    description: "Method to keep PR up to date with base"
+    required: false
+    default: "merge"
+
+outputs:
+  merged:
+    description: "Whether the PR was merged"
+    value: ${{ steps.automerge.outputs.mergeResult == 'merged' }}
+  result:
+    description: "Merge result status"
+    value: ${{ steps.automerge.outputs.mergeResult }}
+  pr-number:
+    description: "PR number that was processed"
+    value: ${{ steps.automerge.outputs.pullRequestNumber }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🏷️ Format blocking labels
+      id: format-labels
+      shell: bash
+      run: |
+        # Transform "wip,do-not-merge,needs-review" into "!wip,!do-not-merge,!needs-review"
+        BLOCKING="${{ inputs.blocking-labels }}"
+        if [[ -n "$BLOCKING" ]]; then
+          FORMATTED=$(echo "$BLOCKING" | sed 's/,/,!/g' | sed 's/^/!/')
+        else
+          FORMATTED=""
+        fi
+        echo "blocking-labels=$FORMATTED" >> $GITHUB_OUTPUT
+        echo "blocking-labels=$FORMATTED"
+        echo "merge-labels=${{ inputs.merge-method }}"
+
+    - name: 🤖 Run automerge
+      id: automerge
+      uses: pascalgn/automerge-action@v0.16.4
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Merge configuration
+        MERGE_LABELS: "${{ inputs.merge-labels }},${{ steps.format-labels.outputs.blocking-labels }}"
+        MERGE_METHOD: ${{ inputs.merge-method }}
+        MERGE_COMMIT_MESSAGE: "pull-request-title-and-description"
+        MERGE_DELETE_BRANCH: ${{ inputs.delete-branch }}
+        MERGE_RETRIES: "6"
+        MERGE_RETRY_SLEEP: "10000"
+        MERGE_REQUIRED_APPROVALS: ${{ inputs.required-approvals }}
+        MERGE_ERROR_FAIL: "false"
+        # Update configuration
+        UPDATE_LABELS: ${{ inputs.merge-labels }}
+        UPDATE_METHOD: ${{ inputs.update-method }}
+
+    - name: 📝 Generate summary
+      if: always()
+      shell: bash
+      run: |
+        RESULT="${{ steps.automerge.outputs.mergeResult }}"
+        PR_NUMBER="${{ steps.automerge.outputs.pullRequestNumber }}"
+
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🤖 Auto-Merge Summary
+
+        | Property | Value |
+        |:---------|:------|
+        | 📌 Result | \`${RESULT:-N/A}\` |
+        | 🔢 PR Number | ${PR_NUMBER:-N/A} |
+
+        ---
+
+        EOF
+
+        case "$RESULT" in
+          "merged")
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!TIP]
+        > ### ✅ Pull Request Merged
+        > The pull request was successfully merged.
+
+        EOF
+            ;;
+          "not_ready")
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!NOTE]
+        > ### ⏳ Not Ready Yet
+        > Waiting for approvals or status checks.
+
+        EOF
+            ;;
+          *)
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!NOTE]
+        > ### ℹ️ No Action Taken
+        > No merge action was performed.
+
+        EOF
+            ;;
+        esac

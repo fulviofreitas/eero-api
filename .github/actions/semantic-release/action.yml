@@ -1,0 +1,149 @@
+# ============================================================================
+# 🚀 Semantic Release Action
+# ============================================================================
+# Reusable composite action for automated semantic versioning and releases.
+# Generates changelogs, bumps versions, and creates GitHub releases.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/semantic-release@master
+#     with:
+#       github-token: ${{ secrets.GITHUB_TOKEN }}
+# ============================================================================
+
+name: "🚀 Semantic Release"
+description: "Run semantic-release for automated versioning"
+
+inputs:
+  github-token:
+    description: "GitHub token for creating releases"
+    required: true
+  node-version:
+    description: "Node.js version"
+    required: false
+    default: "20"
+  dry-run:
+    description: "Run in dry-run mode"
+    required: false
+    default: "false"
+  extra-plugins:
+    description: "Additional semantic-release plugins (comma-separated)"
+    required: false
+    default: ""
+
+outputs:
+  released:
+    description: "Whether a release was created"
+    value: ${{ steps.check-release.outputs.released }}
+  version:
+    description: "Released version (if any)"
+    value: ${{ steps.check-release.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 📦 Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: 🔧 Install semantic-release
+      shell: bash
+      run: |
+        npm install -g \
+          semantic-release@24 \
+          @semantic-release/changelog@6 \
+          @semantic-release/git@10 \
+          @semantic-release/exec@6 \
+          conventional-changelog-conventionalcommits@8
+        
+        # Install extra plugins if specified
+        if [ -n "${{ inputs.extra-plugins }}" ]; then
+          echo "Installing extra plugins: ${{ inputs.extra-plugins }}"
+          npm install -g $(echo "${{ inputs.extra-plugins }}" | tr ',' ' ')
+        fi
+
+    - name: 🚀 Run semantic-release
+      id: release
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          echo "🧪 Running in dry-run mode..."
+          semantic-release --dry-run
+        else
+          semantic-release
+        fi
+
+    - name: 🔍 Check if release was created
+      id: check-release
+      shell: bash
+      run: |
+        if [ -f VERSION ]; then
+          VERSION=$(cat VERSION)
+          echo "released=true" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "✅ Release v${VERSION} was created"
+        else
+          echo "released=false" >> $GITHUB_OUTPUT
+          echo "version=" >> $GITHUB_OUTPUT
+          echo "📭 No release created"
+        fi
+
+    - name: 📝 Generate release summary
+      if: always()
+      shell: bash
+      run: |
+        DRY_RUN="${{ inputs.dry-run }}"
+        
+        cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        ## 🚀 Release Summary
+        
+        EOF
+        
+        if [ "$DRY_RUN" = "true" ]; then
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!NOTE]
+        > ### 🧪 Dry-Run Mode
+        > No actual release was created.
+        
+        EOF
+        fi
+        
+        if [ -f VERSION ]; then
+          VERSION=$(cat VERSION)
+          if [ "$DRY_RUN" = "true" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+        ### 📋 Would Release
+        
+        | Property | Value |
+        |:---------|:------|
+        | 🏷️ Version | \`v${VERSION}\` |
+        
+        EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+        > [!TIP]
+        > ### ✅ Release Created Successfully
+        > Version \`v${VERSION}\` has been published!
+        
+        | Property | Value |
+        |:---------|:------|
+        | 🏷️ Version | \`v${VERSION}\` |
+        | 🔗 Release | [View Release](../../releases/tag/v${VERSION}) |
+        
+        EOF
+          fi
+        else
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!NOTE]
+        > ### 📭 No Release Created
+        > No releasable changes detected.
+        >
+        > Use [Conventional Commits](https://conventionalcommits.org):
+        > - `feat:` → Minor release
+        > - `fix:` → Patch release
+        > - `feat!:` → Major release
+        
+        EOF
+        fi

@@ -1,0 +1,110 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Base configuration
+  extends: ["config:recommended", ":semanticCommits"],
+
+  // Timezone for scheduling (used for prCreation hours if needed)
+  timezone: "America/Los_Angeles",
+
+  // IMPORTANT: Explicitly set empty schedule to create PRs immediately
+  // Without this, config:recommended applies a default schedule
+  schedule: ["at any time"],
+
+  // PR limits to avoid noise
+  // Note: Set to 0 to disable rate limiting
+  prHourlyLimit: 0,
+  prConcurrentLimit: 0,
+
+  // Branch naming
+  branchPrefix: "deps/",
+
+  // Commit message format (semantic commits)
+  // Using "chore" as it's a valid commitlint type for dependency updates
+  commitMessagePrefix: "chore(deps):",
+  commitMessageAction: "update",
+
+  // Labels for all PRs
+  labels: ["dependencies", "renovate", "automerge"],
+
+  // Create a dependency dashboard issue
+  dependencyDashboard: true,
+  dependencyDashboardTitle: "📦 Renovate Dependency Dashboard",
+
+  // Close the Dependency Dashboard issue if there are no more updates
+  dependencyDashboardAutoclose: true,
+
+  // Dependency dashboard approval for certain updates
+  dependencyDashboardApproval: false,
+
+  // Allow recreating PRs that were closed without merging
+  // This ensures PRs can be recreated after branch deletion or config changes
+  recreateWhen: "auto",
+
+  // PR body template with useful information
+  prBodyTemplate: "{{{header}}}{{{table}}}{{{warnings}}}{{{notes}}}{{{changelogs}}}{{{controls}}}{{{footer}}}",
+
+  // Include release notes in PRs
+  fetchChangeLogs: "pr",
+
+  // Package-specific rules
+  packageRules: [
+    // ==========================================================================
+    // 🟡 Python dependencies: Group minor/patch updates
+    // ==========================================================================
+    {
+      matchManagers: ["pip_requirements", "pip-compile", "pep621"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "python-minor-patch",
+      description: "Python minor/patch updates (auto-merge)",
+      automerge: true,
+      automergeType: "pr",
+      automergeStrategy: "squash",
+      commitMessagePrefix: "chore(deps-python):",
+    },
+
+    // ==========================================================================
+    // 🟢 GitHub Actions: Auto-merge minor/patch updates
+    // ==========================================================================
+    {
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "github-actions",
+      description: "GitHub Actions minor/patch updates (auto-merge)",
+      automerge: true,
+      automergeType: "pr",
+      automergeStrategy: "squash",
+      commitMessagePrefix: "chore(deps-actions):",
+    },
+
+    // ==========================================================================
+    // 🔵 Major updates: Never auto-merge, require review
+    // ==========================================================================
+    {
+      matchUpdateTypes: ["major"],
+      description: "Major updates require manual review",
+      automerge: false,
+      addLabels: ["major-update", "needs-review"],
+      reviewers: ["fulviofreitas"],
+      commitMessagePrefix: "chore(deps-major):",
+    },
+
+    // ==========================================================================
+    // 🟣 Security updates: High priority, fast-track
+    // ==========================================================================
+    {
+      matchDepTypes: ["devDependencies", "dependencies"],
+      matchUpdateTypes: ["patch"],
+      matchPackageNames: ["*"],
+      prPriority: 20,
+      description: "Security patches get high priority",
+    },
+  ],
+
+  // Vulnerability alerts configuration (top-level, not inside packageRules)
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security", "critical", "automerge"],
+    automerge: true,
+  },
+}

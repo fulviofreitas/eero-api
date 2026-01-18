@@ -1,0 +1,89 @@
+# ============================================================================
+# 🧪 Frontend Test Action
+# ============================================================================
+# Reusable composite action for running frontend tests.
+# Supports Vitest, Jest, and other Node.js test frameworks.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/frontend-test@master
+#     with:
+#       working-directory: "frontend/"
+# ============================================================================
+
+name: "🧪 Frontend Test"
+description: "Run frontend tests with coverage"
+
+inputs:
+  working-directory:
+    description: "Frontend working directory"
+    required: false
+    default: "frontend"
+  node-version:
+    description: "Node.js version"
+    required: false
+    default: "20"
+  test-command:
+    description: "Test command"
+    required: false
+    default: "npm run test"
+  coverage-command:
+    description: "Test with coverage command"
+    required: false
+    default: "npm run test:coverage"
+  run-coverage:
+    description: "Run tests with coverage"
+    required: false
+    default: "true"
+
+outputs:
+  passed:
+    description: "Whether tests passed"
+    value: ${{ steps.test.outputs.passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 📦 Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: "npm"
+        cache-dependency-path: "${{ inputs.working-directory }}/package-lock.json"
+
+    - name: 📦 Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci
+
+    - name: 🧪 Run tests
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🧪 Running tests..."
+        
+        if [ "${{ inputs.run-coverage }}" = "true" ]; then
+          ${{ inputs.coverage-command }}
+        else
+          ${{ inputs.test-command }}
+        fi
+        
+        EXIT_CODE=$?
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ All tests passed"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Some tests failed"
+          exit $EXIT_CODE
+        fi
+
+    - name: 📊 Upload coverage report
+      uses: actions/upload-artifact@v6
+      if: inputs.run-coverage == 'true'
+      with:
+        name: frontend-coverage
+        path: ${{ inputs.working-directory }}/coverage/
+        retention-days: 30

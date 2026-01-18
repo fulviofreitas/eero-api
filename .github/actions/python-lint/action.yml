@@ -1,0 +1,203 @@
+# ============================================================================
+# 🧹 Python Lint Action
+# ============================================================================
+# Reusable composite action for Python code quality checks.
+# Runs black, isort, and ruff for comprehensive linting.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/python-lint@master
+#     with:
+#       src-path: "src/"
+#       tests-path: "tests/"
+# ============================================================================
+
+name: "🧹 Python Lint"
+description: "Run Python linting with black, isort, and ruff"
+
+inputs:
+  src-path:
+    description: "Source directory to lint"
+    required: false
+    default: "src/"
+  tests-path:
+    description: "Tests directory to lint"
+    required: false
+    default: "tests/"
+  check-black:
+    description: "Run black formatter check"
+    required: false
+    default: "true"
+  check-isort:
+    description: "Run isort import sorting check"
+    required: false
+    default: "true"
+  check-ruff:
+    description: "Run ruff linter"
+    required: false
+    default: "true"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  use-uv:
+    description: "Use uvx to run tools"
+    required: false
+    default: "true"
+
+outputs:
+  black-passed:
+    description: "Whether black check passed"
+    value: ${{ steps.black.outputs.passed }}
+  isort-passed:
+    description: "Whether isort check passed"
+    value: ${{ steps.isort.outputs.passed }}
+  ruff-passed:
+    description: "Whether ruff check passed"
+    value: ${{ steps.ruff.outputs.passed }}
+  all-passed:
+    description: "Whether all checks passed"
+    value: ${{ steps.summary.outputs.all-passed }}
+
+runs:
+  using: "composite"
+  steps:
+    # ========================================================================
+    # 🔧 Install Tools (if using uv)
+    # ========================================================================
+    - name: 🔧 Install linting tools
+      if: inputs.use-uv == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        uv tool install ruff || true
+        uv tool install black || true
+        uv tool install isort || true
+
+    # ========================================================================
+    # 🖤 Black Check
+    # ========================================================================
+    - name: 🖤 Check formatting with Black
+      id: black
+      if: inputs.check-black == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🖤 Running Black formatter check..."
+        
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          uvx black --check --diff ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        else
+          black --check --diff ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        fi
+        
+        if [ $? -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ Black: All files properly formatted"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Black: Formatting issues found"
+          exit 1
+        fi
+
+    # ========================================================================
+    # 📑 isort Check
+    # ========================================================================
+    - name: 📑 Check import sorting with isort
+      id: isort
+      if: inputs.check-isort == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "📑 Running isort import check..."
+        
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          uvx isort --check-only --diff ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        else
+          isort --check-only --diff ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        fi
+        
+        if [ $? -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ isort: Imports properly sorted"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ isort: Import sorting issues found"
+          exit 1
+        fi
+
+    # ========================================================================
+    # ⚡ Ruff Check
+    # ========================================================================
+    - name: ⚡ Lint with Ruff
+      id: ruff
+      if: inputs.check-ruff == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "⚡ Running Ruff linter..."
+        
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          uvx ruff check ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        else
+          ruff check ${{ inputs.src-path }} ${{ inputs.tests-path }}
+        fi
+        
+        if [ $? -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ Ruff: No linting issues found"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Ruff: Linting issues found"
+          exit 1
+        fi
+
+    # ========================================================================
+    # 📊 Summary
+    # ========================================================================
+    - name: 📊 Lint Summary
+      id: summary
+      if: always()
+      shell: bash
+      run: |
+        BLACK="${{ steps.black.outputs.passed || 'skipped' }}"
+        ISORT="${{ steps.isort.outputs.passed || 'skipped' }}"
+        RUFF="${{ steps.ruff.outputs.passed || 'skipped' }}"
+        
+        echo "### 🧹 Lint Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Tool | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|:-----|:-------|" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "$BLACK" = "true" ]; then
+          echo "| 🖤 Black | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+        elif [ "$BLACK" = "false" ]; then
+          echo "| 🖤 Black | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🖤 Black | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "$ISORT" = "true" ]; then
+          echo "| 📑 isort | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+        elif [ "$ISORT" = "false" ]; then
+          echo "| 📑 isort | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 📑 isort | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "$RUFF" = "true" ]; then
+          echo "| ⚡ Ruff | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+        elif [ "$RUFF" = "false" ]; then
+          echo "| ⚡ Ruff | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| ⚡ Ruff | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check if all passed
+        if [[ "$BLACK" != "false" && "$ISORT" != "false" && "$RUFF" != "false" ]]; then
+          echo "all-passed=true" >> $GITHUB_OUTPUT
+        else
+          echo "all-passed=false" >> $GITHUB_OUTPUT
+        fi

@@ -1,0 +1,83 @@
+# ===========================================================================
+# GitHub Release Configuration
+# ===========================================================================
+# Configures how GitHub auto-generates release notes when creating releases.
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+# ===========================================================================
+
+changelog:
+  # Exclude certain contributors from release notes
+  exclude:
+    labels:
+      - skip-changelog
+      - documentation
+      - dependencies
+    authors:
+      - github-actions[bot]
+      - dependabot[bot]
+      - renovate[bot]
+
+  # Categorize PRs in release notes
+  categories:
+    - title: "🚀 Breaking Changes"
+      labels:
+        - breaking
+        - breaking-change
+        - major
+
+    - title: "✨ Features"
+      labels:
+        - feature
+        - enhancement
+        - feat
+
+    - title: "🐛 Bug Fixes"
+      labels:
+        - bug
+        - fix
+        - bugfix
+        - hotfix
+
+    - title: "⚡ Performance"
+      labels:
+        - performance
+        - perf
+        - optimization
+
+    - title: "🔒 Security"
+      labels:
+        - security
+        - vulnerability
+
+    - title: "📚 Documentation"
+      labels:
+        - documentation
+        - docs
+
+    - title: "🧪 Testing"
+      labels:
+        - test
+        - testing
+        - tests
+
+    - title: "🏗️ Build & CI"
+      labels:
+        - build
+        - ci
+        - ci/cd
+        - github-actions
+
+    - title: "♻️ Refactoring"
+      labels:
+        - refactor
+        - refactoring
+        - cleanup
+
+    - title: "📦 Dependencies"
+      labels:
+        - dependencies
+        - deps
+
+    - title: "🔧 Other Changes"
+      labels:
+        - "*"

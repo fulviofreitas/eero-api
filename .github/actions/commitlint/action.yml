@@ -1,0 +1,93 @@
+# ============================================================================
+# 📝 Commitlint Action
+# ============================================================================
+# Reusable composite action for validating commit messages.
+# Ensures all commits follow conventional commit format.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/commitlint@master
+#     with:
+#       from-sha: ${{ github.event.pull_request.base.sha }}
+#       to-sha: ${{ github.event.pull_request.head.sha }}
+# ============================================================================
+
+name: "📝 Commitlint"
+description: "Validate commit messages against conventional commit format"
+
+inputs:
+  node-version:
+    description: "Node.js version to use"
+    required: false
+    default: "20"
+  from-sha:
+    description: "SHA to start validation from (for PRs)"
+    required: false
+    default: ""
+  to-sha:
+    description: "SHA to end validation at (for PRs)"
+    required: false
+    default: ""
+  config-file:
+    description: "Path to commitlint config file"
+    required: false
+    default: ""
+
+outputs:
+  valid:
+    description: "Whether all commits are valid"
+    value: ${{ steps.validate.outputs.valid }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 📦 Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: 🔧 Install commitlint
+      shell: bash
+      run: npm install -g @commitlint/cli @commitlint/config-conventional
+
+    - name: 🔍 Validate commits
+      id: validate
+      shell: bash
+      run: |
+        set +e
+        
+        # Determine validation mode
+        if [ -n "${{ inputs.from-sha }}" ] && [ -n "${{ inputs.to-sha }}" ]; then
+          echo "📋 Validating commits from ${{ inputs.from-sha }} to ${{ inputs.to-sha }}"
+          
+          # Build config argument if provided
+          CONFIG_ARG=""
+          if [ -n "${{ inputs.config-file }}" ]; then
+            CONFIG_ARG="--config ${{ inputs.config-file }}"
+          fi
+          
+          npx commitlint \
+            --from ${{ inputs.from-sha }} \
+            --to ${{ inputs.to-sha }} \
+            --verbose \
+            $CONFIG_ARG
+          EXIT_CODE=$?
+        else
+          echo "📋 Validating last commit"
+          
+          CONFIG_ARG=""
+          if [ -n "${{ inputs.config-file }}" ]; then
+            CONFIG_ARG="--config ${{ inputs.config-file }}"
+          fi
+          
+          npx commitlint --last --verbose $CONFIG_ARG
+          EXIT_CODE=$?
+        fi
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "valid=true" >> $GITHUB_OUTPUT
+          echo "✅ All commits follow conventional format"
+        else
+          echo "valid=false" >> $GITHUB_OUTPUT
+          echo "❌ Some commits do not follow conventional format"
+          exit 1
+        fi

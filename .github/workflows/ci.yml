@@ -1,0 +1,223 @@
+# ============================================================================
+# 🧪 Continuous Integration Pipeline
+# ============================================================================
+# Chain: Commit Lint → Lint & Format → [Type Check ‖ Security ‖ Tests] → CI Success
+#
+# All reusable actions are defined in .github/actions/
+# ============================================================================
+
+name: 🧪 CI Pipeline
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ============================================================================
+  # 1️⃣ Commit Lint (Gate 1)
+  # ============================================================================
+  commitlint:
+    name: 📝 Commit Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 📝 Validate commits
+        uses: ./.github/actions/commitlint
+        with:
+          from-sha: ${{ github.event.pull_request.base.sha }}
+          to-sha: ${{ github.event.pull_request.head.sha }}
+
+  # ============================================================================
+  # 2️⃣ Lint & Format (Gate 2 - depends on Commit Lint)
+  # ============================================================================
+  lint:
+    name: 🧹 Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: commitlint
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🐍 Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          install-dev: "false"
+
+      - name: 🧹 Run Python lint
+        uses: ./.github/actions/python-lint
+        with:
+          src-path: "src/"
+          tests-path: "tests/"
+
+  # ============================================================================
+  # 3️⃣ Type Check (Parallel - depends on Lint)
+  # ============================================================================
+  type-check:
+    name: 🔍 Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🐍 Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 🔍 Run type check
+        uses: ./.github/actions/python-typecheck
+        with:
+          src-path: "src/"
+          fail-on-error: "true"
+
+  # ============================================================================
+  # 3️⃣ Security Scan (Parallel - depends on Lint)
+  # ============================================================================
+  security:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          install-dev: "false"
+
+      - name: 🛡️ Run security scan
+        uses: ./.github/actions/security-semgrep
+        with:
+          config: "p/python p/security-audit"
+          target-path: "src/"
+          fail-on-findings: "true"
+
+  # ============================================================================
+  # 3️⃣ Test Matrix (Parallel - depends on Lint)
+  # ============================================================================
+  test:
+    name: 🧪 Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🐍 Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 🧪 Run tests
+        uses: ./.github/actions/python-test
+        with:
+          test-path: "tests/"
+          src-path: "src/eero"
+          upload-coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================================
+  # 4️⃣ CI Success Gate (Final - depends on all parallel jobs)
+  # ============================================================================
+  ci-success:
+    name: ✅ CI Success
+    runs-on: ubuntu-latest
+    needs: [commitlint, lint, type-check, test, security]
+    if: always()
+
+    steps:
+      - name: 🔍 Check all jobs passed
+        run: |
+          COMMITLINT="${{ needs.commitlint.result }}"
+          LINT="${{ needs.lint.result }}"
+          TYPECHECK="${{ needs.type-check.result }}"
+          TEST="${{ needs.test.result }}"
+          SECURITY="${{ needs.security.result }}"
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🧪 CI Pipeline Summary
+
+          | Stage | Job | Status |
+          |:------|:----|:-------|
+          | 1️⃣ | 📝 Commit Lint | ${COMMITLINT} |
+          | 2️⃣ | 🧹 Lint & Format | ${LINT} |
+          | 3️⃣ | 🔍 Type Check | ${TYPECHECK} |
+          | 3️⃣ | 🛡️ Security | ${SECURITY} |
+          | 3️⃣ | 🧪 Tests | ${TEST} |
+
+          EOF
+
+          # All jobs are required to pass
+          if [[ "$COMMITLINT" == "success" && "$LINT" == "success" && "$TYPECHECK" == "success" && "$TEST" == "success" && "$SECURITY" == "success" ]]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+
+          > [!NOTE]
+          > ### ✅ All Required Checks Passed
+          > CI pipeline completed successfully. Ready for release!
+
+          ---
+
+          ```
+          1️⃣ 📝 Commit Lint
+                 ↓
+          2️⃣ 🧹 Lint & Format
+                 ↓
+               ┌─┴─┬─────────┐
+          3️⃣   │   │         │
+          🔍 Type 🛡️ Sec  🧪 Tests
+               └─┬─┴─────────┘
+                 ↓
+          4️⃣ ✅ CI Success → 🚀 Release
+          ```
+
+          EOF
+            exit 0
+          else
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+
+          > [!CAUTION]
+          > ### ❌ Some Required Checks Failed
+          > Review the failed jobs above and fix any issues before merging.
+
+          EOF
+            exit 1
+          fi

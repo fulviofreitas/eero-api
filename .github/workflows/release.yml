@@ -1,0 +1,144 @@
+# ============================================================================
+# 🚀 Automated Semantic Release
+# ============================================================================
+# Automatically creates releases based on conventional commit messages.
+# Uses reusable actions for maintainability.
+#
+# Chain: CI → Release → Notify Downstream
+# Triggers: After CI Pipeline succeeds on main/master
+# ============================================================================
+
+name: 🚀 Release
+
+on:
+  workflow_run:
+    workflows: ["🧪 CI Pipeline"]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "🧪 Dry-run mode (no actual release)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # ============================================================================
+  # 🚀 Semantic Release
+  # ============================================================================
+  release:
+    name: 🚀 Semantic Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      !contains(github.event.workflow_run.head_commit.message, '[skip ci]') &&
+      !contains(github.event.workflow_run.head_commit.message, 'chore(release)'))
+
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 🚀 Run semantic-release
+        id: release
+        uses: ./.github/actions/semantic-release
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
+
+  # ============================================================================
+  # 🔔 Notify Downstream Repositories
+  # ============================================================================
+  notify-downstream:
+    name: 🔔 Notify Downstream
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.released == 'true' && github.event.inputs.dry_run != 'true'
+
+    steps:
+      - name: 🔔 Trigger eero-ui Renovate
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
+          repository: fulviofreitas/eero-ui
+          event-type: eero-api-dependency-update-available
+          client-payload: |
+            {
+              "version": "${{ needs.release.outputs.version }}",
+              "tag": "v${{ needs.release.outputs.version }}",
+              "repository": "fulviofreitas/eero-api",
+              "triggered_by": "${{ github.actor }}"
+            }
+
+      - name: 🔔 Trigger eero-prometheus-exporter Renovate
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
+          repository: fulviofreitas/eero-prometheus-exporter
+          event-type: eero-api-dependency-update-available
+          client-payload: |
+            {
+              "version": "${{ needs.release.outputs.version }}",
+              "tag": "v${{ needs.release.outputs.version }}",
+              "repository": "fulviofreitas/eero-api",
+              "triggered_by": "${{ github.actor }}"
+            }
+
+      - name: 🔔 Trigger eero-cli Renovate
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
+          repository: fulviofreitas/eero-cli
+          event-type: eero-api-dependency-update-available
+          client-payload: |
+            {
+              "version": "${{ needs.release.outputs.version }}",
+              "tag": "v${{ needs.release.outputs.version }}",
+              "repository": "fulviofreitas/eero-api",
+              "triggered_by": "${{ github.actor }}"
+            }
+
+      - name: 📝 Notification summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🔔 Downstream Notification
+
+          | Repository | Status |
+          |:-----------|:-------|
+          | [eero-ui](https://github.com/fulviofreitas/eero-ui) | ✅ Notified |
+          | [eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter) | ✅ Notified |
+          | [eero-cli](https://github.com/fulviofreitas/eero-cli) | ✅ Notified |
+
+          ### 📦 Payload Sent
+
+          \`\`\`json
+          {
+            "version": "${{ needs.release.outputs.version }}",
+            "tag": "v${{ needs.release.outputs.version }}",
+            "repository": "fulviofreitas/eero-api"
+          }
+          \`\`\`
+
+          EOF

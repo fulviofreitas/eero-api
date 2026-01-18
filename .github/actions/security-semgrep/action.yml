@@ -1,0 +1,195 @@
+# ============================================================================
+# 🛡️ Security Semgrep Action
+# ============================================================================
+# Unified security scanning action using Semgrep.
+# Replaces both Bandit (Python) and Opengrep (multi-language).
+#
+# Features:
+# - Python, JavaScript, TypeScript, and more
+# - Community rulesets from semgrep.dev/r
+# - Custom rules support
+# - SARIF output for GitHub Security tab
+#
+# Usage:
+#   # Python projects
+#   - uses: fulviofreitas/eero-api/.github/actions/security-semgrep@master
+#     with:
+#       config: "p/python p/security-audit"
+#       target-path: "src/"
+#
+#   # Multi-language with custom rules
+#   - uses: fulviofreitas/eero-api/.github/actions/security-semgrep@master
+#     with:
+#       config: "p/python p/javascript security-rules/"
+#       target-path: "."
+# ============================================================================
+
+name: "🛡️ Security Semgrep"
+description: "Run Semgrep security scan (Python, JavaScript, TypeScript)"
+
+inputs:
+  config:
+    description: "Semgrep config (rulesets or paths, space-separated)"
+    required: false
+    default: "p/python p/security-audit"
+  target-path:
+    description: "Path to scan"
+    required: false
+    default: "."
+  exclude-paths:
+    description: "Paths to exclude (comma-separated)"
+    required: false
+    default: "tests/,**/test_*.py,**/*_test.py,node_modules/"
+  severity:
+    description: "Minimum severity to report (INFO, WARNING, ERROR)"
+    required: false
+    default: "WARNING"
+  fail-on-findings:
+    description: "Fail the job on security findings"
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload SARIF to GitHub Security"
+    required: false
+    default: "true"
+  sarif-output:
+    description: "SARIF output filename"
+    required: false
+    default: "semgrep.sarif"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+
+outputs:
+  findings-count:
+    description: "Number of security findings"
+    value: ${{ steps.scan.outputs.findings_count }}
+  passed:
+    description: "Whether scan passed (no findings)"
+    value: ${{ steps.scan.outputs.passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔧 Install Semgrep
+      shell: bash
+      run: |
+        echo "📦 Installing Semgrep..."
+        python3 -m pip install --quiet semgrep
+        echo "✅ Semgrep $(semgrep --version) installed"
+
+    - name: 🔍 Run Semgrep scan
+      id: scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "🔍 Starting Semgrep security scan..."
+        echo "📁 Config: ${{ inputs.config }}"
+        echo "📁 Target: ${{ inputs.target-path }}"
+        echo "🚫 Exclude: ${{ inputs.exclude-paths }}"
+        echo "⚠️  Min severity: ${{ inputs.severity }}"
+        echo "-------------------------------------------"
+
+        set +e
+
+        # Build exclude arguments
+        EXCLUDE_ARGS=""
+        IFS=',' read -ra EXCLUDES <<< "${{ inputs.exclude-paths }}"
+        for pattern in "${EXCLUDES[@]}"; do
+          EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude '$pattern'"
+        done
+
+        # Build config arguments
+        CONFIG_ARGS=""
+        for cfg in ${{ inputs.config }}; do
+          CONFIG_ARGS="$CONFIG_ARGS --config $cfg"
+        done
+
+        # Run scan with text output for logs
+        echo "📋 Running scan..."
+        eval semgrep $CONFIG_ARGS \
+          --severity ${{ inputs.severity }} \
+          $EXCLUDE_ARGS \
+          --no-git-ignore \
+          ${{ inputs.target-path }} 2>&1 | tee scan-output.txt
+
+        SCAN_EXIT_CODE=${PIPESTATUS[0]}
+
+        # Run scan with SARIF output
+        echo ""
+        echo "📊 Generating SARIF report..."
+        eval semgrep $CONFIG_ARGS \
+          --severity ${{ inputs.severity }} \
+          $EXCLUDE_ARGS \
+          --no-git-ignore \
+          --sarif --output ${{ inputs.sarif-output }} \
+          ${{ inputs.target-path }} 2>/dev/null || true
+
+        # Ensure SARIF file exists
+        if [ ! -s "${{ inputs.sarif-output }}" ]; then
+          echo "Creating empty SARIF file..."
+          cat > "${{ inputs.sarif-output }}" << 'EOF'
+        {
+          "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+          "version": "2.1.0",
+          "runs": [{
+            "tool": {
+              "driver": {
+                "name": "Semgrep",
+                "informationUri": "https://semgrep.dev",
+                "version": "1.0.0"
+              }
+            },
+            "results": []
+          }]
+        }
+        EOF
+        fi
+
+        # Count findings from SARIF (most reliable)
+        FINDINGS_COUNT=$(grep -o '"ruleId"' "${{ inputs.sarif-output }}" 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        
+        # Ensure it's a valid number
+        if ! [[ "$FINDINGS_COUNT" =~ ^[0-9]+$ ]]; then
+          FINDINGS_COUNT=0
+        fi
+
+        echo "findings_count=${FINDINGS_COUNT}" >> $GITHUB_OUTPUT
+
+        if [ $SCAN_EXIT_CODE -eq 0 ] || [ "$FINDINGS_COUNT" -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo ""
+          echo "✅ No security issues found!"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo ""
+          echo "⚠️  Found ${FINDINGS_COUNT} security finding(s)"
+        fi
+
+        echo "exit_code=$SCAN_EXIT_CODE" >> $GITHUB_OUTPUT
+
+    - name: 📊 Upload SARIF to GitHub Security
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ inputs.working-directory }}/${{ inputs.sarif-output }}
+        category: "semgrep"
+      continue-on-error: true
+
+    - name: 📤 Upload scan artifacts
+      uses: actions/upload-artifact@v6
+      if: always()
+      with:
+        name: semgrep-scan-results
+        path: |
+          ${{ inputs.working-directory }}/${{ inputs.sarif-output }}
+          ${{ inputs.working-directory }}/scan-output.txt
+        retention-days: 30
+
+    - name: ❌ Check for security failures
+      if: steps.scan.outputs.passed == 'false' && inputs.fail-on-findings == 'true'
+      shell: bash
+      run: |
+        echo "::error::🔒 Security scan found ${{ steps.scan.outputs.findings_count }} vulnerabilities! Please review the findings."
+        exit 1

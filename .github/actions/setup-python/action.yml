@@ -1,0 +1,119 @@
+# ============================================================================
+# 🐍 Setup Python Action
+# ============================================================================
+# Reusable composite action for setting up Python with uv or pip.
+# Provides consistent Python environment across all eero repositories.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/setup-python@master
+#     with:
+#       python-version: "3.12"
+# ============================================================================
+
+name: "🐍 Setup Python"
+description: "Set up Python with uv or pip, including dependency caching"
+
+inputs:
+  python-version:
+    description: "Python version to install"
+    required: false
+    default: "3.12"
+  dependency-file:
+    description: "Path to dependency file for caching"
+    required: false
+    default: "pyproject.toml"
+  use-uv:
+    description: "Use uv instead of pip"
+    required: false
+    default: "true"
+  working-directory:
+    description: "Working directory for installation"
+    required: false
+    default: "."
+  install-dev:
+    description: "Install dev dependencies"
+    required: false
+    default: "true"
+
+outputs:
+  python-version:
+    description: "Installed Python version"
+    value: ${{ steps.python-info.outputs.version }}
+  cache-hit:
+    description: "Whether cache was hit"
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: "composite"
+  steps:
+    # ========================================================================
+    # 📦 Setup with uv (preferred)
+    # ========================================================================
+    - name: 📦 Install uv
+      if: inputs.use-uv == 'true'
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: ${{ inputs.working-directory }}/${{ inputs.dependency-file }}
+
+    - name: 🐍 Set up Python with uv
+      if: inputs.use-uv == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv python install ${{ inputs.python-version }}
+
+    - name: 📚 Install dependencies with uv
+      if: inputs.use-uv == 'true' && inputs.install-dev == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv sync --extra dev
+
+    - name: 📚 Install dependencies with uv (no dev)
+      if: inputs.use-uv == 'true' && inputs.install-dev != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv sync
+
+    # ========================================================================
+    # 📦 Setup with pip (fallback)
+    # ========================================================================
+    - name: 🐍 Set up Python with pip
+      if: inputs.use-uv != 'true'
+      uses: actions/setup-python@v6
+      id: cache
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: "pip"
+        cache-dependency-path: ${{ inputs.working-directory }}/${{ inputs.dependency-file }}
+
+    - name: 📚 Install dependencies with pip
+      if: inputs.use-uv != 'true' && inputs.install-dev == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: 📚 Install dependencies with pip (no dev)
+      if: inputs.use-uv != 'true' && inputs.install-dev != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e "."
+
+    # ========================================================================
+    # 📊 Output Info
+    # ========================================================================
+    - name: 📊 Get Python info
+      id: python-info
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          VERSION=$(uv run python --version | cut -d' ' -f2)
+        else
+          VERSION=$(python --version | cut -d' ' -f2)
+        fi
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "✅ Python ${VERSION} ready"

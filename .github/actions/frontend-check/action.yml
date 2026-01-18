@@ -1,0 +1,99 @@
+# ============================================================================
+# ⚛️ Frontend Check Action
+# ============================================================================
+# Reusable composite action for frontend type checking and linting.
+# Supports Svelte, React, and other Node.js-based frontends.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/frontend-check@master
+#     with:
+#       working-directory: "frontend/"
+# ============================================================================
+
+name: "⚛️ Frontend Check"
+description: "Run frontend type checking and linting"
+
+inputs:
+  working-directory:
+    description: "Frontend working directory"
+    required: false
+    default: "frontend"
+  node-version:
+    description: "Node.js version"
+    required: false
+    default: "20"
+  check-command:
+    description: "Type check command"
+    required: false
+    default: "npm run check"
+  lint-command:
+    description: "Lint command"
+    required: false
+    default: "npm run lint"
+  run-check:
+    description: "Run type checking"
+    required: false
+    default: "true"
+  run-lint:
+    description: "Run linting"
+    required: false
+    default: "true"
+
+outputs:
+  check-passed:
+    description: "Whether type check passed"
+    value: ${{ steps.check.outputs.passed }}
+  lint-passed:
+    description: "Whether lint passed"
+    value: ${{ steps.lint.outputs.passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 📦 Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: "npm"
+        cache-dependency-path: "${{ inputs.working-directory }}/package-lock.json"
+
+    - name: 📦 Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci
+
+    - name: 🔍 Run type check
+      id: check
+      if: inputs.run-check == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🔍 Running type check..."
+        ${{ inputs.check-command }}
+        if [ $? -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ Type check passed"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Type check failed"
+          exit 1
+        fi
+
+    - name: 🧹 Run linting
+      id: lint
+      if: inputs.run-lint == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🧹 Running linter..."
+        ${{ inputs.lint-command }}
+        if [ $? -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ Lint check passed"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Lint check failed"
+          exit 1
+        fi

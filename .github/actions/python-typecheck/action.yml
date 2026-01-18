@@ -1,0 +1,95 @@
+# ============================================================================
+# 🔍 Python Type Check Action
+# ============================================================================
+# Reusable composite action for running mypy type checking.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/python-typecheck@master
+#     with:
+#       src-path: "src/"
+# ============================================================================
+
+name: "🔍 Python Type Check"
+description: "Run mypy type checking on Python code"
+
+inputs:
+  src-path:
+    description: "Source directory to type check"
+    required: false
+    default: "src/"
+  strict:
+    description: "Enable strict mode"
+    required: false
+    default: "false"
+  ignore-missing-imports:
+    description: "Ignore missing imports"
+    required: false
+    default: "true"
+  fail-on-error:
+    description: "Fail the job on type errors"
+    required: false
+    default: "false"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  use-uv:
+    description: "Use uv to run mypy"
+    required: false
+    default: "true"
+
+outputs:
+  passed:
+    description: "Whether type check passed"
+    value: ${{ steps.typecheck.outputs.passed }}
+  error-count:
+    description: "Number of type errors found"
+    value: ${{ steps.typecheck.outputs.error-count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔬 Type check with mypy
+      id: typecheck
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🔬 Running mypy type checker..."
+        
+        # Build args
+        ARGS=""
+        if [ "${{ inputs.strict }}" = "true" ]; then
+          ARGS="$ARGS --strict"
+        fi
+        if [ "${{ inputs.ignore-missing-imports }}" = "true" ]; then
+          ARGS="$ARGS --ignore-missing-imports"
+        fi
+        
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          OUTPUT=$(uv run mypy ${{ inputs.src-path }} $ARGS 2>&1)
+        else
+          OUTPUT=$(mypy ${{ inputs.src-path }} $ARGS 2>&1)
+        fi
+        
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        
+        # Count errors (grep -c returns 1 if no matches, so we handle that)
+        ERROR_COUNT=$(echo "$OUTPUT" | grep -c "error:" || true)
+        if [ -z "$ERROR_COUNT" ]; then
+          ERROR_COUNT=0
+        fi
+        echo "error-count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ Type check passed"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "::warning::Type checking found ${ERROR_COUNT} issue(s)"
+          
+          if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+            exit 1
+          fi
+        fi

@@ -1,0 +1,82 @@
+# ============================================================================
+# 🔄 Renovate - Automated Dependency Updates
+# ============================================================================
+# Runs Renovate to check for dependency updates and create PRs.
+# Uses a GitHub App for authentication (better rate limits & security).
+#
+# Key features:
+# - Auto-merges minor/patch updates for most dependencies
+# - Requires manual review for major updates
+# - Repository caching for faster subsequent runs
+#
+# Triggers:
+# - Scheduled: Every 6 hours (4 times daily)
+# - Manual: workflow_dispatch
+# ============================================================================
+
+name: 🔄 Renovate
+
+on:
+  schedule:
+    # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: "0 */6 * * *"
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "🧪 Dry-run mode (no PRs created)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      log_level:
+        description: "📝 Log level"
+        required: false
+        default: "info"
+        type: choice
+        options:
+          - "debug"
+          - "info"
+          - "warn"
+      reset_cache:
+        description: "🗑️ Reset repository cache"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+# Prevent concurrent runs
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    name: 🔄 Renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 📋 Log trigger info
+        run: |
+          echo "🎯 Trigger: ${{ github.event_name }}"
+
+      - name: 🔄 Run Renovate
+        uses: ./.github/actions/renovate
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          config-file: ".github/renovate.json5"
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
+          log-level: ${{ github.event.inputs.log_level || 'info' }}
+          reset-cache: ${{ github.event.inputs.reset_cache || 'false' }}

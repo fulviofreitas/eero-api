@@ -1,0 +1,59 @@
+# ============================================================================
+# 🤖 Auto-Merge Approved PRs
+# ============================================================================
+# Automatically merges pull requests that are approved and pass all checks.
+# Uses the reusable auto-merge action.
+#
+# How it works:
+#   - PRs with the "automerge" label will be merged when ready
+#   - PRs are ready when: approved + all required checks pass + up to date
+#   - Uses squash merge strategy by default
+# ============================================================================
+
+name: 🤖 Auto-Merge
+
+on:
+  pull_request:
+    types:
+      - labeled
+      - unlabeled
+      - synchronize
+      - opened
+      - edited
+      - ready_for_review
+      - reopened
+      - unlocked
+  pull_request_review:
+    types:
+      - submitted
+  check_suite:
+    types:
+      - completed
+  status:
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: 🤖 Auto-Merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🤖 Run automerge
+        uses: ./.github/actions/auto-merge
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-labels: "automerge"
+          blocking-labels: "wip,do-not-merge,needs-review"
+          merge-method: "squash"
+          required-approvals: "1"

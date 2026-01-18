@@ -1,0 +1,55 @@
+# ============================================================================
+# 📚 Wiki Sync Action
+# ============================================================================
+# Reusable composite action for syncing wiki/ directory to GitHub Wiki.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/wiki-sync@master
+#     with:
+#       wiki-path: "wiki/"
+# ============================================================================
+
+name: "📚 Wiki Sync"
+description: "Sync wiki directory to GitHub Wiki"
+
+inputs:
+  wiki-path:
+    description: "Path to wiki directory"
+    required: false
+    default: "wiki/"
+  ignore-file:
+    description: "File with patterns to ignore"
+    required: false
+    default: ".gitignore"
+
+outputs:
+  synced:
+    description: "Whether wiki was synced"
+    value: ${{ steps.sync.outputs.synced }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔄 Sync wiki
+      id: sync
+      uses: Andrew-Chen-Wang/github-wiki-action@v5
+      with:
+        path: ${{ inputs.wiki-path }}
+        ignore: ${{ inputs.ignore-file }}
+
+    - name: 📝 Generate summary
+      if: always()
+      shell: bash
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 📚 Wiki Sync Summary
+        
+        | Property | Value |
+        |:---------|:------|
+        | 📁 Source | \`${{ inputs.wiki-path }}\` |
+        | 🔄 Status | ✅ Synced |
+        
+        ---
+        
+        <sub>🤖 Powered by github-wiki-action</sub>
+        EOF

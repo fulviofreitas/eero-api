@@ -1,0 +1,172 @@
+# ============================================================================
+# 🐳 Docker Build Action
+# ============================================================================
+# Reusable composite action for building and pushing multi-platform Docker images.
+# Includes attestations for supply chain security.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/docker-build@master
+#     with:
+#       image-name: "myorg/myimage"
+#       push: true
+# ============================================================================
+
+name: "🐳 Docker Build"
+description: "Build and push multi-platform Docker images"
+
+inputs:
+  image-name:
+    description: "Docker image name (e.g., ghcr.io/org/repo)"
+    required: true
+  context:
+    description: "Docker build context"
+    required: false
+    default: "."
+  dockerfile:
+    description: "Path to Dockerfile"
+    required: false
+    default: "Dockerfile"
+  platforms:
+    description: "Target platforms (comma-separated)"
+    required: false
+    default: "linux/amd64,linux/arm64"
+  push:
+    description: "Push image to registry"
+    required: false
+    default: "false"
+  registry:
+    description: "Container registry"
+    required: false
+    default: "ghcr.io"
+  registry-username:
+    description: "Registry username"
+    required: false
+    default: ""
+  registry-password:
+    description: "Registry password/token"
+    required: false
+    default: ""
+  build-args:
+    description: "Build arguments"
+    required: false
+    default: ""
+  labels:
+    description: "Image labels"
+    required: false
+    default: ""
+  annotations:
+    description: "Image annotations"
+    required: false
+    default: ""
+  generate-sbom:
+    description: "Generate SBOM"
+    required: false
+    default: "true"
+  generate-provenance:
+    description: "Generate provenance attestation"
+    required: false
+    default: "true"
+
+outputs:
+  digest:
+    description: "Image digest"
+    value: ${{ steps.build.outputs.digest }}
+  tags:
+    description: "Image tags"
+    value: ${{ steps.meta.outputs.tags }}
+  metadata:
+    description: "Build metadata"
+    value: ${{ steps.build.outputs.metadata }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🏷️ Get latest tag
+      id: get_tag
+      shell: bash
+      run: |
+        git fetch --tags
+        LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        echo "tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+        echo "📌 Latest tag: ${LATEST_TAG:-none}"
+
+    - name: 🛠️ Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: 🛠️ Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Log in to registry
+      if: inputs.push == 'true' && inputs.registry-password != ''
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: 🏷️ Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.image-name }}
+        tags: |
+          type=raw,value=latest,enable=${{ inputs.push == 'true' }}
+          type=raw,value=${{ steps.get_tag.outputs.tag }},enable=${{ steps.get_tag.outputs.tag != '' && inputs.push == 'true' }}
+          type=semver,pattern={{version}},value=${{ steps.get_tag.outputs.tag }}
+          type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_tag.outputs.tag }}
+          type=sha,prefix=
+          type=ref,event=pr
+
+    - name: 📦 Build and push
+      id: build
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        annotations: ${{ inputs.annotations }}
+        build-args: ${{ inputs.build-args }}
+        cache-from: |
+          type=gha,scope=${{ github.ref_name }}
+          type=gha,scope=main
+        cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
+        provenance: ${{ inputs.generate-provenance == 'true' && 'mode=min' || 'false' }}
+        sbom: ${{ inputs.generate-sbom }}
+
+    - name: 🔏 Generate attestation
+      if: inputs.push == 'true' && inputs.generate-provenance == 'true'
+      uses: actions/attest-build-provenance@v3
+      continue-on-error: true
+      with:
+        subject-name: ${{ inputs.image-name }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: true
+
+    - name: 📊 Generate build summary
+      if: always()
+      shell: bash
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🐳 Docker Build Summary
+        
+        | Property | Value |
+        |:---------|:------|
+        | 📦 Image | \`${{ inputs.image-name }}\` |
+        | 🏗️ Platforms | \`${{ inputs.platforms }}\` |
+        | 📤 Pushed | \`${{ inputs.push }}\` |
+        | 🔏 SBOM | \`${{ inputs.generate-sbom }}\` |
+        | 📝 Provenance | \`${{ inputs.generate-provenance }}\` |
+        
+        ### 🏷️ Tags
+        
+        \`\`\`
+        ${{ steps.meta.outputs.tags }}
+        \`\`\`
+        
+        ---
+        
+        <sub>🤖 Built with Docker Buildx</sub>
+        EOF

@@ -1,0 +1,164 @@
+# ============================================================================
+# 🔄 Renovate Action
+# ============================================================================
+# Reusable composite action for running Renovate with GitHub App authentication.
+# Includes repository caching for faster subsequent runs.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/renovate@master
+#     with:
+#       app-id: ${{ secrets.RENOVATE_APP_ID }}
+#       app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+# ============================================================================
+
+name: "🔄 Renovate"
+description: "Run Renovate with GitHub App authentication and caching"
+
+inputs:
+  app-id:
+    description: "GitHub App ID for authentication"
+    required: true
+  app-private-key:
+    description: "GitHub App private key"
+    required: true
+  config-file:
+    description: "Path to Renovate config file"
+    required: false
+    default: ".github/renovate.json5"
+  dry-run:
+    description: "Run in dry-run mode (no PRs created)"
+    required: false
+    default: "false"
+  log-level:
+    description: "Renovate log level (debug, info, warn)"
+    required: false
+    default: "info"
+  reset-cache:
+    description: "Reset repository cache"
+    required: false
+    default: "false"
+
+outputs:
+  token:
+    description: "Generated GitHub App token"
+    value: ${{ steps.app-token.outputs.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔑 Generate GitHub App token
+      id: app-token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+
+    # ========================================================================
+    # 📦 Cache Restoration
+    # ========================================================================
+    - name: 📥 Download cache artifact
+      if: inputs.reset-cache != 'true'
+      uses: dawidd6/action-download-artifact@v12
+      continue-on-error: true
+      with:
+        name: renovate-cache-v1
+        path: cache-download
+        workflow_conclusion: success
+        search_artifacts: true
+
+    - name: 📂 Extract renovate cache
+      if: inputs.reset-cache != 'true'
+      shell: bash
+      run: |
+        CACHE_DIR="/tmp/renovate/cache/renovate/repository"
+        CACHE_ARCHIVE="renovate_cache.tar.gz"
+        
+        # Skip if no cache found
+        if [ ! -d cache-download ]; then
+          echo "📭 No cache found - first run or cache expired"
+          exit 0
+        fi
+        
+        # Check if archive exists
+        if [ ! -f cache-download/${CACHE_ARCHIVE} ]; then
+          echo "📭 Cache archive not found"
+          exit 0
+        fi
+        
+        # Create cache directory and extract
+        mkdir -p ${CACHE_DIR}
+        tar -xzf cache-download/${CACHE_ARCHIVE} -C ${CACHE_DIR}
+        
+        # Fix permissions for Renovate's Docker container (runs as uid 12021)
+        sudo chown -R 12021:0 /tmp/renovate/
+        
+        echo "✅ Cache restored successfully"
+
+    # ========================================================================
+    # 🔄 Run Renovate
+    # ========================================================================
+    - name: 🔄 Run Renovate
+      uses: renovatebot/github-action@v44.2.4
+      with:
+        configurationFile: ${{ inputs.config-file }}
+        token: ${{ steps.app-token.outputs.token }}
+      env:
+        LOG_LEVEL: ${{ inputs.log-level }}
+        RENOVATE_DRY_RUN: ${{ inputs.dry-run == 'true' && 'full' || 'null' }}
+        RENOVATE_REPOSITORIES: ${{ github.repository }}
+        RENOVATE_REPOSITORY_CACHE: enabled
+
+    # ========================================================================
+    # 📦 Cache Persistence
+    # ========================================================================
+    - name: 📦 Compress renovate cache
+      if: always() && inputs.reset-cache != 'true'
+      shell: bash
+      run: |
+        CACHE_DIR="/tmp/renovate/cache/renovate/repository"
+        CACHE_ARCHIVE="renovate_cache.tar.gz"
+        
+        if [ -d "${CACHE_DIR}" ]; then
+          echo "📦 Compressing cache..."
+          tar -czvf ${CACHE_ARCHIVE} -C ${CACHE_DIR} . || true
+          echo "✅ Cache compressed: $(du -h ${CACHE_ARCHIVE} | cut -f1)"
+        else
+          echo "📭 No cache directory to compress"
+        fi
+
+    - name: 📤 Upload cache artifact
+      if: always() && inputs.reset-cache != 'true'
+      uses: actions/upload-artifact@v6
+      continue-on-error: true
+      with:
+        name: renovate-cache-v1
+        path: renovate_cache.tar.gz
+        retention-days: 7
+        if-no-files-found: ignore
+
+    # ========================================================================
+    # 📝 Summary
+    # ========================================================================
+    - name: 📝 Generate summary
+      if: always()
+      shell: bash
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🔄 Renovate Summary
+        
+        | Property | Value |
+        |:---------|:------|
+        | 🧪 Dry Run | \`${{ inputs.dry-run }}\` |
+        | 📝 Log Level | \`${{ inputs.log-level }}\` |
+        | 🗑️ Cache Reset | \`${{ inputs.reset-cache }}\` |
+        | 📦 Cache | \`enabled\` |
+        
+        ### 📚 Configuration
+        
+        - **Config file**: \`${{ inputs.config-file }}\`
+        - **Authentication**: GitHub App
+        
+        ---
+        
+        <sub>🤖 Powered by Renovate</sub>
+        EOF

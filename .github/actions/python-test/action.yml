@@ -1,0 +1,121 @@
+# ============================================================================
+# 🧪 Python Test Action
+# ============================================================================
+# Reusable composite action for running Python tests with pytest.
+# Supports coverage reporting and Codecov upload.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/python-test@master
+#     with:
+#       src-path: "src/mypackage"
+#       test-path: "tests/"
+# ============================================================================
+
+name: "🧪 Python Test"
+description: "Run Python tests with pytest and coverage"
+
+inputs:
+  test-path:
+    description: "Path to tests directory"
+    required: false
+    default: "tests/"
+  src-path:
+    description: "Source path for coverage measurement"
+    required: false
+    default: "src/"
+  coverage-report:
+    description: "Generate coverage report"
+    required: false
+    default: "true"
+  coverage-format:
+    description: "Coverage report format (xml, html, term-missing)"
+    required: false
+    default: "xml"
+  test-args:
+    description: "Additional pytest arguments"
+    required: false
+    default: "-v"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  use-uv:
+    description: "Use uv to run pytest"
+    required: false
+    default: "true"
+  upload-coverage:
+    description: "Upload coverage to Codecov"
+    required: false
+    default: "false"
+  codecov-token:
+    description: "Codecov token for upload"
+    required: false
+    default: ""
+
+outputs:
+  passed:
+    description: "Whether tests passed"
+    value: ${{ steps.test.outputs.passed }}
+  coverage:
+    description: "Coverage percentage"
+    value: ${{ steps.coverage.outputs.percentage }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🧪 Run tests with coverage
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        echo "🧪 Running pytest..."
+        
+        # Build coverage args
+        COV_ARGS=""
+        if [ "${{ inputs.coverage-report }}" = "true" ]; then
+          COV_ARGS="--cov=${{ inputs.src-path }} --cov-report=${{ inputs.coverage-format }} --cov-report=term-missing"
+        fi
+        
+        if [ "${{ inputs.use-uv }}" = "true" ]; then
+          uv run pytest ${{ inputs.test-path }} $COV_ARGS ${{ inputs.test-args }}
+        else
+          pytest ${{ inputs.test-path }} $COV_ARGS ${{ inputs.test-args }}
+        fi
+        
+        EXIT_CODE=$?
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "✅ All tests passed"
+        else
+          echo "passed=false" >> $GITHUB_OUTPUT
+          echo "❌ Some tests failed"
+          exit $EXIT_CODE
+        fi
+
+    - name: 📊 Extract coverage percentage
+      id: coverage
+      if: inputs.coverage-report == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f coverage.xml ]; then
+          # Extract coverage from XML
+          COVERAGE=$(grep -oP 'line-rate="\K[^"]+' coverage.xml | head -1 || echo "0")
+          PERCENTAGE=$(echo "$COVERAGE * 100" | bc -l 2>/dev/null | cut -d'.' -f1 || echo "N/A")
+          echo "percentage=${PERCENTAGE}%" >> $GITHUB_OUTPUT
+          echo "📊 Coverage: ${PERCENTAGE}%"
+        else
+          echo "percentage=N/A" >> $GITHUB_OUTPUT
+          echo "📊 Coverage file not found"
+        fi
+
+    - name: 📤 Upload coverage to Codecov
+      if: inputs.upload-coverage == 'true' && inputs.codecov-token != ''
+      uses: codecov/codecov-action@v5
+      with:
+        files: ${{ inputs.working-directory }}/coverage.xml
+        fail_ci_if_error: false
+        verbose: true
+        token: ${{ inputs.codecov-token }}
