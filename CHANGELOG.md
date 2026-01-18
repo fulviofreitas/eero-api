@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/fulviofreitas/eero-api/compare/v1.0.0...v1.1.0) (2026-01-18)
+
+### ✨ Features
+
+* **ci:** add PyPI publishing with Trusted Publishing ([15504b7](https://github.com/fulviofreitas/eero-api/commit/15504b783c79fd98f7e24b917656313190635245))
+
 ## 1.0.0 (2026-01-18)
 
 ### ✨ Features
