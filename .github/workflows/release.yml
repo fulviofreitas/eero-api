@@ -94,10 +94,24 @@ jobs:
           ref: master
           fetch-depth: 1
 
+      - name: 🏷️ Create dev version
+        id: version
+        run: |
+          DEV_VERSION="${{ needs.release.outputs.version }}.dev0"
+          echo "dev_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
+          
+          # Update pyproject.toml
+          sed -i "s/^version = \"[^\"]*\"/version = \"${DEV_VERSION}\"/" pyproject.toml
+          
+          # Update __init__.py
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"${DEV_VERSION}\"/" src/eero/__init__.py
+          
+          echo "📦 TestPyPI version: ${DEV_VERSION}"
+
       - name: 📦 Publish to TestPyPI
         uses: ./.github/actions/pypi-publish
         with:
-          version: ${{ needs.release.outputs.version }}
+          version: ${{ steps.version.outputs.dev_version }}
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
