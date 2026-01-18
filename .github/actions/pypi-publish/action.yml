@@ -39,9 +39,9 @@ inputs:
     required: false
     default: "false"
   attestations:
-    description: "Generate and upload attestations"
+    description: "Generate and upload attestations (requires additional setup)"
     required: false
-    default: "true"
+    default: "false"
 
 outputs:
   published:
@@ -106,11 +106,21 @@ runs:
     # ========================================================================
     # 📤 Publish to PyPI
     # ========================================================================
-    - name: 📤 Publish to PyPI
-      if: inputs.dry-run != 'true'
+    # Publish to TestPyPI (when repository-url is specified)
+    - name: 📤 Publish to TestPyPI
+      if: inputs.dry-run != 'true' && inputs.repository-url != ''
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        repository-url: ${{ inputs.repository-url || '' }}
+        repository-url: ${{ inputs.repository-url }}
+        skip-existing: ${{ inputs.skip-existing }}
+        attestations: ${{ inputs.attestations }}
+        verbose: true
+
+    # Publish to PyPI (default, when no repository-url)
+    - name: 📤 Publish to PyPI
+      if: inputs.dry-run != 'true' && inputs.repository-url == ''
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
         skip-existing: ${{ inputs.skip-existing }}
         attestations: ${{ inputs.attestations }}
         verbose: true
