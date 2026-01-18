@@ -1,16 +1,21 @@
 # ============================================================================
-# 🧪 Test Release to TestPyPI
+# 🧪 Test Release to TestPyPI (Manual Pre-Merge Testing)
 # ============================================================================
-# Manual workflow to test the publishing process on TestPyPI before
-# releasing to production PyPI. Uses the same pypi-publish action.
+# Manual workflow to test publishing with development versions BEFORE merging.
+# This is separate from the automated TestPyPI publish in release.yml.
+#
+# Use Case:
+#   - Test the build/publish process before merging a PR
+#   - Publish dev/rc versions for testing (e.g., 1.0.0.dev0, 1.0.0.rc1)
+#   - Validate package installation works correctly
 #
 # Usage:
 #   1. Go to Actions → 🧪 Test Release
 #   2. Click "Run workflow"
-#   3. Optionally add a version suffix (e.g., "dev1", "rc1")
+#   3. Add a version suffix (e.g., "dev1", "rc1", "a1")
 #   4. Verify package at https://test.pypi.org/project/eero-api/
 #
-# Note: TestPyPI requires separate Trusted Publisher configuration.
+# Note: This uses the same testpypi environment as the release workflow.
 # ============================================================================
 
 name: 🧪 Test Release

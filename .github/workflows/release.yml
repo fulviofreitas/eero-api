@@ -4,7 +4,7 @@
 # Automatically creates releases based on conventional commit messages.
 # Uses reusable actions for maintainability.
 #
-# Chain: CI → Release → [Publish PyPI ‖ Notify Downstream]
+# Chain: CI → Release → Publish TestPyPI → Publish PyPI → Notify Downstream
 # Triggers: After CI Pipeline succeeds on main/master
 # ============================================================================
 
@@ -70,12 +70,44 @@ jobs:
           dry-run: ${{ github.event.inputs.dry_run || 'false' }}
 
   # ============================================================================
-  # 📦 Publish to PyPI
+  # 📦 Publish to TestPyPI (validation step)
+  # ============================================================================
+  publish-testpypi:
+    name: 📦 Publish to TestPyPI
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.released == 'true' && github.event.inputs.dry_run != 'true'
+    timeout-minutes: 10
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/eero-api/
+
+    permissions:
+      id-token: write  # Required for Trusted Publishing
+      contents: read
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: 📦 Publish to TestPyPI
+        uses: ./.github/actions/pypi-publish
+        with:
+          version: ${{ needs.release.outputs.version }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  # ============================================================================
+  # 📦 Publish to PyPI (production)
   # ============================================================================
   publish-pypi:
     name: 📦 Publish to PyPI
     runs-on: ubuntu-latest
-    needs: release
+    needs: [release, publish-testpypi]
     if: needs.release.outputs.released == 'true' && github.event.inputs.dry_run != 'true'
     timeout-minutes: 10
 
@@ -100,12 +132,12 @@ jobs:
           version: ${{ needs.release.outputs.version }}
 
   # ============================================================================
-  # 🔔 Notify Downstream Repositories (runs in parallel with publish-pypi)
+  # 🔔 Notify Downstream Repositories
   # ============================================================================
   notify-downstream:
     name: 🔔 Notify Downstream
     runs-on: ubuntu-latest
-    needs: release
+    needs: [release, publish-pypi]
     if: needs.release.outputs.released == 'true' && github.event.inputs.dry_run != 'true'
 
     steps:
