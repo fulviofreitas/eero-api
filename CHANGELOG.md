@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1](https://github.com/fulviofreitas/eero-api/compare/v1.2.0...v1.2.1) (2026-01-18)
+
+### 🐛 Bug Fixes
+
+* **ci:** append dev0 suffix for TestPyPI versions ([752e77e](https://github.com/fulviofreitas/eero-api/commit/752e77ea77ec36446a9f7fdfe628ce528b62a17a))
+
 ## [1.2.0](https://github.com/fulviofreitas/eero-api/compare/v1.1.0...v1.2.0) (2026-01-18)
 
 ### ✨ Features
