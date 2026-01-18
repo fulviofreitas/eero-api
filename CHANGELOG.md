@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4](https://github.com/fulviofreitas/eero-api/compare/v1.2.3...v1.2.4) (2026-01-18)
+
+### 🐛 Bug Fixes
+
+* **ci:** inline pypi-publish steps to avoid composite action Docker issue ([a9d8eb2](https://github.com/fulviofreitas/eero-api/commit/a9d8eb20e43e91bafb86a8aa34c785f6ba86a9bb))
+
 ## [1.2.3](https://github.com/fulviofreitas/eero-api/compare/v1.2.2...v1.2.3) (2026-01-18)
 
 ### 🐛 Bug Fixes
