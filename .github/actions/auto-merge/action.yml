@@ -4,7 +4,17 @@
 # Reusable composite action for automatically merging approved PRs.
 # Uses pascalgn/automerge-action for reliable auto-merge functionality.
 #
-# Usage:
+# Authentication options (choose one):
+#   1. GitHub App (recommended for merging workflow files)
+#   2. GitHub token (default, cannot merge workflow files)
+#
+# Usage with GitHub App:
+#   - uses: fulviofreitas/eero-api/.github/actions/auto-merge@master
+#     with:
+#       app-id: ${{ secrets.RENOVATE_APP_ID }}
+#       app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+#
+# Usage with token:
 #   - uses: fulviofreitas/eero-api/.github/actions/auto-merge@master
 #     with:
 #       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -15,8 +25,17 @@ description: "Automatically merge approved PRs with required labels"
 
 inputs:
   github-token:
-    description: "GitHub token for merging"
-    required: true
+    description: "GitHub token for merging (use app-id/app-private-key instead for workflow files)"
+    required: false
+    default: ""
+  app-id:
+    description: "GitHub App ID for authentication (recommended for merging PRs with workflow changes)"
+    required: false
+    default: ""
+  app-private-key:
+    description: "GitHub App private key"
+    required: false
+    default: ""
   merge-labels:
     description: "Labels that trigger merge (comma-separated)"
     required: false
@@ -52,10 +71,42 @@ outputs:
   pr-number:
     description: "PR number that was processed"
     value: ${{ steps.automerge.outputs.pullRequestNumber }}
+  token:
+    description: "Generated GitHub App token (if app-id was provided)"
+    value: ${{ steps.app-token.outputs.token }}
 
 runs:
   using: "composite"
   steps:
+    # ========================================================================
+    # 🔑 Authentication
+    # ========================================================================
+    - name: 🔑 Generate GitHub App token
+      id: app-token
+      if: inputs.app-id != '' && inputs.app-private-key != ''
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+
+    - name: 🔐 Resolve authentication token
+      id: auth
+      shell: bash
+      run: |
+        if [[ -n "${{ steps.app-token.outputs.token }}" ]]; then
+          echo "token=${{ steps.app-token.outputs.token }}" >> $GITHUB_OUTPUT
+          echo "🔑 Using GitHub App token"
+        elif [[ -n "${{ inputs.github-token }}" ]]; then
+          echo "token=${{ inputs.github-token }}" >> $GITHUB_OUTPUT
+          echo "🔑 Using provided GitHub token"
+        else
+          echo "::error::No authentication provided. Set either app-id/app-private-key or github-token."
+          exit 1
+        fi
+
+    # ========================================================================
+    # 🤖 Auto-Merge
+    # ========================================================================
     - name: 🏷️ Format blocking labels
       id: format-labels
       shell: bash
@@ -75,7 +126,7 @@ runs:
       id: automerge
       uses: pascalgn/automerge-action@v0.16.4
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
         # Merge configuration
         MERGE_LABELS: "${{ inputs.merge-labels }},${{ steps.format-labels.outputs.blocking-labels }}"
         MERGE_METHOD: ${{ inputs.merge-method }}
