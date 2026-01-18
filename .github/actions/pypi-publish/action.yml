@@ -1,0 +1,198 @@
+# ============================================================================
+# 📦 PyPI Publish Action
+# ============================================================================
+# Reusable composite action for building and publishing Python packages to PyPI.
+# Supports both PyPI and TestPyPI using Trusted Publishing (OIDC).
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/pypi-publish@master
+#     with:
+#       version: "1.0.0"
+#
+# Requirements:
+#   - Trusted Publisher configured on PyPI/TestPyPI
+#   - Job must have `id-token: write` permission
+#   - Job should use an environment (e.g., `pypi` or `testpypi`)
+# ============================================================================
+
+name: "📦 PyPI Publish"
+description: "Build and publish Python package to PyPI using Trusted Publishing"
+
+inputs:
+  version:
+    description: "Package version being published"
+    required: true
+  python-version:
+    description: "Python version to use for building"
+    required: false
+    default: "3.12"
+  repository-url:
+    description: "PyPI repository URL (use https://test.pypi.org/legacy/ for TestPyPI)"
+    required: false
+    default: ""
+  skip-existing:
+    description: "Skip upload if version already exists"
+    required: false
+    default: "false"
+  dry-run:
+    description: "Build but don't upload"
+    required: false
+    default: "false"
+  attestations:
+    description: "Generate and upload attestations"
+    required: false
+    default: "true"
+
+outputs:
+  published:
+    description: "Whether the package was published"
+    value: ${{ steps.result.outputs.published }}
+  package-name:
+    description: "Name of the published package"
+    value: ${{ steps.build.outputs.package-name }}
+
+runs:
+  using: "composite"
+  steps:
+    # ========================================================================
+    # 🐍 Setup Python
+    # ========================================================================
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # ========================================================================
+    # 📦 Install Build Tools
+    # ========================================================================
+    - name: 📦 Install build tools
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    # ========================================================================
+    # 🏗️ Build Package
+    # ========================================================================
+    - name: 🏗️ Build package
+      id: build
+      shell: bash
+      run: |
+        echo "📦 Building package..."
+        python -m build
+        
+        # Extract package name from dist files
+        WHEEL=$(ls dist/*.whl 2>/dev/null | head -1)
+        if [ -n "$WHEEL" ]; then
+          PACKAGE_NAME=$(basename "$WHEEL" | cut -d'-' -f1)
+          echo "package-name=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "✅ Built: ${PACKAGE_NAME}"
+        fi
+        
+        echo ""
+        echo "📁 Build artifacts:"
+        ls -la dist/
+
+    # ========================================================================
+    # 🔍 Validate Package
+    # ========================================================================
+    - name: 🔍 Validate package
+      shell: bash
+      run: |
+        echo "🔍 Running twine check..."
+        twine check dist/*
+        echo "✅ Package validation passed"
+
+    # ========================================================================
+    # 📤 Publish to PyPI
+    # ========================================================================
+    - name: 📤 Publish to PyPI
+      if: inputs.dry-run != 'true'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: ${{ inputs.repository-url || '' }}
+        skip-existing: ${{ inputs.skip-existing }}
+        attestations: ${{ inputs.attestations }}
+        verbose: true
+
+    # ========================================================================
+    # 📊 Set Result
+    # ========================================================================
+    - name: 📊 Set result
+      id: result
+      shell: bash
+      run: |
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          echo "published=false" >> $GITHUB_OUTPUT
+          echo "🧪 Dry-run mode - package not published"
+        else
+          echo "published=true" >> $GITHUB_OUTPUT
+          echo "✅ Package published successfully"
+        fi
+
+    # ========================================================================
+    # 📝 Generate Summary
+    # ========================================================================
+    - name: 📝 Generate summary
+      if: always()
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        PACKAGE_NAME="${{ steps.build.outputs.package-name }}"
+        DRY_RUN="${{ inputs.dry-run }}"
+        REPO_URL="${{ inputs.repository-url }}"
+        
+        # Determine target registry
+        if [ -n "$REPO_URL" ] && [[ "$REPO_URL" == *"test.pypi"* ]]; then
+          REGISTRY="TestPyPI"
+          PACKAGE_URL="https://test.pypi.org/project/${PACKAGE_NAME}/"
+          INSTALL_CMD="pip install -i https://test.pypi.org/simple/ ${PACKAGE_NAME}==${VERSION}"
+        else
+          REGISTRY="PyPI"
+          PACKAGE_URL="https://pypi.org/project/${PACKAGE_NAME}/"
+          INSTALL_CMD="pip install ${PACKAGE_NAME}==${VERSION}"
+        fi
+        
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 📦 ${REGISTRY} Publication
+        
+        EOF
+        
+        if [ "$DRY_RUN" = "true" ]; then
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        > [!NOTE]
+        > ### 🧪 Dry-Run Mode
+        > Package was built but not published.
+        
+        EOF
+        fi
+        
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        | Property | Value |
+        |:---------|:------|
+        | 📦 Package | \`${PACKAGE_NAME}\` |
+        | 🏷️ Version | \`${VERSION}\` |
+        | 🎯 Registry | ${REGISTRY} |
+        
+        EOF
+        
+        if [ "$DRY_RUN" != "true" ]; then
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+        ### 📥 Installation
+        
+        \`\`\`bash
+        ${INSTALL_CMD}
+        \`\`\`
+        
+        🔗 [View on ${REGISTRY}](${PACKAGE_URL})
+        
+        EOF
+        fi
+        
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ### 📁 Build Artifacts
+        
+        \`\`\`
+        $(ls -la dist/)
+        \`\`\`
+        EOF

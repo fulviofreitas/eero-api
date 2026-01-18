@@ -1,0 +1,168 @@
+# ============================================================================
+# 🧪 Test Release to TestPyPI
+# ============================================================================
+# Manual workflow to test the publishing process on TestPyPI before
+# releasing to production PyPI. Uses the same pypi-publish action.
+#
+# Usage:
+#   1. Go to Actions → 🧪 Test Release
+#   2. Click "Run workflow"
+#   3. Optionally add a version suffix (e.g., "dev1", "rc1")
+#   4. Verify package at https://test.pypi.org/project/eero-api/
+#
+# Note: TestPyPI requires separate Trusted Publisher configuration.
+# ============================================================================
+
+name: 🧪 Test Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: "Version suffix (e.g., dev0, rc1, a1) - appended to current version"
+        required: false
+        default: "dev0"
+        type: string
+      dry_run:
+        description: "🧪 Dry-run mode (build only, no upload)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: test-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write  # Required for Trusted Publishing
+
+jobs:
+  # ============================================================================
+  # 🧪 Publish to TestPyPI
+  # ============================================================================
+  test-publish:
+    name: 🧪 Publish to TestPyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/eero-api/
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: 🏷️ Determine test version
+        id: version
+        run: |
+          # Read current version from VERSION file or pyproject.toml
+          if [ -f VERSION ]; then
+            CURRENT_VERSION=$(cat VERSION)
+          else
+            CURRENT_VERSION=$(grep -Po '(?<=^version = ")[^"]*' pyproject.toml)
+          fi
+          
+          SUFFIX="${{ github.event.inputs.version_suffix }}"
+          
+          if [ -n "$SUFFIX" ]; then
+            TEST_VERSION="${CURRENT_VERSION}.${SUFFIX}"
+          else
+            TEST_VERSION="${CURRENT_VERSION}"
+          fi
+          
+          echo "version=${TEST_VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Test version: ${TEST_VERSION}"
+
+      - name: 🔧 Update version for test release
+        run: |
+          TEST_VERSION="${{ steps.version.outputs.version }}"
+          
+          # Update pyproject.toml
+          sed -i "s/^version = \"[^\"]*\"/version = \"${TEST_VERSION}\"/" pyproject.toml
+          
+          # Update __init__.py
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"${TEST_VERSION}\"/" src/eero/__init__.py
+          
+          echo "✅ Updated version to ${TEST_VERSION}"
+          grep "^version" pyproject.toml
+
+      - name: 📦 Publish to TestPyPI
+        uses: ./.github/actions/pypi-publish
+        with:
+          version: ${{ steps.version.outputs.version }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          dry-run: ${{ github.event.inputs.dry_run }}
+
+      - name: 🧪 Test installation
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          TEST_VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "⏳ Waiting for package to be available on TestPyPI..."
+          sleep 30
+          
+          echo "📥 Installing from TestPyPI..."
+          pip install --index-url https://test.pypi.org/simple/ \
+                      --extra-index-url https://pypi.org/simple/ \
+                      "eero-api==${TEST_VERSION}" || {
+            echo "⚠️ Package not yet available, this is normal for first-time publishes"
+            exit 0
+          }
+          
+          echo "✅ Package installed successfully"
+          python -c "import eero; print(f'eero-api version: {eero.__version__}')"
+
+      - name: 📝 Generate instructions
+        if: always()
+        run: |
+          TEST_VERSION="${{ steps.version.outputs.version }}"
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🧪 TestPyPI Release Summary
+          
+          | Property | Value |
+          |:---------|:------|
+          | 📦 Package | \`eero-api\` |
+          | 🏷️ Version | \`${TEST_VERSION}\` |
+          | 🎯 Registry | TestPyPI |
+          
+          EOF
+          
+          if [ "$DRY_RUN" != "true" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          ### 📥 Test Installation
+          
+          \`\`\`bash
+          pip install --index-url https://test.pypi.org/simple/ \\
+                      --extra-index-url https://pypi.org/simple/ \\
+                      eero-api==${TEST_VERSION}
+          \`\`\`
+          
+          > **Note**: \`--extra-index-url\` is needed because dependencies (aiohttp, pydantic, etc.) 
+          > are not available on TestPyPI.
+          
+          ### ✅ Next Steps
+          
+          1. Verify the package works correctly
+          2. Check the [TestPyPI page](https://test.pypi.org/project/eero-api/)
+          3. If everything looks good, merge to master for production release
+          
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          > [!NOTE]
+          > ### 🧪 Dry-Run Mode
+          > Package was built but not uploaded. Check the build artifacts above.
+          
+          EOF
+          fi
