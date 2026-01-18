@@ -135,45 +135,25 @@ jobs:
   # 🔔 Notify Downstream Repositories
   # ============================================================================
   notify-downstream:
-    name: 🔔 Notify Downstream
+    name: 🔔 Notify ${{ matrix.repo }}
     runs-on: ubuntu-latest
     needs: [release, publish-pypi]
     if: needs.release.outputs.released == 'true' && github.event.inputs.dry_run != 'true'
 
+    strategy:
+      fail-fast: false
+      matrix:
+        repo:
+          - eero-ui
+          - eero-prometheus-exporter
+          - eeroctl
+
     steps:
-      - name: 🔔 Trigger eero-ui Renovate
+      - name: 🔔 Trigger ${{ matrix.repo }}
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
-          repository: fulviofreitas/eero-ui
-          event-type: eero-api-dependency-update-available
-          client-payload: |
-            {
-              "version": "${{ needs.release.outputs.version }}",
-              "tag": "v${{ needs.release.outputs.version }}",
-              "repository": "fulviofreitas/eero-api",
-              "triggered_by": "${{ github.actor }}"
-            }
-
-      - name: 🔔 Trigger eero-prometheus-exporter Renovate
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
-          repository: fulviofreitas/eero-prometheus-exporter
-          event-type: eero-api-dependency-update-available
-          client-payload: |
-            {
-              "version": "${{ needs.release.outputs.version }}",
-              "tag": "v${{ needs.release.outputs.version }}",
-              "repository": "fulviofreitas/eero-api",
-              "triggered_by": "${{ github.actor }}"
-            }
-
-      - name: 🔔 Trigger eero-cli Renovate
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
-          repository: fulviofreitas/eero-cli
+          repository: fulviofreitas/${{ matrix.repo }}
           event-type: eero-api-dependency-update-available
           client-payload: |
             {
@@ -186,22 +166,12 @@ jobs:
       - name: 📝 Notification summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🔔 Downstream Notification
+          ## 🔔 Notified: ${{ matrix.repo }}
 
-          | Repository | Status |
-          |:-----------|:-------|
-          | [eero-ui](https://github.com/fulviofreitas/eero-ui) | ✅ Notified |
-          | [eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter) | ✅ Notified |
-          | [eero-cli](https://github.com/fulviofreitas/eero-cli) | ✅ Notified |
-
-          ### 📦 Payload Sent
-
-          \`\`\`json
-          {
-            "version": "${{ needs.release.outputs.version }}",
-            "tag": "v${{ needs.release.outputs.version }}",
-            "repository": "fulviofreitas/eero-api"
-          }
-          \`\`\`
+          | Property | Value |
+          |:---------|:------|
+          | 📦 Repository | [\`${{ matrix.repo }}\`](https://github.com/fulviofreitas/${{ matrix.repo }}) |
+          | 🏷️ Version | \`${{ needs.release.outputs.version }}\` |
+          | 🎯 Event | \`eero-api-dependency-update-available\` |
 
           EOF
