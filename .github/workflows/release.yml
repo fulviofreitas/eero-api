@@ -94,6 +94,11 @@ jobs:
           ref: master
           fetch-depth: 1
 
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: 🏷️ Create dev version
         id: version
         run: |
@@ -108,12 +113,24 @@ jobs:
           
           echo "📦 TestPyPI version: ${DEV_VERSION}"
 
-      - name: 📦 Publish to TestPyPI
-        uses: ./.github/actions/pypi-publish
+      - name: 📦 Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: 🏗️ Build package
+        run: python -m build
+
+      - name: 🔍 Validate package
+        run: twine check dist/*
+
+      - name: 📤 Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          version: ${{ steps.version.outputs.dev_version }}
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
+          attestations: false
+          verbose: true
 
   # ============================================================================
   # 📦 Publish to PyPI (production)
@@ -140,10 +157,27 @@ jobs:
           ref: master
           fetch-depth: 1
 
-      - name: 📦 Publish to PyPI
-        uses: ./.github/actions/pypi-publish
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
         with:
-          version: ${{ needs.release.outputs.version }}
+          python-version: "3.12"
+
+      - name: 📦 Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: 🏗️ Build package
+        run: python -m build
+
+      - name: 🔍 Validate package
+        run: twine check dist/*
+
+      - name: 📤 Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: false
+          verbose: true
 
   # ============================================================================
   # 🔔 Notify Downstream Repositories
