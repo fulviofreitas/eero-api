@@ -60,10 +60,11 @@ asyncio.run(main())
 
 | Resource | URL |
 |----------|-----|
-| 📦 GitHub | [fulviofreitas/eero-api](https://github.com/fulviofreitas/eero-api) |
 | 📦 PyPI | [eero-api](https://pypi.org/project/eero-api/) |
+| 📦 GitHub | [fulviofreitas/eero-api](https://github.com/fulviofreitas/eero-api) |
 | 🐛 Issues | [Report a bug](https://github.com/fulviofreitas/eero-api/issues) |
-| 🖥️ CLI | [eero-cli](https://github.com/fulviofreitas/eero-cli) |
+| 📋 Changelog | [CHANGELOG.md](https://github.com/fulviofreitas/eero-api/blob/master/CHANGELOG.md) |
+| 🖥️ CLI | [eeroctl](https://github.com/fulviofreitas/eeroctl) |
 
 ---
 
