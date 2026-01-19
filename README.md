@@ -18,6 +18,8 @@
 
 ```bash
 pip install eero-api
+# or with uv
+uv add eero-api
 ```
 
 ## 🚀 Quick Start
