@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1](https://github.com/fulviofreitas/eero-api/compare/v1.3.0...v1.3.1) (2026-01-19)
+
+### 🐛 Bug Fixes
+
+* detect actual version change in semantic-release action ([5d2f1ab](https://github.com/fulviofreitas/eero-api/commit/5d2f1ab6b5dc68c684ab0ed3e19d08d897122db9))
+
+### 📚 Documentation
+
+* add uv installation method to README ([0b11d85](https://github.com/fulviofreitas/eero-api/commit/0b11d85085e8edfcbf533ee68a9a0f509e3c8021))
+
 ## [1.3.0](https://github.com/fulviofreitas/eero-api/compare/v1.2.6...v1.3.0) (2026-01-19)
 
 ### ✨ Features
