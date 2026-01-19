@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/fulviofreitas/eero-api/compare/v1.2.6...v1.3.0) (2026-01-19)
+
+### ✨ Features
+
+* release v1.3.0 ([c8f760b](https://github.com/fulviofreitas/eero-api/commit/c8f760bdc46cdf676c0eaede98ca613c8356684d))
+
+### 🐛 Bug Fixes
+
+* **ci:** remove invalid workflows permission from auto-merge ([d0cc06a](https://github.com/fulviofreitas/eero-api/commit/d0cc06adf5601d5a3343f6c96a7fbe45daeeb9b5))
+
 ## [1.2.6](https://github.com/fulviofreitas/eero-api/compare/v1.2.5...v1.2.6) (2026-01-18)
 
 ### 🐛 Bug Fixes
