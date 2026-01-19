@@ -62,6 +62,19 @@ runs:
           npm install -g $(echo "${{ inputs.extra-plugins }}" | tr ',' ' ')
         fi
 
+    - name: 📋 Capture current version
+      id: before
+      shell: bash
+      run: |
+        if [ -f VERSION ]; then
+          CURRENT_VERSION=$(cat VERSION)
+          echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+          echo "📌 Current version: v${CURRENT_VERSION}"
+        else
+          echo "version=" >> $GITHUB_OUTPUT
+          echo "📌 No VERSION file found"
+        fi
+
     - name: 🚀 Run semantic-release
       id: release
       shell: bash
@@ -79,15 +92,24 @@ runs:
       id: check-release
       shell: bash
       run: |
+        BEFORE_VERSION="${{ steps.before.outputs.version }}"
+        
         if [ -f VERSION ]; then
-          VERSION=$(cat VERSION)
-          echo "released=true" >> $GITHUB_OUTPUT
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "✅ Release v${VERSION} was created"
+          AFTER_VERSION=$(cat VERSION)
+          
+          if [ "$BEFORE_VERSION" != "$AFTER_VERSION" ]; then
+            echo "released=true" >> $GITHUB_OUTPUT
+            echo "version=${AFTER_VERSION}" >> $GITHUB_OUTPUT
+            echo "✅ New release: v${BEFORE_VERSION} → v${AFTER_VERSION}"
+          else
+            echo "released=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "📭 No version change (still v${AFTER_VERSION})"
+          fi
         else
           echo "released=false" >> $GITHUB_OUTPUT
           echo "version=" >> $GITHUB_OUTPUT
-          echo "📭 No release created"
+          echo "📭 No VERSION file found"
         fi
 
     - name: 📝 Generate release summary
@@ -95,6 +117,9 @@ runs:
       shell: bash
       run: |
         DRY_RUN="${{ inputs.dry-run }}"
+        RELEASED="${{ steps.check-release.outputs.released }}"
+        NEW_VERSION="${{ steps.check-release.outputs.version }}"
+        OLD_VERSION="${{ steps.before.outputs.version }}"
         
         cat >> $GITHUB_STEP_SUMMARY << 'EOF'
         ## 🚀 Release Summary
@@ -110,40 +135,41 @@ runs:
         EOF
         fi
         
-        if [ -f VERSION ]; then
-          VERSION=$(cat VERSION)
+        if [ "$RELEASED" = "true" ] && [ -n "$NEW_VERSION" ]; then
           if [ "$DRY_RUN" = "true" ]; then
             cat >> $GITHUB_STEP_SUMMARY << EOF
         ### 📋 Would Release
         
         | Property | Value |
         |:---------|:------|
-        | 🏷️ Version | \`v${VERSION}\` |
+        | 🏷️ Previous | \`v${OLD_VERSION}\` |
+        | 🏷️ New | \`v${NEW_VERSION}\` |
         
         EOF
           else
             cat >> $GITHUB_STEP_SUMMARY << EOF
         > [!TIP]
         > ### ✅ Release Created Successfully
-        > Version \`v${VERSION}\` has been published!
+        > Version \`v${NEW_VERSION}\` has been published!
         
         | Property | Value |
         |:---------|:------|
-        | 🏷️ Version | \`v${VERSION}\` |
-        | 🔗 Release | [View Release](../../releases/tag/v${VERSION}) |
+        | 🏷️ Previous | \`v${OLD_VERSION}\` |
+        | 🏷️ New | \`v${NEW_VERSION}\` |
+        | 🔗 Release | [View Release](../../releases/tag/v${NEW_VERSION}) |
         
         EOF
           fi
         else
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          cat >> $GITHUB_STEP_SUMMARY << EOF
         > [!NOTE]
         > ### 📭 No Release Created
-        > No releasable changes detected.
+        > No releasable changes detected (current version: v${OLD_VERSION}).
         >
         > Use [Conventional Commits](https://conventionalcommits.org):
-        > - `feat:` → Minor release
-        > - `fix:` → Patch release
-        > - `feat!:` → Major release
+        > - \`feat:\` → Minor release
+        > - \`fix:\` → Patch release
+        > - \`feat!:\` → Major release
         
         EOF
         fi
