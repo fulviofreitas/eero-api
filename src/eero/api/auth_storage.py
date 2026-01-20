@@ -60,7 +60,7 @@ class AuthCredentials:
             try:
                 session_expiry = datetime.fromisoformat(expiry)
             except ValueError:
-                _LOGGER.warning("Invalid date format in credentials: %s", expiry)
+                _LOGGER.warning("Invalid session_expiry date format in stored credentials")
 
         return cls(
             user_token=data.get("user_token"),

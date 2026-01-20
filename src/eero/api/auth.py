@@ -1,6 +1,5 @@
 """Authentication API for Eero."""
 
-import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
@@ -20,27 +19,11 @@ from ..exceptions import (
     EeroAuthenticationException,
     EeroNetworkException,
 )
+from ..logging import get_secure_logger
 from .auth_storage import AuthCredentials, CredentialStorage, create_storage
 from .base import BaseAPI
 
-_LOGGER = logging.getLogger(__name__)
-
-
-def _mask_sensitive(value: Optional[str], visible_chars: int = 8) -> str:
-    """Mask sensitive data for logging, showing only first few characters.
-
-    Args:
-        value: The sensitive value to mask
-        visible_chars: Number of characters to show before masking
-
-    Returns:
-        Masked string or 'None' if value is None
-    """
-    if not value:
-        return "None"
-    if len(value) <= visible_chars:
-        return "*" * len(value)
-    return f"{value[:visible_chars]}...***"
+_LOGGER = get_secure_logger(__name__)
 
 
 class AuthAPI(BaseAPI):
@@ -128,10 +111,7 @@ class AuthAPI(BaseAPI):
         # Set session cookie if we have a valid session
         if self._credentials.session_id and not self._credentials.is_session_expired():
             self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-            _LOGGER.debug(
-                "Loaded session cookie: s=%s",
-                _mask_sensitive(self._credentials.session_id),
-            )
+            _LOGGER.debug("Loaded session cookie from storage")
 
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
@@ -171,8 +151,8 @@ class AuthAPI(BaseAPI):
             # Extract user_token from the nested structure
             self._credentials.user_token = response.get("data", {}).get("user_token")
             _LOGGER.debug(
-                "Extracted user_token: %s",
-                _mask_sensitive(self._credentials.user_token),
+                "User token %s",
+                "received" if self._credentials.user_token else "not received",
             )
 
             if not self._credentials.user_token:
@@ -254,10 +234,7 @@ class AuthAPI(BaseAPI):
 
         try:
             # Log the verification attempt (sensitive data masked)
-            _LOGGER.debug(
-                "Verifying with token: %s",
-                _mask_sensitive(self._credentials.user_token),
-            )
+            _LOGGER.debug("Starting verification process")
             _LOGGER.debug("Verification code: [REDACTED]")
 
             # Make sure we have the user token set as a cookie
@@ -296,10 +273,7 @@ class AuthAPI(BaseAPI):
             # Update session cookie for future requests
             if self._credentials.session_id:
                 self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-                _LOGGER.debug(
-                    "Updated session cookie: s=%s",
-                    _mask_sensitive(self._credentials.session_id),
-                )
+                _LOGGER.debug("Session cookie updated successfully")
                 await self._save_credentials()
                 return True
 
@@ -333,10 +307,7 @@ class AuthAPI(BaseAPI):
             raise EeroAuthenticationException("No user token available. Login first.")
 
         try:
-            _LOGGER.debug(
-                "Resending verification code with token: %s",
-                _mask_sensitive(self._credentials.user_token),
-            )
+            _LOGGER.debug("Resending verification code")
 
             # Make sure we have the user token set as a cookie
             self.session.cookie_jar.update_cookies({"s": self._credentials.user_token})

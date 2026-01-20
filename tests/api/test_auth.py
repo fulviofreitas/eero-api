@@ -14,35 +14,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from eero.api.auth import AuthAPI, _mask_sensitive
+from eero.api.auth import AuthAPI
 from eero.api.auth_storage import AuthCredentials
 from eero.exceptions import EeroAuthenticationException
 
 from .conftest import api_error_response, api_success_response, create_mock_response
 
-
-class TestMaskSensitive:
-    """Tests for the _mask_sensitive helper function."""
-
-    def test_masks_long_string(self):
-        """Test masking a long sensitive string."""
-        result = _mask_sensitive("abcdefghijklmnop", visible_chars=8)
-        assert result == "abcdefgh...***"
-
-    def test_masks_short_string(self):
-        """Test masking a short string."""
-        result = _mask_sensitive("abc", visible_chars=8)
-        assert result == "***"
-
-    def test_handles_none(self):
-        """Test handling None value."""
-        result = _mask_sensitive(None)
-        assert result == "None"
-
-    def test_handles_empty_string(self):
-        """Test handling empty string."""
-        result = _mask_sensitive("")
-        assert result == "None"
+# Note: _mask_sensitive tests moved to tests/test_logging.py as part of SecureLogger
 
 
 class TestAuthCredentials:
