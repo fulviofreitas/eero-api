@@ -130,7 +130,9 @@ runs:
         # Merge configuration
         MERGE_LABELS: "${{ inputs.merge-labels }},${{ steps.format-labels.outputs.blocking-labels }}"
         MERGE_METHOD: ${{ inputs.merge-method }}
-        MERGE_COMMIT_MESSAGE: "pull-request-title-and-description"
+        # Use only PR title for squash commit message (not description)
+        # This prevents body-max-line-length failures from long release notes
+        MERGE_COMMIT_MESSAGE: "pull-request-title"
         MERGE_DELETE_BRANCH: ${{ inputs.delete-branch }}
         MERGE_RETRIES: "6"
         MERGE_RETRY_SLEEP: "10000"
