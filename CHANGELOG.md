@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1](https://github.com/fulviofreitas/eero-api/compare/v1.4.0...v1.4.1) (2026-01-20)
+
+### 🐛 Bug Fixes
+
+* **security:** resolve credential disclosure in logs and add SecureLogger ([40f46a0](https://github.com/fulviofreitas/eero-api/commit/40f46a08cb6211518917e608d0c16cb5febca948))
+
 ## [1.4.0](https://github.com/fulviofreitas/eero-api/compare/v1.3.1...v1.4.0) (2026-01-20)
 
 ### ✨ Features
