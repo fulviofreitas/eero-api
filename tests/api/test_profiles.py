@@ -480,3 +480,207 @@ class TestProfilesAPIBlockedAppModification:
         assert result is True
         # Only one call should have been made (get, not set)
         assert mock_session.request.call_count == 1
+
+
+# ========================== Profile Device Management Tests ==========================
+
+
+class TestProfilesAPIDeviceManagement:
+    """Tests for profile device management."""
+
+    @pytest.fixture
+    def profiles_api(self, mock_session):
+        """Create a ProfilesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ProfilesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices(self, profiles_api, mock_session):
+        """Test getting devices assigned to a profile."""
+        profile_data = {
+            "name": "Kids",
+            "devices": [
+                {"url": "/2.2/networks/net123/devices/dev001"},
+                {"url": "/2.2/networks/net123/devices/dev002"},
+            ],
+        }
+        mock_response = create_mock_response(200, api_success_response(profile_data))
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.get_profile_devices("network_123", "profile_001")
+
+        assert len(result) == 2
+        assert result[0]["url"] == "/2.2/networks/net123/devices/dev001"
+        assert result[1]["url"] == "/2.2/networks/net123/devices/dev002"
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_empty(self, profiles_api, mock_session):
+        """Test getting devices when profile has no devices assigned."""
+        profile_data = {"name": "Kids", "devices": []}
+        mock_response = create_mock_response(200, api_success_response(profile_data))
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.get_profile_devices("network_123", "profile_001")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_no_devices_field(self, profiles_api, mock_session):
+        """Test getting devices when profile has no devices field."""
+        profile_data = {"name": "Kids"}
+        mock_response = create_mock_response(200, api_success_response(profile_data))
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.get_profile_devices("network_123", "profile_001")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_not_authenticated(self, profiles_api):
+        """Test get_profile_devices raises when not authenticated."""
+        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await profiles_api.get_profile_devices("network_123", "profile_001")
+
+    @pytest.mark.asyncio
+    async def test_set_profile_devices(self, profiles_api, mock_session):
+        """Test setting devices for a profile."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        device_urls = [
+            "/2.2/networks/net123/devices/dev001",
+            "/2.2/networks/net123/devices/dev002",
+        ]
+        result = await profiles_api.set_profile_devices(
+            "network_123", "profile_001", device_urls
+        )
+
+        assert result is True
+        call_args = mock_session.request.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["devices"] == [
+            {"url": "/2.2/networks/net123/devices/dev001"},
+            {"url": "/2.2/networks/net123/devices/dev002"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_set_profile_devices_empty(self, profiles_api, mock_session):
+        """Test clearing all devices from a profile."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.set_profile_devices("network_123", "profile_001", [])
+
+        assert result is True
+        call_args = mock_session.request.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["devices"] == []
+
+    @pytest.mark.asyncio
+    async def test_set_profile_devices_not_authenticated(self, profiles_api):
+        """Test set_profile_devices raises when not authenticated."""
+        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await profiles_api.set_profile_devices(
+                "network_123", "profile_001", ["/2.2/networks/net123/devices/dev001"]
+            )
+
+    @pytest.mark.asyncio
+    async def test_add_device_to_profile(self, profiles_api, mock_session):
+        """Test adding a device to a profile."""
+        # First call returns current devices
+        get_response = create_mock_response(
+            200,
+            api_success_response(
+                {"devices": [{"url": "/2.2/networks/network_123/devices/dev001"}]}
+            ),
+        )
+        # Second call sets new list
+        set_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.side_effect = [get_response, set_response]
+
+        result = await profiles_api.add_device_to_profile(
+            "network_123", "profile_001", "dev002"
+        )
+
+        assert result is True
+        # Verify the set call includes both devices
+        set_call = mock_session.request.call_args_list[1]
+        payload = set_call.kwargs["json"]
+        assert len(payload["devices"]) == 2
+        device_urls = [d["url"] for d in payload["devices"]]
+        assert "/2.2/networks/network_123/devices/dev001" in device_urls
+        assert "/2.2/networks/network_123/devices/dev002" in device_urls
+
+    @pytest.mark.asyncio
+    async def test_add_device_to_profile_already_in_profile(self, profiles_api, mock_session):
+        """Test adding a device that's already in the profile."""
+        get_response = create_mock_response(
+            200,
+            api_success_response(
+                {"devices": [{"url": "/2.2/networks/network_123/devices/dev001"}]}
+            ),
+        )
+        mock_session.request.return_value = get_response
+
+        result = await profiles_api.add_device_to_profile(
+            "network_123", "profile_001", "dev001"
+        )
+
+        assert result is True
+        # Only one call should have been made (get, not set)
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_remove_device_from_profile(self, profiles_api, mock_session):
+        """Test removing a device from a profile."""
+        # First call returns current devices
+        get_response = create_mock_response(
+            200,
+            api_success_response(
+                {
+                    "devices": [
+                        {"url": "/2.2/networks/network_123/devices/dev001"},
+                        {"url": "/2.2/networks/network_123/devices/dev002"},
+                    ]
+                }
+            ),
+        )
+        # Second call sets new list
+        set_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.side_effect = [get_response, set_response]
+
+        result = await profiles_api.remove_device_from_profile(
+            "network_123", "profile_001", "dev001"
+        )
+
+        assert result is True
+        # Verify the set call only includes dev002
+        set_call = mock_session.request.call_args_list[1]
+        payload = set_call.kwargs["json"]
+        assert len(payload["devices"]) == 1
+        assert payload["devices"][0]["url"] == "/2.2/networks/network_123/devices/dev002"
+
+    @pytest.mark.asyncio
+    async def test_remove_device_from_profile_not_in_profile(self, profiles_api, mock_session):
+        """Test removing a device that's not in the profile."""
+        get_response = create_mock_response(
+            200,
+            api_success_response(
+                {"devices": [{"url": "/2.2/networks/network_123/devices/dev001"}]}
+            ),
+        )
+        mock_session.request.return_value = get_response
+
+        result = await profiles_api.remove_device_from_profile(
+            "network_123", "profile_001", "dev999"
+        )
+
+        assert result is True
+        # Only one call should have been made (get, not set)
+        assert mock_session.request.call_count == 1

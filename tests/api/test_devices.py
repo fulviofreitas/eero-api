@@ -202,6 +202,98 @@ class TestDevicesAPIBlockDevice:
         assert call_args.kwargs["json"] == {"blocked": True}
 
 
+class TestDevicesAPIPauseDevice:
+    """Tests for pause_device method."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        """Create a DevicesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_pause_device_success(self, devices_api, mock_session):
+        """Test successful device pausing."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        result = await devices_api.pause_device("network_123", "device_abc", True)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_unpause_device_success(self, devices_api, mock_session):
+        """Test successful device unpausing."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        result = await devices_api.pause_device("network_123", "device_abc", False)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_pause_device_sends_correct_payload(self, devices_api, mock_session):
+        """Test that correct payload is sent for pausing."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        await devices_api.pause_device("network_123", "device_abc", True)
+
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"] == {"paused": True}
+
+    @pytest.mark.asyncio
+    async def test_unpause_device_sends_correct_payload(self, devices_api, mock_session):
+        """Test that correct payload is sent for unpausing."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        mock_session.request.return_value = mock_response
+
+        await devices_api.pause_device("network_123", "device_abc", False)
+
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"] == {"paused": False}
+
+    @pytest.mark.asyncio
+    async def test_pause_device_not_authenticated(self, devices_api):
+        """Test pause_device raises when not authenticated."""
+        devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await devices_api.pause_device("network_123", "device_abc", True)
+
+    @pytest.mark.asyncio
+    async def test_get_paused_devices(self, devices_api, mock_session, sample_devices_list):
+        """Test getting list of paused devices."""
+        # Add paused state to devices
+        devices = sample_devices_list.copy()
+        devices[0]["paused"] = True
+        devices[1]["paused"] = False
+
+        mock_response = create_mock_response(200, api_success_response({"data": devices}))
+        mock_session.request.return_value = mock_response
+
+        result = await devices_api.get_paused_devices("network_123")
+
+        assert len(result) == 1
+        assert result[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+
+    @pytest.mark.asyncio
+    async def test_get_paused_devices_empty(self, devices_api, mock_session):
+        """Test getting paused devices when none are paused."""
+        devices = [
+            {"mac": "AA:BB:CC:DD:EE:FF", "paused": False},
+            {"mac": "11:22:33:44:55:66", "paused": False},
+        ]
+        mock_response = create_mock_response(200, api_success_response({"data": devices}))
+        mock_session.request.return_value = mock_response
+
+        result = await devices_api.get_paused_devices("network_123")
+
+        assert result == []
+
+
 class TestDevicesAPIPriority:
     """Tests for device priority management."""
 

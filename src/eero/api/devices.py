@@ -151,6 +151,74 @@ class DevicesAPI(AuthenticatedAPI):
 
         return bool(response.get("meta", {}).get("code") == 200)
 
+    # ==================== Device Pause ====================
+
+    async def pause_device(self, network_id: str, device_id: str, paused: bool) -> bool:
+        """Pause or unpause internet access for a device.
+
+        This temporarily blocks internet access for the device without removing it
+        from the network. The device remains connected but cannot access the internet.
+
+        Args:
+            network_id: ID of the network the device belongs to
+            device_id: ID of the device
+            paused: True to pause internet access, False to resume
+
+        Returns:
+            True if the operation was successful
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+
+        Note:
+            This is different from blocking a device:
+            - Paused: Device stays connected but has no internet access
+            - Blocked: Device is completely removed from the network
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug(f"{'Pausing' if paused else 'Unpausing'} device {device_id}")
+
+        response = await self.put(
+            f"networks/{network_id}/devices/{device_id}",
+            auth_token=auth_token,
+            json={"paused": paused},
+        )
+
+        return bool(response.get("meta", {}).get("code") == 200)
+
+    async def get_paused_devices(self, network_id: str) -> List[Dict[str, Any]]:
+        """Get list of paused devices.
+
+        Args:
+            network_id: ID of the network
+
+        Returns:
+            List of paused devices
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Getting paused devices for network %s", network_id)
+
+        # Get all devices
+        devices = await self.get_devices(network_id)
+
+        # Filter to only paused devices
+        paused = [device for device in devices if device.get("paused", False)]
+
+        _LOGGER.debug("Found %d paused devices", len(paused))
+
+        return paused
+
     # ==================== Device Priority ====================
 
     async def get_device_priority(self, network_id: str, device_id: str) -> Dict[str, Any]:

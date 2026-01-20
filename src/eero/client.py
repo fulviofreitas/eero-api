@@ -642,6 +642,62 @@ class EeroClient:
 
         return result
 
+    async def pause_device(
+        self, device_id: str, paused: bool, network_id: Optional[str] = None
+    ) -> bool:
+        """Pause or unpause internet access for a device.
+
+        This temporarily blocks internet access for the device without removing it
+        from the network. The device remains connected but cannot access the internet.
+
+        Args:
+            device_id: ID of the device
+            paused: True to pause internet access, False to resume
+            network_id: ID of the network the device belongs to (uses preferred network if None)
+
+        Returns:
+            True if the operation was successful
+
+        Raises:
+            EeroException: If no network ID is available
+
+        Note:
+            This is different from blocking a device:
+            - Paused: Device stays connected but has no internet access
+            - Blocked: Device is completely removed from the network
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        result = await self._api.devices.pause_device(network_id, device_id, paused)
+
+        # Clear device cache on success
+        if result:
+            cache_key = f"{network_id}_{device_id}"
+            if cache_key in self._cache.get("devices", {}):
+                del self._cache["devices"][cache_key]
+
+            # Also clear devices list cache
+            cache_key = f"{network_id}_devices"
+            if cache_key in self._cache.get("devices", {}):
+                del self._cache["devices"][cache_key]
+
+        return result
+
+    async def get_paused_devices(self, network_id: Optional[str] = None) -> List[Dict]:
+        """Get list of paused devices.
+
+        Args:
+            network_id: ID of the network (uses preferred network if None)
+
+        Returns:
+            List of paused devices
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id)
+        return await self._api.devices.get_paused_devices(network_id)
+
     async def pause_profile(
         self, profile_id: str, paused: bool, network_id: Optional[str] = None
     ) -> bool:
@@ -669,6 +725,141 @@ class EeroClient:
                 del self._cache["profiles"][cache_key]
 
             # Also clear profiles list cache
+            cache_key = f"{network_id}_profiles"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
+        return result
+
+    # ==================== Profile Device Management ====================
+
+    async def get_profile_devices(
+        self, profile_id: str, network_id: Optional[str] = None
+    ) -> List[Dict]:
+        """Get devices assigned to a profile.
+
+        Args:
+            profile_id: ID of the profile
+            network_id: ID of the network (uses preferred network if None)
+
+        Returns:
+            List of device data dictionaries
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id)
+        return await self._api.profiles.get_profile_devices(network_id, profile_id)
+
+    async def set_profile_devices(
+        self,
+        profile_id: str,
+        device_urls: List[str],
+        network_id: Optional[str] = None,
+    ) -> bool:
+        """Set the devices assigned to a profile.
+
+        This replaces all existing device assignments with the provided list.
+
+        Args:
+            profile_id: ID of the profile
+            device_urls: List of device URLs to assign to the profile.
+                        URLs should be in format: "/2.2/networks/{net_id}/devices/{dev_id}"
+            network_id: ID of the network (uses preferred network if None)
+
+        Returns:
+            True if the operation was successful
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        result = await self._api.profiles.set_profile_devices(
+            network_id, profile_id, device_urls
+        )
+
+        # Clear profile cache on success
+        if result:
+            cache_key = f"{network_id}_{profile_id}"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
+            # Also clear profiles list cache
+            cache_key = f"{network_id}_profiles"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
+        return result
+
+    async def add_device_to_profile(
+        self,
+        profile_id: str,
+        device_id: str,
+        network_id: Optional[str] = None,
+    ) -> bool:
+        """Add a device to a profile.
+
+        Args:
+            profile_id: ID of the profile
+            device_id: ID of the device to add
+            network_id: ID of the network (uses preferred network if None)
+
+        Returns:
+            True if the operation was successful
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        result = await self._api.profiles.add_device_to_profile(
+            network_id, profile_id, device_id
+        )
+
+        # Clear profile cache on success
+        if result:
+            cache_key = f"{network_id}_{profile_id}"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
+            cache_key = f"{network_id}_profiles"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
+        return result
+
+    async def remove_device_from_profile(
+        self,
+        profile_id: str,
+        device_id: str,
+        network_id: Optional[str] = None,
+    ) -> bool:
+        """Remove a device from a profile.
+
+        Args:
+            profile_id: ID of the profile
+            device_id: ID of the device to remove
+            network_id: ID of the network (uses preferred network if None)
+
+        Returns:
+            True if the operation was successful
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        result = await self._api.profiles.remove_device_from_profile(
+            network_id, profile_id, device_id
+        )
+
+        # Clear profile cache on success
+        if result:
+            cache_key = f"{network_id}_{profile_id}"
+            if cache_key in self._cache.get("profiles", {}):
+                del self._cache["profiles"][cache_key]
+
             cache_key = f"{network_id}_profiles"
             if cache_key in self._cache.get("profiles", {}):
                 del self._cache["profiles"][cache_key]

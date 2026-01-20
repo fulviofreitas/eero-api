@@ -235,12 +235,33 @@ await client.set_device_nickname(network_id, device_id, "Living Room TV")
 ### Block/Unblock a Client
 
 ```python
-# Block device
-await client.block_device(network_id, device_id, blocked=True)
+# Block device (removes from network completely)
+await client.block_device(device_id, blocked=True)
 
 # Unblock device
-await client.block_device(network_id, device_id, blocked=False)
+await client.block_device(device_id, blocked=False)
 ```
+
+### Pause/Unpause a Client
+
+Pausing a device temporarily suspends internet access while keeping it connected to the network.
+
+```python
+# Pause internet access for a device
+await client.pause_device(device_id, paused=True)
+
+# Resume internet access
+await client.pause_device(device_id, paused=False)
+
+# Get all paused devices
+paused_devices = await client.get_paused_devices()
+for device in paused_devices:
+    print(f"Paused: {device['nickname'] or device['hostname']}")
+```
+
+> **Note**: Pausing is different from blocking:
+> - **Paused**: Device stays connected to WiFi but has no internet access
+> - **Blocked**: Device is completely removed from the network
 
 ### Bandwidth Priority
 
@@ -274,11 +295,35 @@ for profile in profiles:
 ### Pause/Unpause Profile
 
 ```python
-# Pause internet access
-await client.pause_profile(network_id, profile_id, paused=True)
+# Pause internet access for all devices in profile
+await client.pause_profile(profile_id, paused=True)
 
 # Resume internet access
-await client.pause_profile(network_id, profile_id, paused=False)
+await client.pause_profile(profile_id, paused=False)
+```
+
+### Manage Profile Devices
+
+Assign or remove devices from a profile for easier management.
+
+```python
+# Get devices currently assigned to a profile
+devices = await client.get_profile_devices(profile_id)
+for device in devices:
+    print(f"Device URL: {device['url']}")
+
+# Add a device to a profile
+await client.add_device_to_profile(profile_id, device_id)
+
+# Remove a device from a profile
+await client.remove_device_from_profile(profile_id, device_id)
+
+# Set all devices for a profile (replaces existing assignments)
+device_urls = [
+    "/2.2/networks/{network_id}/devices/device1",
+    "/2.2/networks/{network_id}/devices/device2",
+]
+await client.set_profile_devices(profile_id, device_urls)
 ```
 
 ### Block Applications (Eero Plus)
