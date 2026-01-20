@@ -555,9 +555,7 @@ class TestProfilesAPIDeviceManagement:
             "/2.2/networks/net123/devices/dev001",
             "/2.2/networks/net123/devices/dev002",
         ]
-        result = await profiles_api.set_profile_devices(
-            "network_123", "profile_001", device_urls
-        )
+        result = await profiles_api.set_profile_devices("network_123", "profile_001", device_urls)
 
         assert result is True
         call_args = mock_session.request.call_args
@@ -604,9 +602,7 @@ class TestProfilesAPIDeviceManagement:
         set_response = create_mock_response(200, {"meta": {"code": 200}})
         mock_session.request.side_effect = [get_response, set_response]
 
-        result = await profiles_api.add_device_to_profile(
-            "network_123", "profile_001", "dev002"
-        )
+        result = await profiles_api.add_device_to_profile("network_123", "profile_001", "dev002")
 
         assert result is True
         # Verify the set call includes both devices
@@ -628,9 +624,7 @@ class TestProfilesAPIDeviceManagement:
         )
         mock_session.request.return_value = get_response
 
-        result = await profiles_api.add_device_to_profile(
-            "network_123", "profile_001", "dev001"
-        )
+        result = await profiles_api.add_device_to_profile("network_123", "profile_001", "dev001")
 
         assert result is True
         # Only one call should have been made (get, not set)

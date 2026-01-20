@@ -775,9 +775,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        result = await self._api.profiles.set_profile_devices(
-            network_id, profile_id, device_urls
-        )
+        result = await self._api.profiles.set_profile_devices(network_id, profile_id, device_urls)
 
         # Clear profile cache on success
         if result:
@@ -813,9 +811,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        result = await self._api.profiles.add_device_to_profile(
-            network_id, profile_id, device_id
-        )
+        result = await self._api.profiles.add_device_to_profile(network_id, profile_id, device_id)
 
         # Clear profile cache on success
         if result:
