@@ -186,6 +186,40 @@ class TestBaseAPIRequests:
         call_args = mock_session.request.call_args
         assert call_args[0] == ("GET", "https://other.api.com/endpoint")
 
+    @pytest.mark.asyncio
+    async def test_201_created_is_success(self, api_with_session, mock_session):
+        """Test that 201 Created is treated as a success response."""
+        expected_data = {"meta": {"code": 201}, "data": {"reboot": True}}
+        mock_response = create_mock_response(201, expected_data)
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.post("/eeros/reboot")
+
+        assert result["meta"]["code"] == 201
+        assert result["data"]["reboot"] is True
+
+    @pytest.mark.asyncio
+    async def test_204_no_content_returns_empty_dict(self, api_with_session, mock_session):
+        """Test that 204 No Content returns an empty dict."""
+        mock_response = create_mock_response(204, None, "")
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.delete("/endpoint")
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_202_accepted_is_success(self, api_with_session, mock_session):
+        """Test that 202 Accepted is treated as a success response."""
+        expected_data = {"meta": {"code": 202}, "data": {"pending": True}}
+        mock_response = create_mock_response(202, expected_data)
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.post("/async-operation")
+
+        assert result["meta"]["code"] == 202
+        assert result["data"]["pending"] is True
+
 
 class TestBaseAPIErrorHandling:
     """Tests for BaseAPI error handling."""

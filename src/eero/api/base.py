@@ -122,7 +122,11 @@ class BaseAPI:
                 response_text = await response.text()
                 _LOGGER.debug("Response status: %s", response.status)
 
-                if response.status == 200:
+                # All 2xx status codes are success responses
+                if 200 <= response.status < 300:
+                    # 204 No Content has no body
+                    if response.status == 204 or not response_text.strip():
+                        return {}
                     try:
                         return await response.json()
                     except Exception as e:
