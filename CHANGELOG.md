@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/fulviofreitas/eero-api/compare/v1.4.3...v2.0.0) (2026-01-22)
+
+### ⚠️ BREAKING CHANGES
+
+This is a major breaking release that fundamentally changes how the library returns data.
+
+* **All API methods now return raw JSON responses** from the Eero Cloud API without any transformation
+* **Pydantic models removed** - The `models/` directory has been deleted; downstream clients must handle their own data transformation
+* **No data extraction** - Response envelopes (`{"meta": {...}, "data": {...}}`) are returned as-is
+* **No field renaming** - Raw field names like `wan_ip` are preserved (previously renamed to `public_ip`)
+* **No status normalization** - Status values returned exactly as received from API
+
+### 🔄 Migration Required
+
+All downstream clients must update their code to:
+1. Extract data from the `{"meta": {...}, "data": {...}}` envelope
+2. Handle raw field names (e.g., `wan_ip` instead of `public_ip`)
+3. Implement their own data transformation/normalization
+
+See [MIGRATION.md](MIGRATION.md) for detailed upgrade instructions.
+
+### ✨ Features
+
+* **raw responses:** all endpoints return unmodified Eero Cloud API responses
+* **passthrough architecture:** library now focuses on HTTP transport and authentication only
+
+### 🗑️ Removed
+
+* `src/eero/models/` - All Pydantic models (Network, Device, Eero, Profile, Account, Activity, Diagnostics)
+* Data extraction logic from all API methods
+* Field renaming/mapping in all API methods
+* Status normalization (EeroNetworkStatus, EeroDeviceStatus enums removed from exports)
+* Fallback data creation on errors
+
+### 📚 Documentation
+
+* Added MIGRATION.md with comprehensive upgrade guide
+* Updated README.md with raw response examples
+
 ## [1.4.3](https://github.com/fulviofreitas/eero-api/compare/v1.4.2...v1.4.3) (2026-01-21)
 
 ### 🐛 Bug Fixes
