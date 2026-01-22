@@ -34,7 +34,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
-  id-token: write  # Required for PyPI Trusted Publishing
+  id-token: write # Required for PyPI Trusted Publishing
 
 jobs:
   # ============================================================================
@@ -82,13 +82,12 @@ jobs:
       needs.release.outputs.version != '' &&
       github.event.inputs.dry_run != 'true'
     timeout-minutes: 10
-
     environment:
       name: testpypi
       url: https://test.pypi.org/project/eero-api/
 
     permissions:
-      id-token: write  # Required for Trusted Publishing
+      id-token: write # Required for Trusted Publishing
       contents: read
 
     steps:
@@ -108,13 +107,13 @@ jobs:
         run: |
           DEV_VERSION="${{ needs.release.outputs.version }}.dev0"
           echo "dev_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
-          
+
           # Update pyproject.toml
           sed -i "s/^version = \"[^\"]*\"/version = \"${DEV_VERSION}\"/" pyproject.toml
-          
+
           # Update __init__.py
           sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"${DEV_VERSION}\"/" src/eero/__init__.py
-          
+
           echo "📦 TestPyPI version: ${DEV_VERSION}"
 
       - name: 📦 Install build tools
@@ -149,13 +148,12 @@ jobs:
       needs.release.outputs.version != '' &&
       github.event.inputs.dry_run != 'true'
     timeout-minutes: 10
-
     environment:
       name: pypi
       url: https://pypi.org/project/eero-api/
 
     permissions:
-      id-token: write  # Required for Trusted Publishing
+      id-token: write # Required for Trusted Publishing
       contents: read
 
     steps:
@@ -209,10 +207,19 @@ jobs:
           - eeroctl
 
     steps:
+      - name: 🔑 Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: fulviofreitas
+          repositories: ${{ matrix.repo }}
+
       - name: 🔔 Trigger ${{ matrix.repo }}
         uses: peter-evans/repository-dispatch@v4
         with:
-          token: ${{ secrets.EERO_EXPORTER_DISPATCH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           repository: fulviofreitas/${{ matrix.repo }}
           event-type: eero-api-dependency-update-available
           client-payload: |
