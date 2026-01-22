@@ -151,7 +151,7 @@ class EeroClient:
             if isinstance(data, list):
                 networks = data
             elif isinstance(data, dict):
-                networks = data.get("networks", data.get("data", []))
+                networks = data.get("networks") or data.get("data") or []
 
             if networks and len(networks) > 0:
                 # Extract ID from URL or id field
@@ -250,7 +250,7 @@ class EeroClient:
             if isinstance(data, list):
                 networks = data
             elif isinstance(data, dict):
-                networks = data.get("networks", data.get("data", []))
+                networks = data.get("networks") or data.get("data") or []
 
             if networks and len(networks) > 0:
                 first_network = networks[0]
