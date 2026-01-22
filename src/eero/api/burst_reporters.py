@@ -1,7 +1,11 @@
-"""Burst Reporters API for Eero."""
+"""Burst Reporters API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class BurstReportersAPI(AuthenticatedAPI):
-    """Burst Reporters API for Eero."""
+    """Burst Reporters API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the BurstReportersAPI.
@@ -22,14 +30,14 @@ class BurstReportersAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_burst_reporters(self, network_id: str) -> List[Dict[str, Any]]:
-        """Get burst reporters.
+    async def get_burst_reporters(self, network_id: str) -> Dict[str, Any]:
+        """Get burst reporters - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network to get burst reporters from
+            network_id: ID of the network to get reporters from
 
         Returns:
-            List of burst reporters
+            Raw API response: {"meta": {...}, "data": [...]}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,36 +47,23 @@ class BurstReportersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting burst reporters for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting burst reporters for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/burst_reporters",
             auth_token=auth_token,
         )
 
-        # Handle different response formats
-        data = response.get("data", [])
-        if isinstance(data, list):
-            # Data is directly a list of burst reporters
-            reporters_data = data
-        elif isinstance(data, dict) and "data" in data:
-            # Data is a dictionary with a nested data field
-            reporters_data = data.get("data", [])
-        else:
-            # Fallback to empty list
-            reporters_data = []
-
-        return reporters_data
-
-    async def get_burst_reporter(self, network_id: str, reporter_id: str) -> Dict[str, Any]:
-        """Get a specific burst reporter.
+    async def create_burst_reporter(
+        self, network_id: str, reporter_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create a burst reporter - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
-            reporter_id: ID of the burst reporter to get
+            reporter_data: Burst reporter data
 
         Returns:
-            Burst reporter data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -78,11 +73,9 @@ class BurstReportersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting burst reporter {reporter_id} for network {network_id}")
-
-        response = await self.get(
-            f"networks/{network_id}/burst_reporters/{reporter_id}",
+        _LOGGER.debug("Creating burst reporter for network %s: %s", network_id, reporter_data)
+        return await self.post(
+            f"networks/{network_id}/burst_reporters",
             auth_token=auth_token,
+            json=reporter_data,
         )
-
-        return response.get("data", {})

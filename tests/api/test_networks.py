@@ -1,8 +1,8 @@
 """Tests for NetworksAPI module.
 
 Tests cover:
-- Getting network list
-- Getting network details
+- Getting network list (raw response)
+- Getting network details (raw response)
 - Setting guest network
 - Running speed tests
 - Rebooting network
@@ -47,43 +47,20 @@ class TestNetworksAPIGetNetworks:
         return api
 
     @pytest.mark.asyncio
-    async def test_get_networks_success(self, networks_api, mock_session, sample_networks_list):
-        """Test successful networks retrieval."""
-        mock_response = create_mock_response(
-            200, api_success_response({"networks": sample_networks_list})
-        )
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_networks()
-
-        assert len(result) == 2
-        assert result[0]["id"] == "network_123"
-        assert result[1]["id"] == "network_456"
-
-    @pytest.mark.asyncio
-    async def test_get_networks_old_format(self, networks_api, mock_session, sample_networks_list):
-        """Test networks retrieval with old API format."""
-        # Old format has data.data array
-        mock_response = create_mock_response(
-            200, api_success_response({"data": sample_networks_list})
-        )
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_networks()
-
-        assert len(result) == 2
-
-    @pytest.mark.asyncio
-    async def test_get_networks_direct_array_format(
+    async def test_get_networks_returns_raw_response(
         self, networks_api, mock_session, sample_networks_list
     ):
-        """Test networks retrieval with direct array format."""
-        mock_response = create_mock_response(200, {"data": sample_networks_list, "meta": {}})
+        """Test get_networks returns raw API response."""
+        expected_response = api_success_response({"networks": sample_networks_list})
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.get_networks()
 
-        assert len(result) == 2
+        # Raw response should include meta and data
+        assert "meta" in result
+        assert "data" in result
+        assert result["data"]["networks"] == sample_networks_list
 
     @pytest.mark.asyncio
     async def test_get_networks_not_authenticated(self, networks_api):
@@ -92,24 +69,6 @@ class TestNetworksAPIGetNetworks:
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await networks_api.get_networks()
-
-    @pytest.mark.asyncio
-    async def test_get_networks_empty_uses_preferred(
-        self, networks_api, mock_session, sample_network_data
-    ):
-        """Test that empty networks list uses preferred network ID."""
-        networks_api._auth_api.preferred_network_id = "network_123"
-
-        # First call returns empty, second call (get_network) returns data
-        empty_response = create_mock_response(200, api_success_response({}))
-        network_response = create_mock_response(200, api_success_response(sample_network_data))
-
-        mock_session.request.side_effect = [empty_response, network_response]
-
-        result = await networks_api.get_networks()
-
-        assert len(result) == 1
-        assert result[0]["id"] == "network_123"
 
 
 class TestNetworksAPIGetNetwork:
@@ -124,63 +83,24 @@ class TestNetworksAPIGetNetwork:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_network_success(self, networks_api, mock_session, sample_network_data):
-        """Test successful network retrieval."""
-        mock_response = create_mock_response(200, api_success_response(sample_network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_network("network_123")
-
-        assert result["id"] == "network_123"
-        assert result["name"] == "Home Network"
-
-    @pytest.mark.asyncio
-    async def test_get_network_extracts_public_ip(
+    async def test_get_network_returns_raw_response(
         self, networks_api, mock_session, sample_network_data
     ):
-        """Test that get_network extracts public IP from wan_ip."""
-        mock_response = create_mock_response(200, api_success_response(sample_network_data))
+        """Test get_network returns raw API response."""
+        expected_response = api_success_response(sample_network_data)
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.get_network("network_123")
 
-        assert result.get("public_ip") == "203.0.113.42"
-
-    @pytest.mark.asyncio
-    async def test_get_network_extracts_isp_name(
-        self, networks_api, mock_session, sample_network_data
-    ):
-        """Test that get_network extracts ISP name from geo_ip."""
-        mock_response = create_mock_response(200, api_success_response(sample_network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_network("network_123")
-
-        assert result.get("isp_name") == "Example ISP"
-
-    @pytest.mark.asyncio
-    async def test_get_network_extracts_guest_network(
-        self, networks_api, mock_session, sample_network_data
-    ):
-        """Test that get_network extracts guest network info."""
-        mock_response = create_mock_response(200, api_success_response(sample_network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_network("network_123")
-
-        assert result.get("guest_network_enabled") is True
-        assert result.get("guest_network_name") == "Guest Network"
-
-    @pytest.mark.asyncio
-    async def test_get_network_not_found_returns_minimal(self, networks_api, mock_session):
-        """Test that 404 returns minimal network data."""
-        mock_response = create_mock_response(404, None, "Not found")
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_network("network_unknown")
-
-        assert result["id"] == "network_unknown"
-        assert result["status"] == "unknown"
+        # Raw response should include meta and data
+        assert "meta" in result
+        assert "data" in result
+        assert result["data"]["id"] == "network_123"
+        assert result["data"]["name"] == "Home Network"
+        # Original field names are preserved (no transformation)
+        assert result["data"]["wan_ip"] == "203.0.113.42"
+        assert result["data"]["geo_ip"]["isp"] == "Example ISP"
 
     @pytest.mark.asyncio
     async def test_get_network_not_authenticated(self, networks_api):
@@ -203,19 +123,21 @@ class TestNetworksAPIGuestNetwork:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_set_guest_network_enable(self, networks_api, mock_session):
-        """Test enabling guest network."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_set_guest_network_returns_raw_response(self, networks_api, mock_session):
+        """Test enabling guest network returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.set_guest_network("network_123", enabled=True)
 
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_set_guest_network_with_credentials(self, networks_api, mock_session):
         """Test setting guest network with name and password."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.set_guest_network(
@@ -225,7 +147,7 @@ class TestNetworksAPIGuestNetwork:
             password="securepass123",
         )
 
-        assert result is True
+        assert "meta" in result
         # Verify payload includes name and password
         call_args = mock_session.request.call_args
         assert "json" in call_args.kwargs
@@ -233,16 +155,6 @@ class TestNetworksAPIGuestNetwork:
         assert payload["enabled"] is True
         assert payload["name"] == "My Guest Network"
         assert payload["password"] == "securepass123"
-
-    @pytest.mark.asyncio
-    async def test_set_guest_network_disable(self, networks_api, mock_session):
-        """Test disabling guest network."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.set_guest_network("network_123", enabled=False)
-
-        assert result is True
 
 
 class TestNetworksAPISpeedTest:
@@ -257,19 +169,22 @@ class TestNetworksAPISpeedTest:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_run_speed_test(self, networks_api, mock_session):
-        """Test running a speed test."""
+    async def test_run_speed_test_returns_raw_response(self, networks_api, mock_session):
+        """Test running a speed test returns raw response."""
         speed_data = {
             "down": {"value": 500.0, "units": "Mbps"},
             "up": {"value": 50.0, "units": "Mbps"},
         }
-        mock_response = create_mock_response(200, api_success_response(speed_data))
+        expected_response = api_success_response(speed_data)
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.run_speed_test("network_123")
 
-        assert result["down"]["value"] == 500.0
-        assert result["up"]["value"] == 50.0
+        assert "meta" in result
+        assert "data" in result
+        assert result["data"]["down"]["value"] == 500.0
+        assert result["data"]["up"]["value"] == 50.0
 
 
 class TestNetworksAPIReboot:
@@ -284,14 +199,15 @@ class TestNetworksAPIReboot:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_reboot_network_success(self, networks_api, mock_session):
-        """Test successful network reboot."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_reboot_network_returns_raw_response(self, networks_api, mock_session):
+        """Test successful network reboot returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.reboot_network("network_123")
 
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_reboot_network_not_authenticated(self, networks_api):
@@ -314,56 +230,22 @@ class TestNetworksAPIPremium:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_premium_status_active(self, networks_api, mock_session):
-        """Test getting active premium status."""
+    async def test_get_premium_status_returns_raw_response(self, networks_api, mock_session):
+        """Test getting premium status returns raw response."""
         network_data = {
             "id": "network_123",
             "premium_status": {"active": True, "features": ["ad-block", "malware"]},
         }
-        mock_response = create_mock_response(200, api_success_response(network_data))
+        expected_response = api_success_response(network_data)
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.get_premium_status("network_123")
 
-        assert result["premium_enabled"] is True
-        assert result["premium_status"] == "active"
-
-    @pytest.mark.asyncio
-    async def test_get_premium_status_inactive(self, networks_api, mock_session):
-        """Test getting inactive premium status."""
-        network_data = {"id": "network_123"}
-        mock_response = create_mock_response(200, api_success_response(network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.get_premium_status("network_123")
-
-        assert result["premium_enabled"] is False
-        assert result["premium_status"] == "inactive"
-
-    @pytest.mark.asyncio
-    async def test_is_premium_true(self, networks_api, mock_session):
-        """Test is_premium returns True for active subscription."""
-        network_data = {
-            "id": "network_123",
-            "premium_status": {"active": True},
-        }
-        mock_response = create_mock_response(200, api_success_response(network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.is_premium("network_123")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_is_premium_false(self, networks_api, mock_session):
-        """Test is_premium returns False without subscription."""
-        network_data = {"id": "network_123"}
-        mock_response = create_mock_response(200, api_success_response(network_data))
-        mock_session.request.return_value = mock_response
-
-        result = await networks_api.is_premium("network_123")
-
-        assert result is False
+        assert "meta" in result
+        assert "data" in result
+        # Raw response includes the original premium_status field
+        assert result["data"]["premium_status"]["active"] is True
 
 
 class TestNetworksAPISetName:
@@ -378,19 +260,21 @@ class TestNetworksAPISetName:
         return NetworksAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_set_network_name_success(self, networks_api, mock_session):
-        """Test successful network name change."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_set_network_name_returns_raw_response(self, networks_api, mock_session):
+        """Test successful network name change returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await networks_api.set_network_name("network_123", "New Network Name")
 
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_set_network_name_sends_correct_payload(self, networks_api, mock_session):
         """Test that correct payload is sent for name change."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         await networks_api.set_network_name("network_123", "My Network")

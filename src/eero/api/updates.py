@@ -1,4 +1,8 @@
-"""Updates API for Eero."""
+"""Updates API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class UpdatesAPI(AuthenticatedAPI):
-    """Updates API for Eero."""
+    """Updates API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the UpdatesAPI.
@@ -23,13 +31,13 @@ class UpdatesAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_updates(self, network_id: str) -> Dict[str, Any]:
-        """Get available updates for the network.
+        """Get update information - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network to get updates for
+            network_id: ID of the network to get updates from
 
         Returns:
-            Updates data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,38 +47,8 @@ class UpdatesAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting updates for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting updates for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/updates",
             auth_token=auth_token,
         )
-
-        return response.get("data", {})
-
-    async def install_updates(self, network_id: str) -> bool:
-        """Install available updates for the network.
-
-        Args:
-            network_id: ID of the network to install updates for
-
-        Returns:
-            True if update installation was successful
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug(f"Installing updates for network {network_id}")
-
-        response = await self.post(
-            f"networks/{network_id}/updates",
-            auth_token=auth_token,
-            json={},
-        )
-
-        return bool(response.get("meta", {}).get("code") == 200)

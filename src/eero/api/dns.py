@@ -1,4 +1,8 @@
-"""DNS Settings API for Eero."""
+"""DNS Settings API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict, List, Optional
@@ -16,6 +20,9 @@ class DnsAPI(AuthenticatedAPI):
 
     Manages DNS configuration including custom DNS servers,
     DNS caching, and DNS mode settings.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
     """
 
     def __init__(self, auth_api: AuthAPI) -> None:
@@ -27,17 +34,16 @@ class DnsAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_dns_settings(self, network_id: str) -> Dict[str, Any]:
-        """Get DNS configuration for a network.
+        """Get DNS configuration for a network - returns raw Eero API response.
+
+        DNS settings are included in the network data. Look for fields like:
+        dns_caching, custom_dns, dns_servers, ipv6_upstream, etc.
 
         Args:
             network_id: ID of the network
 
         Returns:
-            Dictionary containing DNS settings:
-            - dns_caching: bool - Whether DNS caching is enabled
-            - dns_mode: str - DNS mode (auto, custom, cloudflare, etc.)
-            - custom_dns: list - Custom DNS server IPs
-            - ipv6_dns: bool - Whether IPv6 DNS is enabled
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -48,52 +54,17 @@ class DnsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug("Getting DNS settings for network %s", network_id)
+        return await self.get(f"networks/{network_id}", auth_token=auth_token)
 
-        response = await self.get(
-            f"networks/{network_id}",
-            auth_token=auth_token,
-        )
-
-        data = response.get("data", {})
-
-        # Extract DNS settings from various possible locations
-        dns_settings = {
-            "dns_caching": data.get("dns_caching", False),
-            "dns_mode": "auto",
-            "custom_dns": [],
-            "ipv6_dns": data.get("ipv6_upstream", False),
-        }
-
-        # Check for DNS settings in different formats
-        if "dns" in data:
-            dns_data = data["dns"]
-            if isinstance(dns_data, dict):
-                dns_settings["dns_mode"] = dns_data.get("mode", "auto")
-                dns_settings["custom_dns"] = dns_data.get("servers", [])
-                dns_settings["dns_caching"] = dns_data.get("caching", dns_settings["dns_caching"])
-
-        # Check for custom_dns directly in data
-        if "custom_dns" in data:
-            custom_dns = data["custom_dns"]
-            if isinstance(custom_dns, list) and custom_dns:
-                dns_settings["custom_dns"] = custom_dns
-                dns_settings["dns_mode"] = "custom"
-
-        # Check for dns_servers
-        if "dns_servers" in data:
-            dns_settings["custom_dns"] = data["dns_servers"]
-
-        return dns_settings
-
-    async def set_dns_caching(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable DNS caching.
+    async def set_dns_caching(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable DNS caching - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
             enabled: True to enable DNS caching, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -109,20 +80,18 @@ class DnsAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"dns_caching": enabled},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
     async def set_custom_dns(
         self,
         network_id: str,
         dns_servers: List[str],
-    ) -> bool:
-        """Set custom DNS servers.
+    ) -> Dict[str, Any]:
+        """Set custom DNS servers - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -131,7 +100,7 @@ class DnsAPI(AuthenticatedAPI):
                         e.g., ["1.1.1.1", "1.0.0.1"] for Cloudflare
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -148,22 +117,20 @@ class DnsAPI(AuthenticatedAPI):
 
         _LOGGER.debug("Setting custom DNS for network %s: %s", network_id, dns_servers)
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"custom_dns": dns_servers},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def clear_custom_dns(self, network_id: str) -> bool:
-        """Clear custom DNS servers and use automatic DNS.
+    async def clear_custom_dns(self, network_id: str) -> Dict[str, Any]:
+        """Clear custom DNS servers and use automatic DNS - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
         """
         return await self.set_custom_dns(network_id, [])
 
@@ -172,8 +139,8 @@ class DnsAPI(AuthenticatedAPI):
         network_id: str,
         mode: str,
         custom_servers: Optional[List[str]] = None,
-    ) -> bool:
-        """Set DNS mode for the network.
+    ) -> Dict[str, Any]:
+        """Set DNS mode for the network - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -181,7 +148,7 @@ class DnsAPI(AuthenticatedAPI):
             custom_servers: Custom DNS servers (required if mode is "custom")
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -206,27 +173,25 @@ class DnsAPI(AuthenticatedAPI):
             payload["custom_dns"] = []
         else:
             _LOGGER.warning("Invalid DNS mode: %s", mode)
-            return False
+            return {"meta": {"code": 400}, "data": {}}
 
         _LOGGER.debug("Setting DNS mode to %s for network %s", mode, network_id)
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json=payload,
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def set_ipv6_dns(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable IPv6 DNS.
+    async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable IPv6 DNS - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
             enabled: True to enable IPv6 DNS, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -242,10 +207,8 @@ class DnsAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"ipv6_upstream": enabled},
         )
-
-        return bool(response.get("meta", {}).get("code") == 200)

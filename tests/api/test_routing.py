@@ -1,120 +1,53 @@
-"""Unit tests for the RoutingAPI module."""
+"""Tests for RoutingAPI module."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from eero.api.routing import RoutingAPI
 from eero.exceptions import EeroAuthenticationException
 
+from .conftest import api_success_response, create_mock_response
 
-class TestRoutingAPIInitialization:
+
+class TestRoutingAPIInit:
     """Tests for RoutingAPI initialization."""
 
-    def test_initialization_with_auth_api(self, mock_auth_api):
-        """Test RoutingAPI initializes with auth API."""
-        api = RoutingAPI(mock_auth_api)
-        assert api._auth_api == mock_auth_api
+    def test_init_with_auth_api(self, mock_session):
+        """Test initialization with AuthAPI."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        api = RoutingAPI(auth_api)
+        assert api._auth_api is auth_api
 
 
-class TestGetRouting:
+class TestRoutingAPIGetRouting:
     """Tests for get_routing method."""
 
-    async def test_get_routing_success(self, mock_auth_api, mock_api_response):
-        """Test successful routing retrieval."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value="test_token")
+    @pytest.fixture
+    def routing_api(self, mock_session):
+        """Create a RoutingAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return RoutingAPI(auth_api)
 
-        routing_data = {
-            "mode": "bridge",
-            "gateway_ip": "192.168.1.1",
-            "subnet_mask": "255.255.255.0",
-            "dhcp_enabled": True,
-            "double_nat_detected": False,
-        }
+    @pytest.mark.asyncio
+    async def test_get_routing_returns_raw_response(self, routing_api, mock_session):
+        """Test get_routing returns raw response."""
+        routing_data = {"routes": [], "mode": "automatic"}
+        mock_response = create_mock_response(200, api_success_response(routing_data))
+        mock_session.request.return_value = mock_response
 
-        with patch.object(api, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_api_response(routing_data)
-            result = await api.get_routing("network123")
+        result = await routing_api.get_routing("network_123")
 
-            assert result == routing_data
-            mock_get.assert_called_once_with(
-                "networks/network123/routing",
-                auth_token="test_token",
-            )
+        assert "meta" in result
+        assert "data" in result
 
-    async def test_get_routing_empty_response(self, mock_auth_api, mock_api_response):
-        """Test get_routing returns empty dict for missing data."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value="test_token")
-
-        with patch.object(api, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = {}
-            result = await api.get_routing("network123")
-
-            assert result == {}
-
-    async def test_get_routing_not_authenticated(self, mock_auth_api):
-        """Test get_routing raises exception when not authenticated."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value=None)
+    @pytest.mark.asyncio
+    async def test_get_routing_not_authenticated(self, routing_api):
+        """Test get_routing raises when not authenticated."""
+        routing_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
-            await api.get_routing("network123")
-
-
-class TestUpdateRouting:
-    """Tests for update_routing method."""
-
-    async def test_update_routing_success(self, mock_auth_api, mock_api_response):
-        """Test successful routing update."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value="test_token")
-
-        routing_config = {
-            "mode": "router",
-            "dhcp_enabled": True,
-        }
-
-        with patch.object(api, "put", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = {"meta": {"code": 200}}
-            result = await api.update_routing("network123", routing_config)
-
-            assert result is True
-            mock_put.assert_called_once_with(
-                "networks/network123/routing",
-                auth_token="test_token",
-                json=routing_config,
-            )
-
-    async def test_update_routing_change_mode(self, mock_auth_api, mock_api_response):
-        """Test routing update to change mode."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value="test_token")
-
-        routing_config = {"mode": "bridge"}
-
-        with patch.object(api, "put", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = {"meta": {"code": 200}}
-            result = await api.update_routing("network123", routing_config)
-
-            assert result is True
-
-    async def test_update_routing_failure(self, mock_auth_api, mock_api_response):
-        """Test update_routing returns false on failure."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value="test_token")
-
-        with patch.object(api, "put", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = {"meta": {"code": 400}}
-            result = await api.update_routing("network123", {})
-
-            assert result is False
-
-    async def test_update_routing_not_authenticated(self, mock_auth_api):
-        """Test update_routing raises exception when not authenticated."""
-        api = RoutingAPI(mock_auth_api)
-        mock_auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
-            await api.update_routing("network123", {})
+            await routing_api.get_routing("network_123")

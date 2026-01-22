@@ -1,4 +1,8 @@
-"""Schedule API for Eero profile internet access schedules."""
+"""Schedule API for Eero profile internet access schedules.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict, List, Optional
@@ -16,6 +20,9 @@ class ScheduleAPI(AuthenticatedAPI):
 
     Manages internet access schedules for profiles, including bedtime
     restrictions and custom time blocks.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
     """
 
     def __init__(self, auth_api: AuthAPI) -> None:
@@ -27,18 +34,16 @@ class ScheduleAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_profile_schedule(self, network_id: str, profile_id: str) -> Dict[str, Any]:
-        """Get internet access schedule for a profile.
+        """Get internet access schedule for a profile - returns raw Eero API response.
+
+        The schedule data is in the 'schedule' field of the response data.
 
         Args:
             network_id: ID of the network
             profile_id: ID of the profile
 
         Returns:
-            Dictionary containing schedule configuration:
-            - enabled: bool - Whether schedule is active
-            - schedule_type: str - Type of schedule (bedtime, custom)
-            - time_blocks: list - List of blocked time periods
-            - days: list - Days the schedule applies to
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -49,45 +54,18 @@ class ScheduleAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug("Getting schedule for profile %s", profile_id)
-
-        response = await self.get(
+        return await self.get(
             f"networks/{network_id}/profiles/{profile_id}",
             auth_token=auth_token,
         )
-
-        data = response.get("data", {})
-        schedule = data.get("schedule", [])
-
-        # Parse schedule data
-        result = {
-            "enabled": len(schedule) > 0 if isinstance(schedule, list) else bool(schedule),
-            "schedule_type": "custom",
-            "time_blocks": [],
-            "paused": data.get("paused", False),
-        }
-
-        # Extract bedtime/schedule info from various formats
-        if isinstance(schedule, list) and schedule:
-            result["time_blocks"] = schedule
-        elif isinstance(schedule, dict):
-            result["enabled"] = schedule.get("enabled", False)
-            result["time_blocks"] = schedule.get("blocks", [])
-            result["schedule_type"] = schedule.get("type", "custom")
-
-        # Check for bedtime in state
-        state = data.get("state", {})
-        if isinstance(state, dict) and state.get("schedule"):
-            result["bedtime_active"] = True
-
-        return result
 
     async def set_profile_schedule(
         self,
         network_id: str,
         profile_id: str,
         time_blocks: List[Dict[str, Any]],
-    ) -> bool:
-        """Set internet access schedule for a profile.
+    ) -> Dict[str, Any]:
+        """Set internet access schedule for a profile - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -98,7 +76,7 @@ class ScheduleAPI(AuthenticatedAPI):
                 - end: end time (HH:MM format)
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -114,23 +92,21 @@ class ScheduleAPI(AuthenticatedAPI):
             len(time_blocks),
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}/profiles/{profile_id}",
             auth_token=auth_token,
             json={"schedule": time_blocks},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def clear_profile_schedule(self, network_id: str, profile_id: str) -> bool:
-        """Clear all schedules for a profile.
+    async def clear_profile_schedule(self, network_id: str, profile_id: str) -> Dict[str, Any]:
+        """Clear all schedules for a profile - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
             profile_id: ID of the profile
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
         """
         return await self.set_profile_schedule(network_id, profile_id, [])
 
@@ -141,8 +117,8 @@ class ScheduleAPI(AuthenticatedAPI):
         start_time: str,
         end_time: str,
         days: Optional[List[str]] = None,
-    ) -> bool:
-        """Enable bedtime mode for a profile.
+    ) -> Dict[str, Any]:
+        """Enable bedtime mode for a profile - returns raw Eero API response.
 
         Blocks internet access during the specified time period.
 
@@ -156,14 +132,22 @@ class ScheduleAPI(AuthenticatedAPI):
                          "friday", "saturday", "sunday"
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
         if days is None:
-            days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            days = [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            ]
 
         _LOGGER.debug(
             "Enabling bedtime for profile %s: %s - %s on %s",
@@ -188,8 +172,8 @@ class ScheduleAPI(AuthenticatedAPI):
         profile_id: str,
         start_time: str,
         end_time: str,
-    ) -> bool:
-        """Set bedtime for weekdays only (Monday-Friday).
+    ) -> Dict[str, Any]:
+        """Set bedtime for weekdays only (Monday-Friday) - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -198,7 +182,7 @@ class ScheduleAPI(AuthenticatedAPI):
             end_time: Time to end blocking (HH:MM format)
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
         """
         weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday"]
         return await self.enable_bedtime(network_id, profile_id, start_time, end_time, weekdays)
@@ -209,8 +193,8 @@ class ScheduleAPI(AuthenticatedAPI):
         profile_id: str,
         start_time: str,
         end_time: str,
-    ) -> bool:
-        """Set bedtime for weekends only (Saturday-Sunday).
+    ) -> Dict[str, Any]:
+        """Set bedtime for weekends only (Saturday-Sunday) - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -219,46 +203,7 @@ class ScheduleAPI(AuthenticatedAPI):
             end_time: Time to end blocking (HH:MM format)
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
         """
         weekend = ["saturday", "sunday"]
         return await self.enable_bedtime(network_id, profile_id, start_time, end_time, weekend)
-
-    async def add_time_off(
-        self,
-        network_id: str,
-        profile_id: str,
-        start_time: str,
-        end_time: str,
-        days: List[str],
-        name: Optional[str] = None,
-    ) -> bool:
-        """Add a time-off period when internet is blocked.
-
-        Args:
-            network_id: ID of the network
-            profile_id: ID of the profile
-            start_time: Time to start blocking (HH:MM format)
-            end_time: Time to end blocking (HH:MM format)
-            days: Days to apply
-            name: Optional name for this time block
-
-        Returns:
-            True if the operation was successful
-        """
-        # Get current schedule
-        current = await self.get_profile_schedule(network_id, profile_id)
-        current_blocks = current.get("time_blocks", [])
-
-        # Add new block
-        new_block: Dict[str, Any] = {
-            "days": days,
-            "start": start_time,
-            "end": end_time,
-        }
-        if name:
-            new_block["name"] = name
-
-        current_blocks.append(new_block)
-
-        return await self.set_profile_schedule(network_id, profile_id, current_blocks)

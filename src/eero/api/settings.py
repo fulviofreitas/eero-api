@@ -1,4 +1,8 @@
-"""Settings API for Eero."""
+"""Settings API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SettingsAPI(AuthenticatedAPI):
-    """Settings API for Eero."""
+    """Settings API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the SettingsAPI.
@@ -23,13 +31,13 @@ class SettingsAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_settings(self, network_id: str) -> Dict[str, Any]:
-        """Get network settings.
+        """Get network settings - returns raw Eero API response.
 
         Args:
             network_id: ID of the network to get settings from
 
         Returns:
-            Settings data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,39 +47,8 @@ class SettingsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting settings for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting settings for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/settings",
             auth_token=auth_token,
         )
-
-        return response.get("data", {})
-
-    async def update_settings(self, network_id: str, settings: Dict[str, Any]) -> bool:
-        """Update network settings.
-
-        Args:
-            network_id: ID of the network to update settings for
-            settings: Settings to update
-
-        Returns:
-            True if update was successful
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug(f"Updating settings for network {network_id}: {settings}")
-
-        response = await self.put(
-            f"networks/{network_id}/settings",
-            auth_token=auth_token,
-            json=settings,
-        )
-
-        return bool(response.get("meta", {}).get("code") == 200)
