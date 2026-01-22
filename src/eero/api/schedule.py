@@ -33,9 +33,7 @@ class ScheduleAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_profile_schedule(
-        self, network_id: str, profile_id: str
-    ) -> Dict[str, Any]:
+    async def get_profile_schedule(self, network_id: str, profile_id: str) -> Dict[str, Any]:
         """Get internet access schedule for a profile - returns raw Eero API response.
 
         The schedule data is in the 'schedule' field of the response data.
@@ -100,9 +98,7 @@ class ScheduleAPI(AuthenticatedAPI):
             json={"schedule": time_blocks},
         )
 
-    async def clear_profile_schedule(
-        self, network_id: str, profile_id: str
-    ) -> Dict[str, Any]:
+    async def clear_profile_schedule(self, network_id: str, profile_id: str) -> Dict[str, Any]:
         """Clear all schedules for a profile - returns raw Eero API response.
 
         Args:
@@ -189,9 +185,7 @@ class ScheduleAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
         """
         weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday"]
-        return await self.enable_bedtime(
-            network_id, profile_id, start_time, end_time, weekdays
-        )
+        return await self.enable_bedtime(network_id, profile_id, start_time, end_time, weekdays)
 
     async def set_weekend_bedtime(
         self,
@@ -212,6 +206,4 @@ class ScheduleAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
         """
         weekend = ["saturday", "sunday"]
-        return await self.enable_bedtime(
-            network_id, profile_id, start_time, end_time, weekend
-        )
+        return await self.enable_bedtime(network_id, profile_id, start_time, end_time, weekend)

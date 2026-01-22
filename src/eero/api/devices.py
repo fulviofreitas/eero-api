@@ -103,9 +103,7 @@ class DevicesAPI(AuthenticatedAPI):
             json={"nickname": nickname},
         )
 
-    async def block_device(
-        self, network_id: str, device_id: str, blocked: bool
-    ) -> Dict[str, Any]:
+    async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]:
         """Block or unblock a device - returns raw Eero API response.
 
         Args:
@@ -132,9 +130,7 @@ class DevicesAPI(AuthenticatedAPI):
             json={"blocked": blocked},
         )
 
-    async def pause_device(
-        self, network_id: str, device_id: str, paused: bool
-    ) -> Dict[str, Any]:
+    async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]:
         """Pause or unpause internet access for a device - returns raw Eero API response.
 
         This temporarily blocks internet access for the device without removing it

@@ -223,7 +223,6 @@ class TestDevicesAPIPauseDevice:
             await devices_api.pause_device("network_123", "device_abc", True)
 
 
-
 class TestDevicesAPIPriority:
     """Tests for device priority management."""
 
@@ -264,4 +263,3 @@ class TestDevicesAPIPriority:
         payload = call_args.kwargs["json"]
         assert payload["prioritized"] is True
         assert payload["priority_duration"] == 120
-

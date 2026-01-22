@@ -5,7 +5,6 @@ Tests cover:
 - Cache management and expiry
 - Network ID resolution
 - Context manager lifecycle
-- Convenience methods
 """
 
 import time
@@ -235,8 +234,12 @@ class TestEeroClientEnsureNetworkId:
         client = EeroClient(session=mock_session)
         client._api.auth._credentials.preferred_network_id = None
 
-        # Mock networks API
-        client._api.networks.get_networks = AsyncMock(return_value=sample_networks_list)
+        # Mock networks API - returns raw response format
+        raw_response = {
+            "meta": {"code": 200},
+            "data": {"networks": sample_networks_list},
+        }
+        client._api.networks.get_networks = AsyncMock(return_value=raw_response)
 
         result = await client._ensure_network_id(None, auto_discover=True)
 

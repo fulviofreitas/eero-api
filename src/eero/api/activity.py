@@ -76,9 +76,7 @@ class ActivityAPI(AuthenticatedAPI):
             auth_token=auth_token,
         )
 
-    async def get_activity_for_device(
-        self, network_id: str, device_id: str
-    ) -> Dict[str, Any]:
+    async def get_activity_for_device(self, network_id: str, device_id: str) -> Dict[str, Any]:
         """Get activity data for a specific device - returns raw Eero API response.
 
         Args:
@@ -129,9 +127,7 @@ class ActivityAPI(AuthenticatedAPI):
             _LOGGER.warning("Invalid period '%s', defaulting to 'day'", period)
             period = "day"
 
-        _LOGGER.debug(
-            "Getting activity history for network %s (period: %s)", network_id, period
-        )
+        _LOGGER.debug("Getting activity history for network %s (period: %s)", network_id, period)
         return await self.get(
             f"networks/{network_id}/activity/history",
             auth_token=auth_token,

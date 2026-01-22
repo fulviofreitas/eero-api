@@ -73,9 +73,7 @@ class ReservationsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(
-            "Creating reservation for network %s: %s", network_id, reservation_data
-        )
+        _LOGGER.debug("Creating reservation for network %s: %s", network_id, reservation_data)
         return await self.post(
             f"networks/{network_id}/reservations",
             auth_token=auth_token,
@@ -115,9 +113,7 @@ class ReservationsAPI(AuthenticatedAPI):
             json=reservation_data,
         )
 
-    async def delete_reservation(
-        self, network_id: str, reservation_id: str
-    ) -> Dict[str, Any]:
+    async def delete_reservation(self, network_id: str, reservation_id: str) -> Dict[str, Any]:
         """Delete a DHCP reservation - returns raw Eero API response.
 
         Args:
@@ -135,9 +131,7 @@ class ReservationsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(
-            "Deleting reservation %s for network %s", reservation_id, network_id
-        )
+        _LOGGER.debug("Deleting reservation %s for network %s", reservation_id, network_id)
         return await self.delete(
             f"networks/{network_id}/reservations/{reservation_id}",
             auth_token=auth_token,

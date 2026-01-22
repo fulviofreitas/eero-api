@@ -248,7 +248,6 @@ class TestNetworksAPIPremium:
         assert result["data"]["premium_status"]["active"] is True
 
 
-
 class TestNetworksAPISetName:
     """Tests for setting network name."""
 

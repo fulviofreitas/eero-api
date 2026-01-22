@@ -73,9 +73,7 @@ class BurstReportersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(
-            "Creating burst reporter for network %s: %s", network_id, reporter_data
-        )
+        _LOGGER.debug("Creating burst reporter for network %s: %s", network_id, reporter_data)
         return await self.post(
             f"networks/{network_id}/burst_reporters",
             auth_token=auth_token,

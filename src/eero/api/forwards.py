@@ -53,9 +53,7 @@ class ForwardsAPI(AuthenticatedAPI):
             auth_token=auth_token,
         )
 
-    async def create_forward(
-        self, network_id: str, forward_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def create_forward(self, network_id: str, forward_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a port forward - returns raw Eero API response.
 
         Args:

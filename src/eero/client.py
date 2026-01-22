@@ -613,9 +613,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.networks.set_guest_network(
-            network_id, enabled, name, password
-        )
+        response = await self._api.networks.set_guest_network(network_id, enabled, name, password)
 
         # Clear network cache
         if network_id in self._cache.get("network", {}):
@@ -779,9 +777,7 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.networks.get_premium_status(network_id)
 
-    async def set_network_name(
-        self, name: str, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def set_network_name(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set network name - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_network_name(network_id, name)
@@ -986,9 +982,7 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Configure SQM - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.sqm.configure_sqm(
-            network_id, enabled, upload_mbps, download_mbps
-        )
+        return await self._api.sqm.configure_sqm(network_id, enabled, upload_mbps, download_mbps)
 
     # ==================== Device Priority ====================
 
@@ -1021,9 +1015,7 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.get_security_settings(network_id)
 
-    async def set_wpa3(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def set_wpa3(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set WPA3 - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.set_wpa3(network_id, enabled)
@@ -1035,16 +1027,12 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.set_band_steering(network_id, enabled)
 
-    async def set_upnp(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def set_upnp(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set UPnP - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.set_upnp(network_id, enabled)
 
-    async def set_ipv6(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def set_ipv6(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set IPv6 - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.set_ipv6(network_id, enabled)
@@ -1116,8 +1104,6 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set profile devices - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id)
-        response = await self._api.profiles.set_profile_devices(
-            network_id, profile_id, device_urls
-        )
+        response = await self._api.profiles.set_profile_devices(network_id, profile_id, device_urls)
         self._invalidate_profile_cache(network_id, profile_id)
         return response

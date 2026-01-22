@@ -74,9 +74,7 @@ class ProfilesAPI(AuthenticatedAPI):
             auth_token=auth_token,
         )
 
-    async def pause_profile(
-        self, network_id: str, profile_id: str, paused: bool
-    ) -> Dict[str, Any]:
+    async def pause_profile(self, network_id: str, profile_id: str, paused: bool) -> Dict[str, Any]:
         """Pause or unpause internet access for a profile - returns raw Eero API response.
 
         Args:
@@ -103,9 +101,7 @@ class ProfilesAPI(AuthenticatedAPI):
             json={"paused": paused},
         )
 
-    async def get_profile_devices(
-        self, network_id: str, profile_id: str
-    ) -> Dict[str, Any]:
+    async def get_profile_devices(self, network_id: str, profile_id: str) -> Dict[str, Any]:
         """Get profile data including devices - returns raw Eero API response.
 
         The devices are in the 'devices' field of the response data.
@@ -268,9 +264,7 @@ class ProfilesAPI(AuthenticatedAPI):
             json={list_type: domains},
         )
 
-    async def get_blocked_applications(
-        self, network_id: str, profile_id: str
-    ) -> Dict[str, Any]:
+    async def get_blocked_applications(self, network_id: str, profile_id: str) -> Dict[str, Any]:
         """Get blocked applications for a profile - returns raw Eero API response.
 
         Eero Plus feature. The blocked applications are in the 'blocked_applications'

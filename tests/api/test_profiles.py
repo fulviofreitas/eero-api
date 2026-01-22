@@ -230,9 +230,7 @@ class TestProfilesAPIBlockedApplications:
         return ProfilesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_blocked_applications_returns_raw_response(
-        self, profiles_api, mock_session
-    ):
+    async def test_get_blocked_applications_returns_raw_response(self, profiles_api, mock_session):
         """Test getting blocked applications returns raw response."""
         profile_data = {
             "name": "Kids",
@@ -258,9 +256,7 @@ class TestProfilesAPIBlockedApplications:
             await profiles_api.get_blocked_applications("network_123", "profile_001")
 
     @pytest.mark.asyncio
-    async def test_set_blocked_applications_returns_raw_response(
-        self, profiles_api, mock_session
-    ):
+    async def test_set_blocked_applications_returns_raw_response(self, profiles_api, mock_session):
         """Test setting blocked applications returns raw response."""
         expected_response = {"meta": {"code": 200}, "data": {}}
         mock_response = create_mock_response(200, expected_response)
@@ -296,9 +292,7 @@ class TestProfilesAPIDeviceManagement:
         return ProfilesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_profile_devices_returns_raw_response(
-        self, profiles_api, mock_session
-    ):
+    async def test_get_profile_devices_returns_raw_response(self, profiles_api, mock_session):
         """Test getting devices assigned to a profile returns raw response."""
         profile_data = {
             "name": "Kids",

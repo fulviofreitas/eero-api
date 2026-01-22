@@ -43,9 +43,7 @@ class TestEerosAPIGetEeros:
         return EerosAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_eeros_returns_raw_response(
-        self, eeros_api, mock_session, sample_eero_data
-    ):
+    async def test_get_eeros_returns_raw_response(self, eeros_api, mock_session, sample_eero_data):
         """Test get_eeros returns raw API response."""
         eeros_list = [sample_eero_data]
         expected_response = api_success_response(eeros_list)
@@ -78,9 +76,7 @@ class TestEerosAPIGetEero:
         return EerosAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_eero_returns_raw_response(
-        self, eeros_api, mock_session, sample_eero_data
-    ):
+    async def test_get_eero_returns_raw_response(self, eeros_api, mock_session, sample_eero_data):
         """Test get_eero returns raw API response."""
         expected_response = api_success_response(sample_eero_data)
         mock_response = create_mock_response(200, expected_response)
@@ -389,9 +385,7 @@ class TestEerosAPINightlightSet:
         assert payload["nightlight"]["schedule"]["off"] == "06:00"
 
     @pytest.mark.asyncio
-    async def test_set_nightlight_no_settings_returns_raw_response(
-        self, eeros_api, mock_session
-    ):
+    async def test_set_nightlight_no_settings_returns_raw_response(self, eeros_api, mock_session):
         """Test that setting no nightlight settings returns raw response."""
         expected_response = {"meta": {"code": 200}, "data": {}}
         mock_response = create_mock_response(200, expected_response)
