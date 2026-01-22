@@ -80,6 +80,14 @@ This project is a modern revamp of the original [eero-client](https://github.com
 
 ---
 
+## ⚠️ Important Notes
+
+> **Unofficial Project**: This library uses reverse-engineered APIs and is not affiliated with or endorsed by Eero.
+
+> **Amazon Login Limitation**: If your Eero account uses Amazon for login, this library may not work directly due to API limitations. See [Troubleshooting](Troubleshooting#amazon-login-accounts) for the workaround.
+
+---
+
 ## 💡 Tips
 
 - Use the sidebar to navigate between pages

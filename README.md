@@ -59,6 +59,12 @@ asyncio.run(main())
 | **[🛜 eero-ui](https://github.com/fulviofreitas/eero-ui)** | Svelte dashboard for network management |
 | **[📊 eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter)** | Prometheus metrics for monitoring |
 
+## ⚠️ Important Notes
+
+> **Unofficial Project**: This library uses reverse-engineered APIs and is not affiliated with or endorsed by Eero.
+
+> **Amazon Login Limitation**: If your Eero account uses Amazon for login, this library may not work directly due to API limitations. **Workaround**: Have someone in your household create a standard Eero account (with email/password) and invite them as an admin to your network. Then use those credentials to authenticate.
+
 ## 📄 License
 
 [MIT](LICENSE) — Use it, fork it, build cool stuff 🎉

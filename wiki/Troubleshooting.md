@@ -24,6 +24,28 @@ xattr -cr venv
 
 ## Authentication Issues
 
+### Amazon Login Accounts
+
+If your Eero account uses Amazon for login (Sign in with Amazon), this library may not work directly due to API limitations.
+
+**Workaround:**
+
+1. Have someone in your household create a standard Eero account using email and password (not Amazon login)
+2. In the Eero app, invite that account as an admin to your network
+3. Use those new credentials to authenticate with this library
+
+```python
+async with EeroClient() as client:
+    # Use the new email/password account, not your Amazon-linked account
+    await client.login("new-admin@example.com")
+    code = input("Enter verification code: ")
+    await client.verify(code)
+```
+
+> **Note**: The invited admin account will have full access to manage the network.
+
+---
+
 ### Session Expired
 
 If you see authentication errors, your session may have expired. Re-authenticate:
