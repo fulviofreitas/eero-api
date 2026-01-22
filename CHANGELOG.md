@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2](https://github.com/fulviofreitas/eero-api/compare/v2.0.1...v2.0.2) (2026-01-22)
+
+### 🐛 Bug Fixes
+
+* use GitHub App token for downstream notifications ([0b6d7c9](https://github.com/fulviofreitas/eero-api/commit/0b6d7c945408156f5d9e506bef6ab8759fa58f4a))
+
 ## [2.0.1](https://github.com/fulviofreitas/eero-api/compare/v2.0.0...v2.0.1) (2026-01-22)
 
 ### 🐛 Bug Fixes
