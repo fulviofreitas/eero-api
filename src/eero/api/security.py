@@ -1,4 +1,8 @@
-"""Security Settings API for Eero."""
+"""Security Settings API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict, Optional
@@ -16,6 +20,9 @@ class SecurityAPI(AuthenticatedAPI):
 
     Manages security-related network settings including WPA3,
     band steering, UPnP, and firewall settings.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
     """
 
     def __init__(self, auth_api: AuthAPI) -> None:
@@ -27,18 +34,16 @@ class SecurityAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_security_settings(self, network_id: str) -> Dict[str, Any]:
-        """Get security settings for a network.
+        """Get security settings for a network - returns raw Eero API response.
+
+        Security settings are included in the network data. Look for fields like:
+        wpa3, band_steering, upnp, ipv6_upstream, ipv6_downstream, thread, etc.
 
         Args:
             network_id: ID of the network
 
         Returns:
-            Dictionary containing security settings:
-            - wpa3: bool - WPA3 enabled
-            - band_steering: bool - Band steering enabled
-            - upnp: bool - UPnP enabled
-            - ipv6: bool - IPv6 enabled
-            - thread: bool - Thread enabled
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -49,35 +54,10 @@ class SecurityAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug("Getting security settings for network %s", network_id)
+        return await self.get(f"networks/{network_id}", auth_token=auth_token)
 
-        response = await self.get(
-            f"networks/{network_id}",
-            auth_token=auth_token,
-        )
-
-        data = response.get("data", {})
-
-        security_settings = {
-            "wpa3": data.get("wpa3", False),
-            "band_steering": data.get("band_steering", True),
-            "upnp": data.get("upnp", True),
-            "ipv6_upstream": data.get("ipv6_upstream", False),
-            "ipv6_downstream": data.get("ipv6_downstream", False),
-            "thread": data.get("thread", False),
-            "dns_caching": data.get("dns_caching", False),
-        }
-
-        # Check for security-specific section
-        if "security" in data:
-            sec = data["security"]
-            if isinstance(sec, dict):
-                security_settings["wpa3"] = sec.get("wpa3", security_settings["wpa3"])
-                security_settings["firewall"] = sec.get("firewall", "normal")
-
-        return security_settings
-
-    async def set_wpa3(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable WPA3 encryption.
+    async def set_wpa3(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable WPA3 encryption - returns raw Eero API response.
 
         Note: This may require a network restart to take effect.
         Not all devices support WPA3 - older devices may lose connectivity.
@@ -87,7 +67,7 @@ class SecurityAPI(AuthenticatedAPI):
             enabled: True to enable WPA3, False to use WPA2
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -103,16 +83,14 @@ class SecurityAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"wpa3": enabled},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def set_band_steering(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable band steering.
+    async def set_band_steering(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable band steering - returns raw Eero API response.
 
         Band steering automatically moves devices to the optimal
         frequency band (2.4GHz or 5GHz) for better performance.
@@ -122,7 +100,7 @@ class SecurityAPI(AuthenticatedAPI):
             enabled: True to enable band steering, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -138,16 +116,14 @@ class SecurityAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"band_steering": enabled},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def set_upnp(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable UPnP (Universal Plug and Play).
+    async def set_upnp(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable UPnP (Universal Plug and Play) - returns raw Eero API response.
 
         UPnP allows devices to automatically configure port forwarding.
         Disabling can improve security but may break some applications.
@@ -157,7 +133,7 @@ class SecurityAPI(AuthenticatedAPI):
             enabled: True to enable UPnP, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -173,23 +149,21 @@ class SecurityAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"upnp": enabled},
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def set_ipv6(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable IPv6.
+    async def set_ipv6(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable IPv6 - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
             enabled: True to enable IPv6, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -205,7 +179,7 @@ class SecurityAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={
@@ -214,10 +188,8 @@ class SecurityAPI(AuthenticatedAPI):
             },
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def set_thread(self, network_id: str, enabled: bool) -> bool:
-        """Enable or disable Thread (for smart home devices).
+    async def set_thread(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable Thread (for smart home devices) - returns raw Eero API response.
 
         Thread is a low-power mesh networking protocol used by
         smart home devices like Apple HomePod, Google Nest, etc.
@@ -227,7 +199,7 @@ class SecurityAPI(AuthenticatedAPI):
             enabled: True to enable Thread, False to disable
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -243,13 +215,11 @@ class SecurityAPI(AuthenticatedAPI):
             network_id,
         )
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json={"thread": enabled},
         )
-
-        return bool(response.get("meta", {}).get("code") == 200)
 
     async def configure_security(
         self,
@@ -259,8 +229,8 @@ class SecurityAPI(AuthenticatedAPI):
         upnp: Optional[bool] = None,
         ipv6: Optional[bool] = None,
         thread: Optional[bool] = None,
-    ) -> bool:
-        """Configure multiple security settings at once.
+    ) -> Dict[str, Any]:
+        """Configure multiple security settings at once - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
@@ -271,7 +241,7 @@ class SecurityAPI(AuthenticatedAPI):
             thread: Enable/disable Thread
 
         Returns:
-            True if the operation was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -301,14 +271,12 @@ class SecurityAPI(AuthenticatedAPI):
 
         if not payload:
             _LOGGER.warning("No security settings provided")
-            return False
+            return {"meta": {"code": 400}, "data": {}}
 
         _LOGGER.debug("Configuring security for network %s: %s", network_id, payload)
 
-        response = await self.put(
+        return await self.put(
             f"networks/{network_id}",
             auth_token=auth_token,
             json=payload,
         )
-
-        return bool(response.get("meta", {}).get("code") == 200)

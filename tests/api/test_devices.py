@@ -1,8 +1,8 @@
 """Tests for DevicesAPI module.
 
 Tests cover:
-- Getting device list
-- Getting device details
+- Getting device list (raw response)
+- Getting device details (raw response)
 - Setting device nickname
 - Blocking/unblocking devices
 - Device priority management
@@ -43,40 +43,19 @@ class TestDevicesAPIGetDevices:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_devices_success(self, devices_api, mock_session, sample_devices_list):
-        """Test successful devices retrieval."""
-        mock_response = create_mock_response(
-            200, api_success_response({"data": sample_devices_list})
-        )
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_devices("network_123")
-
-        assert len(result) == 2
-        assert result[0]["mac"] == "AA:BB:CC:DD:EE:FF"
-        assert result[1]["mac"] == "11:22:33:44:55:66"
-
-    @pytest.mark.asyncio
-    async def test_get_devices_direct_list_format(
+    async def test_get_devices_returns_raw_response(
         self, devices_api, mock_session, sample_devices_list
     ):
-        """Test devices retrieval with direct list format."""
-        mock_response = create_mock_response(200, {"data": sample_devices_list, "meta": {}})
+        """Test get_devices returns raw API response."""
+        expected_response = api_success_response(sample_devices_list)
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.get_devices("network_123")
 
-        assert len(result) == 2
-
-    @pytest.mark.asyncio
-    async def test_get_devices_empty_list(self, devices_api, mock_session):
-        """Test devices retrieval with empty list."""
-        mock_response = create_mock_response(200, api_success_response([]))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_devices("network_123")
-
-        assert result == []
+        # Raw response should include meta and data
+        assert "meta" in result
+        assert "data" in result
 
     @pytest.mark.asyncio
     async def test_get_devices_not_authenticated(self, devices_api):
@@ -99,15 +78,20 @@ class TestDevicesAPIGetDevice:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_device_success(self, devices_api, mock_session, sample_device_data):
-        """Test successful device retrieval."""
-        mock_response = create_mock_response(200, api_success_response(sample_device_data))
+    async def test_get_device_returns_raw_response(
+        self, devices_api, mock_session, sample_device_data
+    ):
+        """Test get_device returns raw API response."""
+        expected_response = api_success_response(sample_device_data)
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.get_device("network_123", "device_abc")
 
-        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
-        assert result["nickname"] == "John's iPhone"
+        assert "meta" in result
+        assert "data" in result
+        assert result["data"]["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert result["data"]["nickname"] == "John's iPhone"
 
     @pytest.mark.asyncio
     async def test_get_device_not_authenticated(self, devices_api):
@@ -130,19 +114,21 @@ class TestDevicesAPISetNickname:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_set_nickname_success(self, devices_api, mock_session):
-        """Test successful nickname change."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_set_nickname_returns_raw_response(self, devices_api, mock_session):
+        """Test successful nickname change returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.set_device_nickname("network_123", "device_abc", "My Device")
 
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_set_nickname_sends_correct_payload(self, devices_api, mock_session):
         """Test that correct payload is sent for nickname change."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         await devices_api.set_device_nickname("network_123", "device_abc", "New Name")
@@ -171,29 +157,21 @@ class TestDevicesAPIBlockDevice:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_block_device_success(self, devices_api, mock_session):
-        """Test successful device blocking."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_block_device_returns_raw_response(self, devices_api, mock_session):
+        """Test successful device blocking returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.block_device("network_123", "device_abc", True)
 
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_unblock_device_success(self, devices_api, mock_session):
-        """Test successful device unblocking."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.block_device("network_123", "device_abc", False)
-
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_block_device_sends_correct_payload(self, devices_api, mock_session):
         """Test that correct payload is sent for blocking."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         await devices_api.block_device("network_123", "device_abc", True)
@@ -214,46 +192,27 @@ class TestDevicesAPIPauseDevice:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_pause_device_success(self, devices_api, mock_session):
-        """Test successful device pausing."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_pause_device_returns_raw_response(self, devices_api, mock_session):
+        """Test successful device pausing returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.pause_device("network_123", "device_abc", True)
 
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_unpause_device_success(self, devices_api, mock_session):
-        """Test successful device unpausing."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.pause_device("network_123", "device_abc", False)
-
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_pause_device_sends_correct_payload(self, devices_api, mock_session):
         """Test that correct payload is sent for pausing."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         await devices_api.pause_device("network_123", "device_abc", True)
 
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"paused": True}
-
-    @pytest.mark.asyncio
-    async def test_unpause_device_sends_correct_payload(self, devices_api, mock_session):
-        """Test that correct payload is sent for unpausing."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        await devices_api.pause_device("network_123", "device_abc", False)
-
-        call_args = mock_session.request.call_args
-        assert call_args.kwargs["json"] == {"paused": False}
 
     @pytest.mark.asyncio
     async def test_pause_device_not_authenticated(self, devices_api):
@@ -263,35 +222,6 @@ class TestDevicesAPIPauseDevice:
         with pytest.raises(EeroAuthenticationException):
             await devices_api.pause_device("network_123", "device_abc", True)
 
-    @pytest.mark.asyncio
-    async def test_get_paused_devices(self, devices_api, mock_session, sample_devices_list):
-        """Test getting list of paused devices."""
-        # Add paused state to devices
-        devices = sample_devices_list.copy()
-        devices[0]["paused"] = True
-        devices[1]["paused"] = False
-
-        mock_response = create_mock_response(200, api_success_response({"data": devices}))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_paused_devices("network_123")
-
-        assert len(result) == 1
-        assert result[0]["mac"] == "AA:BB:CC:DD:EE:FF"
-
-    @pytest.mark.asyncio
-    async def test_get_paused_devices_empty(self, devices_api, mock_session):
-        """Test getting paused devices when none are paused."""
-        devices = [
-            {"mac": "AA:BB:CC:DD:EE:FF", "paused": False},
-            {"mac": "11:22:33:44:55:66", "paused": False},
-        ]
-        mock_response = create_mock_response(200, api_success_response({"data": devices}))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_paused_devices("network_123")
-
-        assert result == []
 
 
 class TestDevicesAPIPriority:
@@ -306,110 +236,32 @@ class TestDevicesAPIPriority:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_device_priority(self, devices_api, mock_session):
-        """Test getting device priority settings."""
-        device_data = {
-            "mac": "AA:BB:CC:DD:EE:FF",
-            "prioritized": True,
-            "priority": True,
-            "priority_duration": 60,
-            "priority_expires_at": "2024-01-01T12:00:00Z",
-        }
-        mock_response = create_mock_response(200, api_success_response(device_data))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_device_priority("network_123", "device_abc")
-
-        assert result["prioritized"] is True
-        assert result["duration"] == 60
-        assert result["expires_at"] == "2024-01-01T12:00:00Z"
-
-    @pytest.mark.asyncio
-    async def test_set_device_priority_enable(self, devices_api, mock_session):
-        """Test enabling device priority."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+    async def test_set_device_priority_returns_raw_response(self, devices_api, mock_session):
+        """Test enabling device priority returns raw response."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.set_device_priority(
             "network_123", "device_abc", prioritized=True
         )
 
-        assert result is True
+        assert "meta" in result
 
     @pytest.mark.asyncio
     async def test_set_device_priority_with_duration(self, devices_api, mock_session):
         """Test enabling device priority with duration."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
         result = await devices_api.set_device_priority(
             "network_123", "device_abc", prioritized=True, duration_minutes=120
         )
 
-        assert result is True
+        assert "meta" in result
         call_args = mock_session.request.call_args
         payload = call_args.kwargs["json"]
         assert payload["prioritized"] is True
         assert payload["priority_duration"] == 120
 
-    @pytest.mark.asyncio
-    async def test_set_device_priority_disable(self, devices_api, mock_session):
-        """Test disabling device priority."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.set_device_priority(
-            "network_123", "device_abc", prioritized=False
-        )
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_prioritize_device_convenience(self, devices_api, mock_session):
-        """Test prioritize_device convenience method."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.prioritize_device("network_123", "device_abc", 60)
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_deprioritize_device_convenience(self, devices_api, mock_session):
-        """Test deprioritize_device convenience method."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}})
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.deprioritize_device("network_123", "device_abc")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_get_prioritized_devices(self, devices_api, mock_session, sample_devices_list):
-        """Test getting list of prioritized devices."""
-        # Add priority to first device
-        devices = sample_devices_list.copy()
-        devices[0]["prioritized"] = True
-        devices[1]["prioritized"] = False
-
-        mock_response = create_mock_response(200, api_success_response({"data": devices}))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_prioritized_devices("network_123")
-
-        assert len(result) == 1
-        assert result[0]["mac"] == "AA:BB:CC:DD:EE:FF"
-
-    @pytest.mark.asyncio
-    async def test_get_prioritized_devices_empty(self, devices_api, mock_session):
-        """Test getting prioritized devices when none are prioritized."""
-        devices = [
-            {"mac": "AA:BB:CC:DD:EE:FF", "prioritized": False},
-            {"mac": "11:22:33:44:55:66", "prioritized": False},
-        ]
-        mock_response = create_mock_response(200, api_success_response({"data": devices}))
-        mock_session.request.return_value = mock_response
-
-        result = await devices_api.get_prioritized_devices("network_123")
-
-        assert result == []

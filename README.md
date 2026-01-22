@@ -11,7 +11,7 @@
 
 - 🚀 **Async-first** — Non-blocking, blazing fast
 - 🔐 **Secure** — System keyring for credentials
-- 📦 **Type-safe** — Full Pydantic models
+- 📦 **Raw JSON** — Direct API responses, no transformations
 - ⚡ **Smart caching** — Snappy responses
 
 ## 📦 Install
@@ -34,13 +34,32 @@ async def main():
             await client.login("you@example.com")
             await client.verify(input("Code: "))
         
-        for network in await client.get_networks():
-            print(f"📶 {network.name}: {network.status}")
+        # All methods return raw JSON responses
+        response = await client.get_networks()
+        networks = response.get("data", {}).get("networks", [])
+        
+        for network in networks:
+            print(f"📶 {network['name']}: {network.get('status')}")
 
 asyncio.run(main())
 ```
 
 > 💡 Credentials are auto-saved to your system keyring
+
+## 📄 Raw Response Format
+
+All API methods return the exact JSON from Eero's API:
+
+```python
+{
+    "meta": {"code": 200, "server_time": "..."},
+    "data": {
+        # Endpoint-specific payload
+    }
+}
+```
+
+See [MIGRATION.md](MIGRATION.md) for details on the raw response architecture.
 
 ## 📚 Docs
 
@@ -49,6 +68,7 @@ asyncio.run(main())
 | **[📖 Python API](../../wiki/Python-API)** | Full API reference |
 | **[⚙️ Configuration](../../wiki/Configuration)** | Auth & settings |
 | **[🔧 Troubleshooting](../../wiki/Troubleshooting)** | Common fixes |
+| **[🔄 Migration Guide](MIGRATION.md)** | v1.x → v2.0 migration |
 | **[🏠 Wiki Home](../../wiki)** | All documentation |
 
 ## 🔗 Ecosystem

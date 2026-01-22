@@ -1,7 +1,11 @@
-"""DHCP Reservations API for Eero."""
+"""DHCP Reservations API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ReservationsAPI(AuthenticatedAPI):
-    """DHCP Reservations API for Eero."""
+    """DHCP Reservations API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the ReservationsAPI.
@@ -22,14 +30,14 @@ class ReservationsAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_reservations(self, network_id: str) -> List[Dict[str, Any]]:
-        """Get DHCP reservations.
+    async def get_reservations(self, network_id: str) -> Dict[str, Any]:
+        """Get DHCP reservations - returns raw Eero API response.
 
         Args:
             network_id: ID of the network to get reservations from
 
         Returns:
-            List of DHCP reservations
+            Raw API response: {"meta": {...}, "data": [...]}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,69 +47,23 @@ class ReservationsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting reservations for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting reservations for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/reservations",
             auth_token=auth_token,
         )
 
-        # Handle different response formats
-        data = response.get("data", [])
-        if isinstance(data, list):
-            # Data is directly a list of reservations
-            reservations_data = data
-        elif isinstance(data, dict) and "data" in data:
-            # Data is a dictionary with a nested data field
-            reservations_data = data.get("data", [])
-        else:
-            # Fallback to empty list
-            reservations_data = []
-
-        return reservations_data
-
     async def create_reservation(
         self, network_id: str, reservation_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create a DHCP reservation.
+        """Create a DHCP reservation - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
             reservation_data: Reservation data (device_id, ip_address, etc.)
 
         Returns:
-            Created reservation data
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug(f"Creating reservation for network {network_id}: {reservation_data}")
-
-        response = await self.post(
-            f"networks/{network_id}/reservations",
-            auth_token=auth_token,
-            json=reservation_data,
-        )
-
-        return response.get("data", {})
-
-    async def update_reservation(
-        self, network_id: str, reservation_id: str, reservation_data: Dict[str, Any]
-    ) -> bool:
-        """Update a DHCP reservation.
-
-        Args:
-            network_id: ID of the network
-            reservation_id: ID of the reservation to update
-            reservation_data: Updated reservation data
-
-        Returns:
-            True if update was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -112,26 +74,26 @@ class ReservationsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug(
-            f"Updating reservation {reservation_id} for network {network_id}: {reservation_data}"
+            "Creating reservation for network %s: %s", network_id, reservation_data
         )
-
-        response = await self.put(
-            f"networks/{network_id}/reservations/{reservation_id}",
+        return await self.post(
+            f"networks/{network_id}/reservations",
             auth_token=auth_token,
             json=reservation_data,
         )
 
-        return bool(response.get("meta", {}).get("code") == 200)
-
-    async def delete_reservation(self, network_id: str, reservation_id: str) -> bool:
-        """Delete a DHCP reservation.
+    async def update_reservation(
+        self, network_id: str, reservation_id: str, reservation_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update a DHCP reservation - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
-            reservation_id: ID of the reservation to delete
+            reservation_id: ID of the reservation to update
+            reservation_data: Updated reservation data
 
         Returns:
-            True if deletion was successful
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -141,11 +103,42 @@ class ReservationsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Deleting reservation {reservation_id} for network {network_id}")
+        _LOGGER.debug(
+            "Updating reservation %s for network %s: %s",
+            reservation_id,
+            network_id,
+            reservation_data,
+        )
+        return await self.put(
+            f"networks/{network_id}/reservations/{reservation_id}",
+            auth_token=auth_token,
+            json=reservation_data,
+        )
 
-        response = await self.delete(
+    async def delete_reservation(
+        self, network_id: str, reservation_id: str
+    ) -> Dict[str, Any]:
+        """Delete a DHCP reservation - returns raw Eero API response.
+
+        Args:
+            network_id: ID of the network
+            reservation_id: ID of the reservation to delete
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug(
+            "Deleting reservation %s for network %s", reservation_id, network_id
+        )
+        return await self.delete(
             f"networks/{network_id}/reservations/{reservation_id}",
             auth_token=auth_token,
         )
-
-        return bool(response.get("meta", {}).get("code") == 200)

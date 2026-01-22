@@ -1,4 +1,8 @@
-"""Support API for Eero."""
+"""Support API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SupportAPI(AuthenticatedAPI):
-    """Support API for Eero."""
+    """Support API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the SupportAPI.
@@ -23,13 +31,13 @@ class SupportAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_support(self, network_id: str) -> Dict[str, Any]:
-        """Get network support information.
+        """Get support information - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network to get support info for
+            network_id: ID of the network to get support info from
 
         Returns:
-            Support data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,26 +47,23 @@ class SupportAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting support for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting support info for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/support",
             auth_token=auth_token,
         )
 
-        return response.get("data", {})
-
-    async def create_support_ticket(
-        self, network_id: str, ticket_data: Dict[str, Any]
+    async def request_support(
+        self, network_id: str, request_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create a support ticket.
+        """Request support - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
-            ticket_data: Support ticket data
+            request_data: Support request data
 
         Returns:
-            Created ticket data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -68,12 +73,9 @@ class SupportAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Creating support ticket for network {network_id}: {ticket_data}")
-
-        response = await self.post(
+        _LOGGER.debug("Requesting support for network %s", network_id)
+        return await self.post(
             f"networks/{network_id}/support",
             auth_token=auth_token,
-            json=ticket_data,
+            json=request_data,
         )
-
-        return response.get("data", {})

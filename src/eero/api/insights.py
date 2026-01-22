@@ -1,4 +1,8 @@
-"""Insights API for Eero."""
+"""Insights API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class InsightsAPI(AuthenticatedAPI):
-    """Insights API for Eero."""
+    """Insights API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the InsightsAPI.
@@ -23,13 +31,13 @@ class InsightsAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_insights(self, network_id: str) -> Dict[str, Any]:
-        """Get network insights.
+        """Get network insights - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network to get insights for
+            network_id: ID of the network to get insights from
 
         Returns:
-            Insights data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,24 +47,20 @@ class InsightsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting insights for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting insights for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/insights",
             auth_token=auth_token,
         )
 
-        return response.get("data", {})
-
-    async def get_insight(self, network_id: str, insight_id: str) -> Dict[str, Any]:
-        """Get a specific network insight.
+    async def run_insights(self, network_id: str) -> Dict[str, Any]:
+        """Run insights analysis - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network
-            insight_id: ID of the insight to get
+            network_id: ID of the network to analyze
 
         Returns:
-            Insight data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -66,11 +70,9 @@ class InsightsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting insight {insight_id} for network {network_id}")
-
-        response = await self.get(
-            f"networks/{network_id}/insights/{insight_id}",
+        _LOGGER.debug("Running insights for network %s", network_id)
+        return await self.post(
+            f"networks/{network_id}/insights",
             auth_token=auth_token,
+            json={},
         )
-
-        return response.get("data", {})

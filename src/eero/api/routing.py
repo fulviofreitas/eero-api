@@ -1,4 +1,8 @@
-"""Routing API for Eero."""
+"""Routing API for Eero.
+
+IMPORTANT: This module returns RAW responses from the Eero Cloud API.
+All data extraction, field mapping, and transformation must be done by downstream clients.
+"""
 
 import logging
 from typing import Any, Dict
@@ -12,7 +16,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RoutingAPI(AuthenticatedAPI):
-    """Routing API for Eero."""
+    """Routing API for Eero.
+
+    All methods return raw, unmodified JSON responses from the Eero Cloud API.
+    Response format: {"meta": {...}, "data": {...}}
+    """
 
     def __init__(self, auth_api: AuthAPI) -> None:
         """Initialize the RoutingAPI.
@@ -23,13 +31,13 @@ class RoutingAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_routing(self, network_id: str) -> Dict[str, Any]:
-        """Get network routing information.
+        """Get routing information - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network to get routing info for
+            network_id: ID of the network to get routing info from
 
         Returns:
-            Routing data
+            Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
@@ -39,39 +47,8 @@ class RoutingAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(f"Getting routing for network {network_id}")
-
-        response = await self.get(
+        _LOGGER.debug("Getting routing for network %s", network_id)
+        return await self.get(
             f"networks/{network_id}/routing",
             auth_token=auth_token,
         )
-
-        return response.get("data", {})
-
-    async def update_routing(self, network_id: str, routing_config: Dict[str, Any]) -> bool:
-        """Update network routing configuration.
-
-        Args:
-            network_id: ID of the network to update routing for
-            routing_config: Routing configuration to update
-
-        Returns:
-            True if update was successful
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug(f"Updating routing for network {network_id}: {routing_config}")
-
-        response = await self.put(
-            f"networks/{network_id}/routing",
-            auth_token=auth_token,
-            json=routing_config,
-        )
-
-        return bool(response.get("meta", {}).get("code") == 200)
