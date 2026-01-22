@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0](https://github.com/fulviofreitas/eero-api/compare/v1.4.3...v2.0.0) (2026-01-22)
 
+### ⚠ BREAKING CHANGES
+
+* raw response architecture (v2.0.0)
+
+### ✨ Features
+
+* raw response architecture (v2.0.0) ([2df19c8](https://github.com/fulviofreitas/eero-api/commit/2df19c823032b5ddc555530c39a2dad14d49ad26))
+
+### 📚 Documentation
+
+* add important notes about unofficial status and Amazon login limitation ([def3a40](https://github.com/fulviofreitas/eero-api/commit/def3a40b3ad7bd655ff364c9e5d368cf0baef437))
+
+## [2.0.0](https://github.com/fulviofreitas/eero-api/compare/v1.4.3...v2.0.0) (2026-01-22)
+
 ### ⚠️ BREAKING CHANGES
 
 This is a major breaking release that fundamentally changes how the library returns data.
