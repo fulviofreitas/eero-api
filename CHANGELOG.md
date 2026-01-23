@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0](https://github.com/fulviofreitas/eero-api/compare/v3.0.1...v4.0.0) (2026-01-23)
+
+### ⚠ BREAKING CHANGES
+
+* AuthCredentials and AuthAPI no longer manage
+preferred_network_id. This is now the responsibility of the CLI.
+
+Changes:
+- Remove preferred_network_id from AuthCredentials dataclass
+- Remove preferred_network_id property/setter from AuthAPI
+- Remove save_preferred_network() and related dirty flag
+- Simplify clear_all() method (no preferences to clear)
+- EeroAPI and EeroClient now manage preferred_network in-memory only
+
+The cookies.json now only contains auth credentials:
+- session_id
+- refresh_token
+- session_expiry
+
+User preferences (preferred_network_id, use_keyring) should be
+managed by the CLI application in its own config.json file.
+
+### ♻️ Refactoring
+
+* remove preferred_network_id from credential storage ([07a1bca](https://github.com/fulviofreitas/eero-api/commit/07a1bca3a71c0e9bdd746055f715300f18539aec))
+
 ## [3.0.1](https://github.com/fulviofreitas/eero-api/compare/v3.0.0...v3.0.1) (2026-01-23)
 
 ### 🐛 Bug Fixes
