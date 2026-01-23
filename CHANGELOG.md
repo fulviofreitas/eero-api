@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.4](https://github.com/fulviofreitas/eero-api/compare/v2.1.3...v2.1.4) (2026-01-23)
+
+### 🐛 Bug Fixes
+
+* auth clear now completely removes stored credentials ([4c38602](https://github.com/fulviofreitas/eero-api/commit/4c3860207e5eb7d5caa91e3ec59f35852c8c92e5))
+
 ## [2.1.3](https://github.com/fulviofreitas/eero-api/compare/v2.1.2...v2.1.3) (2026-01-23)
 
 ### 🐛 Bug Fixes
