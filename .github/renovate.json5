@@ -63,8 +63,10 @@
     // ==========================================================================
     // 🟡 Python dependencies: Group minor/patch updates
     // ==========================================================================
+    // Note: pyproject.toml with setuptools may be detected as "poetry" or "pep621"
+    // by Renovate, so we match both to ensure consistent behavior
     {
-      matchManagers: ["pip_requirements", "pip-compile", "pep621"],
+      matchManagers: ["pip_requirements", "pip-compile", "pep621", "poetry"],
       matchUpdateTypes: ["minor", "patch"],
       groupName: "python-minor-patch",
       description: "Python minor/patch updates (auto-merge)",
