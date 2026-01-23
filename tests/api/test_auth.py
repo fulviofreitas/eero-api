@@ -60,24 +60,36 @@ class TestAuthCredentials:
     def test_to_dict_and_from_dict(self):
         """Test serialization round-trip."""
         original = AuthCredentials(
-            user_token="ut_123",
             session_id="s_456",
+            refresh_token="rt_789",
             preferred_network_id="net_789",
             session_expiry=datetime.now().replace(microsecond=0),
         )
         data = original.to_dict()
         restored = AuthCredentials.from_dict(data)
 
-        assert restored.user_token == original.user_token
         assert restored.session_id == original.session_id
+        assert restored.refresh_token == original.refresh_token
         assert restored.preferred_network_id == original.preferred_network_id
         assert restored.session_expiry == original.session_expiry
+
+    def test_from_dict_backward_compatibility(self):
+        """Test from_dict handles old format with user_token."""
+        old_format = {
+            "user_token": "old_token_123",
+            "session_id": None,
+            "preferred_network_id": "net_789",
+        }
+        creds = AuthCredentials.from_dict(old_format)
+
+        # user_token should be migrated to session_id
+        assert creds.session_id == "old_token_123"
 
     def test_clear_session(self):
         """Test clear_session clears session-related fields."""
         creds = AuthCredentials(
-            user_token="ut_123",
             session_id="s_456",
+            refresh_token="rt_789",
             session_expiry=datetime.now(),
             preferred_network_id="net_789",
         )
@@ -85,13 +97,12 @@ class TestAuthCredentials:
 
         assert creds.session_id is None
         assert creds.session_expiry is None
-        assert creds.user_token == "ut_123"  # Preserved
+        assert creds.refresh_token == "rt_789"  # Preserved
         assert creds.preferred_network_id == "net_789"  # Preserved
 
     def test_clear_all(self):
         """Test clear_all clears auth fields but preserves network preference."""
         creds = AuthCredentials(
-            user_token="ut_123",
             session_id="s_456",
             refresh_token="rt_789",
             session_expiry=datetime.now(),
@@ -99,7 +110,6 @@ class TestAuthCredentials:
         )
         creds.clear_all()
 
-        assert creds.user_token is None
         assert creds.session_id is None
         assert creds.refresh_token is None
         assert creds.session_expiry is None
@@ -108,7 +118,6 @@ class TestAuthCredentials:
     def test_clear_all_with_preferences(self):
         """Test clear_all with include_preferences=True clears everything."""
         creds = AuthCredentials(
-            user_token="ut_123",
             session_id="s_456",
             refresh_token="rt_789",
             session_expiry=datetime.now(),
@@ -116,7 +125,6 @@ class TestAuthCredentials:
         )
         creds.clear_all(include_preferences=True)
 
-        assert creds.user_token is None
         assert creds.session_id is None
         assert creds.refresh_token is None
         assert creds.session_expiry is None
@@ -132,8 +140,8 @@ class TestAuthAPIInit:
 
         assert api._session is None
         assert api._cookie_file is None
-        assert api._credentials.user_token is None
         assert api._credentials.session_id is None
+        assert api._credentials.refresh_token is None
         assert api.is_authenticated is False
 
     def test_init_with_cookie_file(self):
@@ -184,20 +192,21 @@ class TestAuthAPILogin:
         result = await api_with_session.login("test@example.com")
 
         assert result is True
-        assert api_with_session._credentials.user_token == "ut_login_token_12345"
+        # Login stores the token in session_id (will be validated after verify)
+        assert api_with_session._credentials.session_id == "ut_login_token_12345"
 
     @pytest.mark.asyncio
     async def test_login_clears_previous_tokens(self, api_with_session, mock_session):
         """Test that login clears previous authentication data."""
-        api_with_session._credentials.user_token = "old_token"
         api_with_session._credentials.session_id = "old_session"
+        api_with_session._credentials.refresh_token = "old_refresh"
 
         mock_response = create_mock_response(200, api_success_response({"user_token": "new_token"}))
         mock_session.request.return_value = mock_response
 
         await api_with_session.login("test@example.com")
 
-        assert api_with_session._credentials.user_token == "new_token"
+        assert api_with_session._credentials.session_id == "new_token"
 
     @pytest.mark.asyncio
     async def test_login_failure_raises_exception(self, api_with_session, mock_session):
@@ -223,55 +232,58 @@ class TestAuthAPIVerify:
     """Tests for AuthAPI verification flow."""
 
     @pytest.fixture
-    def api_with_user_token(self, mock_session):
-        """Create an AuthAPI with a user token set."""
+    def api_pending_verification(self, mock_session):
+        """Create an AuthAPI with a session_id pending verification."""
         api = AuthAPI(session=mock_session, use_keyring=False)
         api._session = mock_session
-        api._credentials.user_token = "ut_pending_verification"
+        # Simulates state after login() - session_id set but no expiry yet
+        api._credentials.session_id = "ut_pending_verification"
         return api
 
     @pytest.mark.asyncio
-    async def test_verify_success(self, api_with_user_token, mock_session, sample_verify_response):
+    async def test_verify_success(
+        self, api_pending_verification, mock_session, sample_verify_response
+    ):
         """Test successful verification."""
         mock_response = create_mock_response(200, sample_verify_response)
         mock_session.request.return_value = mock_response
 
-        result = await api_with_user_token.verify("123456")
+        result = await api_pending_verification.verify("123456")
 
         assert result is True
-        assert api_with_user_token._credentials.session_id == "ut_pending_verification"
-        assert api_with_user_token._credentials.session_expiry is not None
-        assert api_with_user_token.is_authenticated is True
+        assert api_pending_verification._credentials.session_id == "ut_pending_verification"
+        assert api_pending_verification._credentials.session_expiry is not None
+        assert api_pending_verification.is_authenticated is True
 
     @pytest.mark.asyncio
     async def test_verify_extracts_network_id(
-        self, api_with_user_token, mock_session, sample_verify_response
+        self, api_pending_verification, mock_session, sample_verify_response
     ):
         """Test that verification extracts network ID from response."""
         mock_response = create_mock_response(200, sample_verify_response)
         mock_session.request.return_value = mock_response
 
-        await api_with_user_token.verify("123456")
+        await api_pending_verification.verify("123456")
 
-        assert api_with_user_token._credentials.preferred_network_id == "network_123"
+        assert api_pending_verification._credentials.preferred_network_id == "network_123"
 
     @pytest.mark.asyncio
-    async def test_verify_without_user_token_raises(self, mock_session):
-        """Test that verify raises without user token."""
+    async def test_verify_without_session_token_raises(self, mock_session):
+        """Test that verify raises without session token."""
         api = AuthAPI(session=mock_session, use_keyring=False)
         api._session = mock_session
 
-        with pytest.raises(EeroAuthenticationException, match="No user token available"):
+        with pytest.raises(EeroAuthenticationException, match="No session token available"):
             await api.verify("123456")
 
     @pytest.mark.asyncio
-    async def test_verify_invalid_code_raises(self, api_with_user_token, mock_session):
+    async def test_verify_invalid_code_raises(self, api_pending_verification, mock_session):
         """Test that invalid verification code raises exception."""
         mock_response = create_mock_response(401, api_error_response(401, "verification.invalid"))
         mock_session.request.return_value = mock_response
 
         with pytest.raises(EeroAuthenticationException):
-            await api_with_user_token.verify("000000")
+            await api_pending_verification.verify("000000")
 
 
 class TestAuthAPILogout:
@@ -296,7 +308,7 @@ class TestAuthAPILogout:
 
         assert result is True
         assert authenticated_api._credentials.session_id is None
-        assert authenticated_api._credentials.user_token is None
+        assert authenticated_api._credentials.refresh_token is None
         assert authenticated_api.is_authenticated is False
 
     @pytest.mark.asyncio
@@ -328,17 +340,17 @@ class TestAuthAPIClearAuthData:
         """Test clearing all authentication data."""
         api = AuthAPI(session=mock_session, use_keyring=False)
         api._session = mock_session
-        api._credentials.user_token = "token"
         api._credentials.session_id = "session"
         api._credentials.refresh_token = "refresh"
         api._credentials.session_expiry = datetime.now()
+        api._credentials.preferred_network_id = "network_123"
 
         await api.clear_auth_data()
 
-        assert api._credentials.user_token is None
         assert api._credentials.session_id is None
         assert api._credentials.refresh_token is None
         assert api._credentials.session_expiry is None
+        assert api._credentials.preferred_network_id is None  # Also cleared
         mock_session.cookie_jar.clear.assert_called()
 
 
@@ -384,7 +396,7 @@ class TestAuthAPIKeyringStorage:
         api = AuthAPI(session=mock_session, use_keyring=True)
         api._session = mock_session
         api._credentials.session_id = "session_123"
-        api._credentials.user_token = "token_123"
+        api._credentials.refresh_token = "refresh_123"
 
         await api._save_credentials()
 
@@ -485,30 +497,30 @@ class TestAuthAPIResendVerification:
     """Tests for resending verification code."""
 
     @pytest.fixture
-    def api_with_user_token(self, mock_session):
-        """Create an AuthAPI with a user token set."""
+    def api_pending_verification(self, mock_session):
+        """Create an AuthAPI with a session_id pending verification."""
         api = AuthAPI(session=mock_session, use_keyring=False)
         api._session = mock_session
-        api._credentials.user_token = "ut_pending_verification"
+        api._credentials.session_id = "ut_pending_verification"
         return api
 
     @pytest.mark.asyncio
-    async def test_resend_success(self, api_with_user_token, mock_session):
+    async def test_resend_success(self, api_pending_verification, mock_session):
         """Test successful resend."""
         mock_response = create_mock_response(200, api_success_response({}))
         mock_session.request.return_value = mock_response
 
-        result = await api_with_user_token.resend_verification_code()
+        result = await api_pending_verification.resend_verification_code()
 
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_resend_without_token_raises(self, mock_session):
-        """Test resend without user token raises exception."""
+    async def test_resend_without_session_token_raises(self, mock_session):
+        """Test resend without session token raises exception."""
         api = AuthAPI(session=mock_session, use_keyring=False)
         api._session = mock_session
 
-        with pytest.raises(EeroAuthenticationException, match="No user token available"):
+        with pytest.raises(EeroAuthenticationException, match="No session token available"):
             await api.resend_verification_code()
 
 

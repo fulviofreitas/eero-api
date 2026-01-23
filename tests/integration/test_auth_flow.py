@@ -45,8 +45,7 @@ class TestAuthStateManagement:
 
         # After setting session data, should be authenticated
         # (Simulating what happens after successful login/verify)
-        auth_api._user_token = "test_token"
-        auth_api._session_id = "session_123"
+        auth_api._credentials.session_id = "session_123"
 
         # Without expiry, still not authenticated
         assert auth_api.is_authenticated is False

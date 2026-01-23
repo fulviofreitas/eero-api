@@ -291,10 +291,8 @@ def mock_keyring():
 def valid_session_data() -> Dict[str, Any]:
     """Valid session data for authenticated state."""
     return {
-        "user_token": "ut_valid_token",
         "session_id": "session_valid_id",
         "refresh_token": "rt_refresh_token",
-        "user_id": "user_123",
         "preferred_network_id": "network_123",
         "session_expiry": (datetime.now() + timedelta(days=30)).isoformat(),
     }
@@ -304,10 +302,8 @@ def valid_session_data() -> Dict[str, Any]:
 def expired_session_data() -> Dict[str, Any]:
     """Expired session data."""
     return {
-        "user_token": "ut_expired_token",
         "session_id": "session_expired_id",
         "refresh_token": "rt_expired_refresh",
-        "user_id": "user_123",
         "preferred_network_id": "network_123",
         "session_expiry": (datetime.now() - timedelta(days=1)).isoformat(),
     }

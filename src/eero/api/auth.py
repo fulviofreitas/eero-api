@@ -148,21 +148,25 @@ class AuthAPI(BaseAPI):
                 json={"login": user_identifier},
             )
 
-            # Extract user_token from the nested structure
-            self._credentials.user_token = response.get("data", {}).get("user_token")
+            # Extract user_token from API response and store as session_id
+            # (it becomes the session token after verification)
+            user_token = response.get("data", {}).get("user_token")
             _LOGGER.debug(
                 "User token %s",
-                "received" if self._credentials.user_token else "not received",
+                "received" if user_token else "not received",
             )
 
-            if not self._credentials.user_token:
+            if not user_token:
                 _LOGGER.error("Login failed: No user token received")
                 return False
 
-            # Save the token
+            # Store as session_id (will be validated after verify_login)
+            self._credentials.session_id = user_token
+
+            # Save the token (session_expiry is None until verified)
             await self._save_credentials()
 
-            return bool(self._credentials.user_token)
+            return True
         except EeroAPIException as err:
             _LOGGER.error("Login failed: %s", err)
             raise EeroAuthenticationException(f"Login failed: {err}") from err
@@ -229,28 +233,25 @@ class AuthAPI(BaseAPI):
             EeroAuthenticationException: If verification fails
             EeroNetworkException: If there's a network error
         """
-        if not self._credentials.user_token:
-            raise EeroAuthenticationException("No user token available. Login first.")
+        if not self._credentials.session_id:
+            raise EeroAuthenticationException("No session token available. Login first.")
 
         try:
             # Log the verification attempt (sensitive data masked)
             _LOGGER.debug("Starting verification process")
             _LOGGER.debug("Verification code: [REDACTED]")
 
-            # Make sure we have the user token set as a cookie
-            self.session.cookie_jar.update_cookies({"s": self._credentials.user_token})
+            # Set the session token as a cookie for verification
+            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
 
             # Make the verification request
             response = await self.post(
                 LOGIN_VERIFY_ENDPOINT,
-                auth_token=self._credentials.user_token,
+                auth_token=self._credentials.session_id,
                 json={"code": verification_code},
             )
 
-            # Per the workflow, the user_token becomes the session token
-            self._credentials.session_id = self._credentials.user_token
-
-            # Set login not in progress
+            # Session ID is already set from login, now it's validated
             self._login_in_progress = False
 
             # Extract user and network data if available
@@ -271,13 +272,10 @@ class AuthAPI(BaseAPI):
             )
 
             # Update session cookie for future requests
-            if self._credentials.session_id:
-                self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-                _LOGGER.debug("Session cookie updated successfully")
-                await self._save_credentials()
-                return True
-
-            _LOGGER.error("Verification succeeded but no session ID was set")
+            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
+            _LOGGER.debug("Session cookie updated successfully")
+            await self._save_credentials()
+            return True
             return False
 
         except EeroAPIException as err:
@@ -303,19 +301,19 @@ class AuthAPI(BaseAPI):
             EeroAuthenticationException: If resend fails
             EeroNetworkException: If there's a network error
         """
-        if not self._credentials.user_token:
-            raise EeroAuthenticationException("No user token available. Login first.")
+        if not self._credentials.session_id:
+            raise EeroAuthenticationException("No session token available. Login first.")
 
         try:
             _LOGGER.debug("Resending verification code")
 
-            # Make sure we have the user token set as a cookie
-            self.session.cookie_jar.update_cookies({"s": self._credentials.user_token})
+            # Set the session token as a cookie
+            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
 
             # Make the resend request
             await self.post(
                 f"{LOGIN_ENDPOINT}/resend",
-                auth_token=self._credentials.user_token,
+                auth_token=self._credentials.session_id,
                 json={},
             )
 

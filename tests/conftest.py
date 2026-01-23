@@ -56,8 +56,10 @@ def mock_cookie_file(temp_config_dir: Path) -> Path:
     cookie_file.write_text(
         json.dumps(
             {
-                "user_token": "mock_user_token_12345",
                 "session_id": "mock_session_id_67890",
+                "refresh_token": None,
+                "session_expiry": None,
+                "preferred_network_id": None,
             }
         )
     )

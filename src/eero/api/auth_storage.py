@@ -22,14 +22,19 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class AuthCredentials:
-    """Container for authentication credentials."""
+    """Container for authentication credentials.
 
-    user_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    Simplified credential storage with only essential fields:
+    - session_id: The auth token (used as 's' cookie for API requests)
+    - refresh_token: Optional token for refreshing expired sessions
+    - session_expiry: When the session expires
+    - preferred_network_id: User's preferred network for commands
+    """
+
     session_id: Optional[str] = None
-    user_id: Optional[str] = None
-    preferred_network_id: Optional[str] = None
+    refresh_token: Optional[str] = None
     session_expiry: Optional[datetime] = None
+    preferred_network_id: Optional[str] = None
 
     def is_session_expired(self) -> bool:
         """Check if the session has expired."""
@@ -44,17 +49,19 @@ class AuthCredentials:
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
         return {
-            "user_token": self.user_token,
-            "refresh_token": self.refresh_token,
             "session_id": self.session_id,
-            "user_id": self.user_id,
-            "preferred_network_id": self.preferred_network_id,
+            "refresh_token": self.refresh_token,
             "session_expiry": (self.session_expiry.isoformat() if self.session_expiry else None),
+            "preferred_network_id": self.preferred_network_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "AuthCredentials":
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Handles backward compatibility with old cookie files that had
+        user_token instead of session_id.
+        """
         expiry = data.get("session_expiry")
         session_expiry = None
         if expiry:
@@ -63,13 +70,14 @@ class AuthCredentials:
             except ValueError:
                 _LOGGER.warning("Invalid session_expiry date format in stored credentials")
 
+        # Backward compatibility: use user_token if session_id not present
+        session_id = data.get("session_id") or data.get("user_token")
+
         return cls(
-            user_token=data.get("user_token"),
+            session_id=session_id,
             refresh_token=data.get("refresh_token"),
-            session_id=data.get("session_id"),
-            user_id=data.get("user_id"),
-            preferred_network_id=data.get("preferred_network_id"),
             session_expiry=session_expiry,
+            preferred_network_id=data.get("preferred_network_id"),
         )
 
     def clear_session(self) -> None:
@@ -84,10 +92,8 @@ class AuthCredentials:
             include_preferences: If True, also clear preferred_network_id.
                                 Default False to preserve user preferences.
         """
-        self.user_token = None
-        self.refresh_token = None
         self.session_id = None
-        self.user_id = None
+        self.refresh_token = None
         self.session_expiry = None
         if include_preferences:
             self.preferred_network_id = None
