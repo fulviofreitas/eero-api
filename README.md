@@ -1,10 +1,23 @@
-# 🌐 Eero API
+<div align="center">
 
-> Your async Python toolkit for Eero mesh networks ✨
+# 🐍 Eero API
 
-[![PyPI version](https://img.shields.io/pypi/v/eero-api.svg)](https://pypi.org/project/eero-api/)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+**Your async Python toolkit for Eero mesh networks**
+
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![PyPI](https://img.shields.io/pypi/v/eero-api?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/eero-api/)
+[![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
+
+---
+
+_A modern, async-first Python SDK for the Eero mesh WiFi API._  
+_Raw JSON responses, system keyring integration, and smart caching._
+
+[Get Started](#-quick-start) · [Documentation](#-docs) · [Ecosystem](#-ecosystem) · [License](#-license)
+
+</div>
+
+---
 
 ## ⚡ Why Eero API?
 
