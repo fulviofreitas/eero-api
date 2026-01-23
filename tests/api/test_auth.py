@@ -105,6 +105,23 @@ class TestAuthCredentials:
         assert creds.session_expiry is None
         assert creds.preferred_network_id == "net_789"  # Preserved
 
+    def test_clear_all_with_preferences(self):
+        """Test clear_all with include_preferences=True clears everything."""
+        creds = AuthCredentials(
+            user_token="ut_123",
+            session_id="s_456",
+            refresh_token="rt_789",
+            session_expiry=datetime.now(),
+            preferred_network_id="net_789",
+        )
+        creds.clear_all(include_preferences=True)
+
+        assert creds.user_token is None
+        assert creds.session_id is None
+        assert creds.refresh_token is None
+        assert creds.session_expiry is None
+        assert creds.preferred_network_id is None  # Also cleared
+
 
 class TestAuthAPIInit:
     """Tests for AuthAPI initialization."""

@@ -443,14 +443,19 @@ class AuthAPI(BaseAPI):
         return None
 
     async def clear_auth_data(self) -> None:
-        """Clear all authentication data."""
-        self._credentials.clear_all()
+        """Clear all authentication data including stored credentials.
+
+        This completely removes all authentication data from storage,
+        including session tokens, user tokens, and preferred network.
+        """
+        # Clear in-memory credentials including preferences
+        self._credentials.clear_all(include_preferences=True)
         self._login_in_progress = False
 
         # Clear cookies
         self.session.cookie_jar.clear()
 
-        # Save cleared data
-        await self._save_credentials()
+        # Delete stored credentials entirely (removes file/keyring entry)
+        await self._storage.clear()
 
         _LOGGER.debug("Cleared all authentication data")

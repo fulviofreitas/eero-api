@@ -77,14 +77,20 @@ class AuthCredentials:
         self.session_id = None
         self.session_expiry = None
 
-    def clear_all(self) -> None:
-        """Clear all credentials."""
+    def clear_all(self, include_preferences: bool = False) -> None:
+        """Clear all credentials.
+
+        Args:
+            include_preferences: If True, also clear preferred_network_id.
+                                Default False to preserve user preferences.
+        """
         self.user_token = None
         self.refresh_token = None
         self.session_id = None
         self.user_id = None
         self.session_expiry = None
-        # Note: preferred_network_id is preserved as user preference
+        if include_preferences:
+            self.preferred_network_id = None
 
 
 class CredentialStorage(ABC):
