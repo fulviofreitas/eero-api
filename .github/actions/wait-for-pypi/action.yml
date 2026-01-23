@@ -1,0 +1,92 @@
+# ============================================================================
+# ⏳ Wait for PyPI Indexing Action
+# ============================================================================
+# Reusable composite action that waits for a package version to be available
+# on PyPI. Useful when triggered by repository_dispatch after a release.
+#
+# PyPI indexing typically takes 1-5 minutes after package upload.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/wait-for-pypi@master
+#     with:
+#       package: eero-api
+#       version: ${{ github.event.client_payload.version }}
+# ============================================================================
+
+name: "⏳ Wait for PyPI Indexing"
+description: "Wait for a package version to become available on PyPI"
+
+inputs:
+  package:
+    description: "Package name on PyPI"
+    required: true
+  version:
+    description: "Version to wait for"
+    required: true
+  max-attempts:
+    description: "Maximum number of polling attempts"
+    required: false
+    default: "20"
+  wait-seconds:
+    description: "Seconds to wait between attempts"
+    required: false
+    default: "15"
+  fail-on-timeout:
+    description: "Fail the step if timeout is reached"
+    required: false
+    default: "false"
+
+outputs:
+  available:
+    description: "Whether the package version is available on PyPI"
+    value: ${{ steps.wait.outputs.available }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: ⏳ Wait for PyPI indexing
+      id: wait
+      shell: bash
+      run: |
+        PACKAGE="${{ inputs.package }}"
+        VERSION="${{ inputs.version }}"
+        MAX_ATTEMPTS="${{ inputs.max-attempts }}"
+        WAIT_SECONDS="${{ inputs.wait-seconds }}"
+        FAIL_ON_TIMEOUT="${{ inputs.fail-on-timeout }}"
+
+        echo "🔍 Waiting for ${PACKAGE}==${VERSION} to be available on PyPI..."
+
+        for i in $(seq 1 $MAX_ATTEMPTS); do
+          echo "📡 Attempt $i/$MAX_ATTEMPTS: Checking PyPI..."
+
+          # Query PyPI JSON API for the package
+          RESPONSE=$(curl -s "https://pypi.org/pypi/${PACKAGE}/json" || echo "error")
+
+          if [ "$RESPONSE" = "error" ]; then
+            echo "⚠️ Failed to query PyPI, retrying..."
+          else
+            # Check if the version exists in the releases
+            if echo "$RESPONSE" | jq -e ".releases[\"${VERSION}\"]" > /dev/null 2>&1; then
+              echo "✅ ${PACKAGE}==${VERSION} is available on PyPI!"
+              echo "available=true" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              echo "⏳ Version ${VERSION} not yet available..."
+            fi
+          fi
+
+          if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+            echo "💤 Waiting ${WAIT_SECONDS}s before next check..."
+            sleep $WAIT_SECONDS
+          fi
+        done
+
+        echo "⚠️ Timed out waiting for ${PACKAGE}==${VERSION} on PyPI"
+        echo "available=false" >> $GITHUB_OUTPUT
+
+        if [ "$FAIL_ON_TIMEOUT" = "true" ]; then
+          echo "❌ Failing due to timeout (fail-on-timeout=true)"
+          exit 1
+        else
+          echo "   Proceeding anyway - Renovate will check current PyPI state"
+        fi

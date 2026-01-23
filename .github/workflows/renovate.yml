@@ -58,6 +58,9 @@ permissions:
   contents: read
 
 jobs:
+  # ============================================================================
+  # 🔄 Run Renovate
+  # ============================================================================
   renovate:
     name: 🔄 Renovate
     runs-on: ubuntu-latest
@@ -71,6 +74,9 @@ jobs:
         run: |
           echo "🎯 Trigger: ${{ github.event_name }}"
 
+      # ========================================================================
+      # 🔄 Run Renovate
+      # ========================================================================
       - name: 🔄 Run Renovate
         uses: ./.github/actions/renovate
         with:
@@ -80,3 +86,20 @@ jobs:
           dry-run: ${{ github.event.inputs.dry_run || 'false' }}
           log-level: ${{ github.event.inputs.log_level || 'info' }}
           reset-cache: ${{ github.event.inputs.reset_cache || 'false' }}
+
+      # ========================================================================
+      # 📝 Summary
+      # ========================================================================
+      - name: 📝 Generate summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🔄 Renovate Summary
+
+          | Property | Value |
+          |:---------|:------|
+          | 📦 Repository | [\`${{ github.repository }}\`](https://github.com/${{ github.repository }}) |
+          | 🎯 Trigger | \`${{ github.event_name }}\` |
+          | 🧪 Dry Run | \`${{ github.event.inputs.dry_run || 'false' }}\` |
+
+          EOF

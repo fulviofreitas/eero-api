@@ -1,0 +1,106 @@
+# ============================================================================
+# 🔔 Notify Downstream Action
+# ============================================================================
+# Reusable composite action for notifying downstream repositories about
+# dependency updates via repository_dispatch.
+#
+# Usage:
+#   - uses: fulviofreitas/eero-api/.github/actions/notify-downstream@master
+#     with:
+#       app-id: ${{ secrets.RENOVATE_APP_ID }}
+#       app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+#       target-repo: eero-ui
+#       package: eero-api
+#       version: 1.2.3
+# ============================================================================
+
+name: "🔔 Notify Downstream"
+description: "Notify downstream repositories about dependency updates"
+
+inputs:
+  app-id:
+    description: "GitHub App ID for authentication"
+    required: true
+  app-private-key:
+    description: "GitHub App private key"
+    required: true
+  target-repo:
+    description: "Target repository name (without owner)"
+    required: true
+  owner:
+    description: "Repository owner"
+    required: false
+    default: "fulviofreitas"
+  package:
+    description: "PyPI package name"
+    required: true
+  version:
+    description: "Version that was released"
+    required: true
+  event-type:
+    description: "Repository dispatch event type"
+    required: false
+    default: ""
+
+outputs:
+  token:
+    description: "Generated GitHub App token"
+    value: ${{ steps.app-token.outputs.token }}
+
+runs:
+  using: "composite"
+  steps:
+    # ========================================================================
+    # 🔑 Generate Token
+    # ========================================================================
+    - name: 🔑 Generate GitHub App token
+      id: app-token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.target-repo }}
+
+    # ========================================================================
+    # 🔔 Trigger Downstream
+    # ========================================================================
+    - name: 🔔 Trigger dependency update
+      uses: peter-evans/repository-dispatch@v4
+      env:
+        EVENT_TYPE: ${{ inputs.event-type || format('{0}-dependency-update-available', inputs.package) }}
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        repository: ${{ inputs.owner }}/${{ inputs.target-repo }}
+        event-type: ${{ env.EVENT_TYPE }}
+        client-payload: |
+          {
+            "package": "${{ inputs.package }}",
+            "version": "${{ inputs.version }}",
+            "tag": "v${{ inputs.version }}",
+            "repository": "${{ github.repository }}",
+            "triggered_by": "${{ github.actor }}"
+          }
+
+    # ========================================================================
+    # 📝 Summary
+    # ========================================================================
+    - name: 📝 Generate summary
+      shell: bash
+      env:
+        EVENT_TYPE: ${{ inputs.event-type || format('{0}-dependency-update-available', inputs.package) }}
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🔔 Notified: ${{ inputs.target-repo }}
+
+        | Property | Value |
+        |:---------|:------|
+        | 🔗 Source | [\`${{ github.repository }}\`](https://github.com/${{ github.repository }}) |
+        | 🎯 Target | [\`${{ inputs.owner }}/${{ inputs.target-repo }}\`](https://github.com/${{ inputs.owner }}/${{ inputs.target-repo }}) |
+        | 📦 Package | \`${{ inputs.package }}\` |
+        | 🏷️ Version | \`${{ inputs.version }}\` |
+        | 🔖 Tag | \`v${{ inputs.version }}\` |
+        | 📡 Event | \`${EVENT_TYPE}\` |
+        | 👤 Triggered by | \`${{ github.actor }}\` |
+
+        EOF
