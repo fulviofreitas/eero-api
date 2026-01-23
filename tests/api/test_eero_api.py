@@ -189,7 +189,7 @@ class TestEeroAPIAuthentication:
 
 
 class TestEeroAPIPreferredNetwork:
-    """Tests for preferred network management."""
+    """Tests for preferred network management (in-memory only)."""
 
     def test_set_preferred_network(self, mock_session):
         """Test setting preferred network ID."""
@@ -197,12 +197,12 @@ class TestEeroAPIPreferredNetwork:
 
         api.set_preferred_network("network_123")
 
-        assert api.auth.preferred_network_id == "network_123"
+        assert api._preferred_network_id == "network_123"
 
     def test_get_preferred_network_id(self, mock_session):
         """Test getting preferred network ID."""
         api = EeroAPI(session=mock_session)
-        api.auth._credentials.preferred_network_id = "network_456"
+        api._preferred_network_id = "network_456"
 
         result = api.preferred_network_id
 

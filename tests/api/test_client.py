@@ -213,7 +213,7 @@ class TestEeroClientEnsureNetworkId:
     async def test_uses_preferred_network_id(self, mock_session):
         """Test that preferred network ID is used when available."""
         client = EeroClient(session=mock_session)
-        client._api.auth._credentials.preferred_network_id = "preferred_network"
+        client._preferred_network_id = "preferred_network"
 
         result = await client._ensure_network_id(None, auto_discover=False)
 
@@ -223,7 +223,7 @@ class TestEeroClientEnsureNetworkId:
     async def test_raises_without_network_id(self, mock_session):
         """Test that exception is raised when no network ID available."""
         client = EeroClient(session=mock_session)
-        client._api.auth._credentials.preferred_network_id = None
+        client._preferred_network_id = None
 
         with pytest.raises(EeroException, match="No network ID"):
             await client._ensure_network_id(None, auto_discover=False)
@@ -232,7 +232,7 @@ class TestEeroClientEnsureNetworkId:
     async def test_auto_discover_networks(self, mock_session, sample_networks_list):
         """Test auto-discovery when no network ID provided."""
         client = EeroClient(session=mock_session)
-        client._api.auth._credentials.preferred_network_id = None
+        client._preferred_network_id = None
 
         # Mock networks API - returns raw response format
         raw_response = {

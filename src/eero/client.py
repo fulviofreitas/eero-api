@@ -48,6 +48,7 @@ class EeroClient:
         """
         self._api = EeroAPI(session=session, cookie_file=cookie_file, use_keyring=use_keyring)
         self._cache_timeout = cache_timeout
+        self._preferred_network_id: Optional[str] = None
         self._cache: Dict[str, Dict] = {
             "account": {"data": None, "timestamp": 0},
             "networks": {"data": None, "timestamp": 0},
@@ -138,7 +139,7 @@ class EeroClient:
             EeroException: If no network ID can be determined
         """
         # Use provided ID or fall back to preferred
-        resolved_id = network_id or self._api.preferred_network_id
+        resolved_id = network_id or self._preferred_network_id
         if resolved_id:
             return resolved_id
 
@@ -280,7 +281,7 @@ class EeroClient:
         self._update_cache("networks", None, response)
 
         # Set preferred network ID if not already set
-        if not self._api.preferred_network_id:
+        if not self._preferred_network_id:
             # Re-extract networks from updated response
             data = response.get("data", {})
             networks = []
@@ -295,7 +296,7 @@ class EeroClient:
                 if not net_id and first_network.get("url"):
                     net_id = first_network["url"].rstrip("/").split("/")[-1]
                 if net_id:
-                    self._api.set_preferred_network(net_id)
+                    self._preferred_network_id = net_id
 
         return response
 
@@ -684,15 +685,18 @@ class EeroClient:
     def set_preferred_network(self, network_id: str) -> None:
         """Set the preferred network ID to use for requests.
 
+        This is an in-memory preference only. For persistent storage,
+        the CLI application should manage its own configuration file.
+
         Args:
             network_id: ID of the network to use
         """
-        self._api.set_preferred_network(network_id)
+        self._preferred_network_id = network_id
 
     @property
     def preferred_network_id(self) -> Optional[str]:
         """Get the preferred network ID."""
-        return self._api.preferred_network_id
+        return self._preferred_network_id
 
     # ==================== Diagnostics & Settings ====================
 

@@ -1,7 +1,7 @@
 """Authentication API for Eero."""
 
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Optional
 
 import aiohttp
 from aiohttp import ClientSession
@@ -46,7 +46,6 @@ class AuthAPI(BaseAPI):
         self._storage: CredentialStorage = create_storage(use_keyring, cookie_file)
         self._credentials = AuthCredentials()
         self._login_in_progress = False
-        self._preferred_network_dirty = False
 
     @property
     def is_authenticated(self) -> bool:
@@ -61,38 +60,6 @@ class AuthAPI(BaseAPI):
             _LOGGER.debug("Session expired")
         return False
 
-    @property
-    def preferred_network_id(self) -> Optional[str]:
-        """Get the preferred network ID.
-
-        Returns:
-            Preferred network ID or None
-        """
-        return self._credentials.preferred_network_id
-
-    @preferred_network_id.setter
-    def preferred_network_id(self, value: str) -> None:
-        """Set the preferred network ID.
-
-        Args:
-            value: Network ID to set as preferred
-
-        Note:
-            The preference is saved in memory and will be persisted
-            when save_preferred_network() is called or on context exit.
-        """
-        self._credentials.preferred_network_id = value
-        self._preferred_network_dirty = True
-
-    async def save_preferred_network(self) -> None:
-        """Save the preferred network ID if it was changed.
-
-        Call this method to persist the preferred network setting.
-        """
-        if self._preferred_network_dirty:
-            await self._storage.save(self._credentials)
-            self._preferred_network_dirty = False
-
     async def __aenter__(self) -> "AuthAPI":
         """Enter async context manager."""
         await super().__aenter__()
@@ -101,7 +68,6 @@ class AuthAPI(BaseAPI):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager."""
-        await self.save_preferred_network()
         await super().__aexit__(exc_type, exc_val, exc_tb)
 
     async def _load_credentials(self) -> None:
@@ -175,51 +141,6 @@ class AuthAPI(BaseAPI):
             _LOGGER.error(error_msg)
             raise EeroNetworkException(error_msg) from err
 
-    def _extract_network_id_from_response(self, response_data: Dict) -> Optional[str]:
-        """Extract network ID from the response data.
-
-        Args:
-            response_data: Response data
-
-        Returns:
-            Network ID or None if not found
-        """
-        try:
-            # Check for networks in the new format (networks list in data)
-            networks = response_data.get("networks", {}).get("data", [])
-
-            # If that's empty, try the old format (data.data array)
-            if not networks:
-                networks = response_data.get("data", [])
-
-            # If still empty, bail out
-            if not networks or not isinstance(networks, list) or len(networks) == 0:
-                return None
-
-            # Get the first network
-            network = networks[0]
-
-            # Try to get ID directly from the network
-            network_id = network.get("id")
-            if network_id:
-                _LOGGER.debug("Found network ID directly: %s", network_id)
-                return network_id
-
-            # Try to extract from URL
-            network_url = network.get("url")
-            if network_url:
-                # URL format is usually "/2.2/networks/network_id"
-                parts = network_url.split("/")
-                if len(parts) > 0:
-                    network_id = parts[-1]
-                    _LOGGER.debug("Extracted network ID from URL: %s", network_id)
-                    return network_id
-        except Exception as e:
-            _LOGGER.warning("Error extracting network ID: %s", e)
-
-        # Couldn't find network ID
-        return None
-
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.
 
@@ -245,7 +166,7 @@ class AuthAPI(BaseAPI):
             self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
 
             # Make the verification request
-            response = await self.post(
+            await self.post(
                 LOGIN_VERIFY_ENDPOINT,
                 auth_token=self._credentials.session_id,
                 json={"code": verification_code},
@@ -253,18 +174,6 @@ class AuthAPI(BaseAPI):
 
             # Session ID is already set from login, now it's validated
             self._login_in_progress = False
-
-            # Extract user and network data if available
-            try:
-                response_data = response.get("data", {})
-
-                # Extract network ID using helper method
-                network_id = self._extract_network_id_from_response(response_data)
-                if network_id:
-                    self._credentials.preferred_network_id = network_id
-                    _LOGGER.debug("Set preferred network ID")
-            except Exception as e:
-                _LOGGER.warning("Error parsing verification response: %s", e)
 
             # Set expiry to 30 days from now (typical session length)
             self._credentials.session_expiry = datetime.now().replace(microsecond=0) + timedelta(
@@ -276,7 +185,6 @@ class AuthAPI(BaseAPI):
             _LOGGER.debug("Session cookie updated successfully")
             await self._save_credentials()
             return True
-            return False
 
         except EeroAPIException as err:
             # Check for specific error codes
@@ -444,10 +352,10 @@ class AuthAPI(BaseAPI):
         """Clear all authentication data including stored credentials.
 
         This completely removes all authentication data from storage,
-        including session tokens, user tokens, and preferred network.
+        including session tokens and refresh tokens.
         """
-        # Clear in-memory credentials including preferences
-        self._credentials.clear_all(include_preferences=True)
+        # Clear in-memory credentials
+        self._credentials.clear_all()
         self._login_in_progress = False
 
         # Clear cookies

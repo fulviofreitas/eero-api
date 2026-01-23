@@ -27,7 +27,6 @@ class TestAuthStateManagement:
         auth_api = AuthAPI(use_keyring=False)
 
         assert auth_api.is_authenticated is False
-        assert auth_api.preferred_network_id is None
 
     def test_auth_api_with_custom_session(self):
         """Test AuthAPI with a custom session."""
@@ -49,13 +48,6 @@ class TestAuthStateManagement:
 
         # Without expiry, still not authenticated
         assert auth_api.is_authenticated is False
-
-    def test_preferred_network_setter(self):
-        """Test setting preferred network."""
-        auth_api = AuthAPI(use_keyring=False)
-
-        auth_api.preferred_network_id = "network_123"
-        assert auth_api.preferred_network_id == "network_123"
 
 
 # ========================== EeroClient Auth Integration Tests ==========================

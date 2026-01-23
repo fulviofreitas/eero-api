@@ -46,8 +46,8 @@ class TestNetworkIDResolution:
     async def test_ensure_network_id_with_preferred(self):
         """Test _ensure_network_id uses preferred network."""
         async with EeroClient(use_keyring=False) as client:
-            # Set preferred network via API
-            client._api.auth.preferred_network_id = "network_preferred"
+            # Set preferred network on client (in-memory)
+            client._preferred_network_id = "network_preferred"
 
             # Should return preferred (disable auto_discover to avoid API call)
             result = await client._ensure_network_id(None, auto_discover=False)
@@ -57,7 +57,7 @@ class TestNetworkIDResolution:
     async def test_ensure_network_id_explicit_overrides_preferred(self):
         """Test explicit ID overrides preferred."""
         async with EeroClient(use_keyring=False) as client:
-            client._api.auth.preferred_network_id = "network_preferred"
+            client._preferred_network_id = "network_preferred"
 
             result = await client._ensure_network_id("network_explicit", auto_discover=False)
             assert result == "network_explicit"
@@ -127,20 +127,20 @@ class TestCacheBehaviorPatterns:
 
 
 class TestPreferredNetworkManagement:
-    """Integration tests for preferred network management."""
+    """Integration tests for preferred network management (in-memory only)."""
 
-    def test_api_preferred_network_access(self):
-        """Test accessing preferred network through API."""
+    def test_client_preferred_network_access(self):
+        """Test accessing preferred network through client."""
         client = EeroClient(use_keyring=False)
 
         # Initially None
-        assert client._api.auth.preferred_network_id is None
+        assert client.preferred_network_id is None
 
         # Set it
-        client._api.auth.preferred_network_id = "network_123"
+        client.set_preferred_network("network_123")
 
         # Verify
-        assert client._api.auth.preferred_network_id == "network_123"
+        assert client.preferred_network_id == "network_123"
 
 
 # ========================== Error Propagation Tests ==========================

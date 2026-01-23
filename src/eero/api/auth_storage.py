@@ -24,17 +24,18 @@ _LOGGER = logging.getLogger(__name__)
 class AuthCredentials:
     """Container for authentication credentials.
 
-    Simplified credential storage with only essential fields:
+    Auth-only credential storage:
     - session_id: The auth token (used as 's' cookie for API requests)
     - refresh_token: Optional token for refreshing expired sessions
     - session_expiry: When the session expires
-    - preferred_network_id: User's preferred network for commands
+
+    Note: User preferences (like preferred_network_id) should be managed
+    by the CLI application, not stored with auth credentials.
     """
 
     session_id: Optional[str] = None
     refresh_token: Optional[str] = None
     session_expiry: Optional[datetime] = None
-    preferred_network_id: Optional[str] = None
 
     def is_session_expired(self) -> bool:
         """Check if the session has expired."""
@@ -52,7 +53,6 @@ class AuthCredentials:
             "session_id": self.session_id,
             "refresh_token": self.refresh_token,
             "session_expiry": (self.session_expiry.isoformat() if self.session_expiry else None),
-            "preferred_network_id": self.preferred_network_id,
         }
 
     @classmethod
@@ -77,7 +77,6 @@ class AuthCredentials:
             session_id=session_id,
             refresh_token=data.get("refresh_token"),
             session_expiry=session_expiry,
-            preferred_network_id=data.get("preferred_network_id"),
         )
 
     def clear_session(self) -> None:
@@ -85,18 +84,11 @@ class AuthCredentials:
         self.session_id = None
         self.session_expiry = None
 
-    def clear_all(self, include_preferences: bool = False) -> None:
-        """Clear all credentials.
-
-        Args:
-            include_preferences: If True, also clear preferred_network_id.
-                                Default False to preserve user preferences.
-        """
+    def clear_all(self) -> None:
+        """Clear all credentials."""
         self.session_id = None
         self.refresh_token = None
         self.session_expiry = None
-        if include_preferences:
-            self.preferred_network_id = None
 
 
 class CredentialStorage(ABC):

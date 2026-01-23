@@ -62,7 +62,6 @@ class TestAuthCredentials:
         original = AuthCredentials(
             session_id="s_456",
             refresh_token="rt_789",
-            preferred_network_id="net_789",
             session_expiry=datetime.now().replace(microsecond=0),
         )
         data = original.to_dict()
@@ -70,7 +69,6 @@ class TestAuthCredentials:
 
         assert restored.session_id == original.session_id
         assert restored.refresh_token == original.refresh_token
-        assert restored.preferred_network_id == original.preferred_network_id
         assert restored.session_expiry == original.session_expiry
 
     def test_from_dict_backward_compatibility(self):
@@ -78,7 +76,6 @@ class TestAuthCredentials:
         old_format = {
             "user_token": "old_token_123",
             "session_id": None,
-            "preferred_network_id": "net_789",
         }
         creds = AuthCredentials.from_dict(old_format)
 
@@ -91,44 +88,25 @@ class TestAuthCredentials:
             session_id="s_456",
             refresh_token="rt_789",
             session_expiry=datetime.now(),
-            preferred_network_id="net_789",
         )
         creds.clear_session()
 
         assert creds.session_id is None
         assert creds.session_expiry is None
         assert creds.refresh_token == "rt_789"  # Preserved
-        assert creds.preferred_network_id == "net_789"  # Preserved
 
     def test_clear_all(self):
-        """Test clear_all clears auth fields but preserves network preference."""
+        """Test clear_all clears all auth fields."""
         creds = AuthCredentials(
             session_id="s_456",
             refresh_token="rt_789",
             session_expiry=datetime.now(),
-            preferred_network_id="net_789",
         )
         creds.clear_all()
 
         assert creds.session_id is None
         assert creds.refresh_token is None
         assert creds.session_expiry is None
-        assert creds.preferred_network_id == "net_789"  # Preserved
-
-    def test_clear_all_with_preferences(self):
-        """Test clear_all with include_preferences=True clears everything."""
-        creds = AuthCredentials(
-            session_id="s_456",
-            refresh_token="rt_789",
-            session_expiry=datetime.now(),
-            preferred_network_id="net_789",
-        )
-        creds.clear_all(include_preferences=True)
-
-        assert creds.session_id is None
-        assert creds.refresh_token is None
-        assert creds.session_expiry is None
-        assert creds.preferred_network_id is None  # Also cleared
 
 
 class TestAuthAPIInit:
@@ -256,18 +234,6 @@ class TestAuthAPIVerify:
         assert api_pending_verification.is_authenticated is True
 
     @pytest.mark.asyncio
-    async def test_verify_extracts_network_id(
-        self, api_pending_verification, mock_session, sample_verify_response
-    ):
-        """Test that verification extracts network ID from response."""
-        mock_response = create_mock_response(200, sample_verify_response)
-        mock_session.request.return_value = mock_response
-
-        await api_pending_verification.verify("123456")
-
-        assert api_pending_verification._credentials.preferred_network_id == "network_123"
-
-    @pytest.mark.asyncio
     async def test_verify_without_session_token_raises(self, mock_session):
         """Test that verify raises without session token."""
         api = AuthAPI(session=mock_session, use_keyring=False)
@@ -343,35 +309,13 @@ class TestAuthAPIClearAuthData:
         api._credentials.session_id = "session"
         api._credentials.refresh_token = "refresh"
         api._credentials.session_expiry = datetime.now()
-        api._credentials.preferred_network_id = "network_123"
 
         await api.clear_auth_data()
 
         assert api._credentials.session_id is None
         assert api._credentials.refresh_token is None
         assert api._credentials.session_expiry is None
-        assert api._credentials.preferred_network_id is None  # Also cleared
         mock_session.cookie_jar.clear.assert_called()
-
-
-class TestAuthAPIPreferredNetwork:
-    """Tests for preferred network management."""
-
-    def test_get_preferred_network_id(self):
-        """Test getting preferred network ID."""
-        api = AuthAPI()
-        api._credentials.preferred_network_id = "network_123"
-
-        assert api.preferred_network_id == "network_123"
-
-    def test_set_preferred_network_id(self):
-        """Test setting preferred network ID."""
-        api = AuthAPI()
-
-        api.preferred_network_id = "network_456"
-
-        assert api._credentials.preferred_network_id == "network_456"
-        assert api._preferred_network_dirty is True
 
 
 class TestAuthAPIKeyringStorage:
@@ -388,7 +332,7 @@ class TestAuthAPIKeyringStorage:
         await api._load_credentials()
 
         assert api._credentials.session_id == valid_session_data["session_id"]
-        assert api._credentials.preferred_network_id == valid_session_data["preferred_network_id"]
+        assert api._credentials.refresh_token == valid_session_data["refresh_token"]
 
     @pytest.mark.asyncio
     async def test_save_to_keyring(self, mock_session, mock_keyring):
@@ -478,19 +422,6 @@ class TestAuthAPIContextManager:
         await api.__aenter__()
 
         mock_keyring.get_password.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_context_manager_saves_preferred_network(self, mock_session, mock_keyring):
-        """Test that exiting context saves preferred network if changed."""
-        api = AuthAPI(session=mock_session, use_keyring=True)
-        api._session = mock_session
-        api._preferred_network_dirty = True
-
-        await api.__aenter__()
-        await api.__aexit__(None, None, None)
-
-        # Should have saved the data
-        mock_keyring.set_password.assert_called()
 
 
 class TestAuthAPIResendVerification:
