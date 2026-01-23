@@ -88,3 +88,13 @@ See [MIGRATION.md](MIGRATION.md) for details on the raw response architecture.
 ## 📄 License
 
 [MIT](LICENSE) — Use it, fork it, build cool stuff 🎉
+
+---
+
+<div align="center">
+
+## 📊 Repository Metrics
+
+![Repository Metrics](./metrics.repository.svg)
+
+</div>

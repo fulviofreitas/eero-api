@@ -1,0 +1,106 @@
+# Reusable Repository Metrics Workflow
+# This workflow generates repository metrics SVG using lowlighter/metrics
+# and commits it to the repository for display in README files.
+#
+# Usage in caller workflow:
+#   jobs:
+#     metrics:
+#       uses: fulviofreitas/eero-api/.github/workflows/reusable-metrics.yml@master
+#       with:
+#         repo: my-repo-name
+#       secrets: inherit
+
+name: 📊 Repository Metrics (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      repo:
+        description: 'Repository name (e.g., eero-api)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to commit metrics to'
+        required: false
+        type: string
+        default: 'master'
+      filename:
+        description: 'Output filename for metrics SVG'
+        required: false
+        type: string
+        default: 'metrics.repository.svg'
+      template:
+        description: 'Metrics template to use'
+        required: false
+        type: string
+        default: 'repository'
+      languages_limit:
+        description: 'Number of languages to show'
+        required: false
+        type: number
+        default: 8
+      include_stargazers:
+        description: 'Include stargazers chart'
+        required: false
+        type: boolean
+        default: true
+      include_followup:
+        description: 'Include follow-up issues/PRs section'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate-metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 🔑 Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+
+      - name: 📊 Generate Repository Metrics
+        uses: lowlighter/metrics@latest
+        with:
+          # Repository configuration
+          template: ${{ inputs.template }}
+          repo: ${{ inputs.repo }}
+          user: ${{ github.repository_owner }}
+
+          # Output configuration
+          filename: ${{ inputs.filename }}
+          token: ${{ steps.app-token.outputs.token }}
+          committer_token: ${{ steps.app-token.outputs.token }}
+          committer_message: "chore: update repository metrics [skip ci]"
+          committer_branch: ${{ inputs.branch }}
+
+          # Base content for repository template
+          base: header, activity, community, repositories, metadata
+
+          # Plugin: Languages (basic, no indepth to avoid clone issues)
+          plugin_languages: true
+          plugin_languages_colors: github
+          plugin_languages_limit: ${{ inputs.languages_limit }}
+          plugin_languages_sections: most-used
+          plugin_languages_details: percentage
+
+          # Plugin: Stargazers
+          plugin_stargazers: ${{ inputs.include_stargazers }}
+          plugin_stargazers_charts_type: classic
+
+          # Plugin: Follow-up (issues/PRs)
+          plugin_followup: ${{ inputs.include_followup }}
+          plugin_followup_sections: repositories
+
+          # Output settings
+          config_timezone: UTC
+          config_output: svg
+          retries: 3
+          retries_delay: 300
