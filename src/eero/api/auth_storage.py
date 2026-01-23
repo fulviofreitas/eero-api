@@ -3,6 +3,7 @@
 This module provides storage backends for persisting authentication tokens:
 - KeyringStorage: Uses OS keyring for secure credential storage
 - FileStorage: Uses JSON file with restricted permissions
+- MemoryStorage: In-memory only, no persistence (for testing/ephemeral use)
 """
 
 import json
@@ -232,6 +233,30 @@ class FileStorage(CredentialStorage):
             _LOGGER.warning("Error removing cookie file: %s", e)
 
 
+class MemoryStorage(CredentialStorage):
+    """In-memory credential storage.
+
+    Credentials are not persisted to disk or keyring. Useful for testing
+    or ephemeral sessions where persistence is not needed.
+    """
+
+    def __init__(self) -> None:
+        """Initialize in-memory storage."""
+        self._credentials = AuthCredentials()
+
+    async def load(self) -> AuthCredentials:
+        """Load credentials from memory."""
+        return self._credentials
+
+    async def save(self, credentials: AuthCredentials) -> None:
+        """Save credentials to memory."""
+        self._credentials = credentials
+
+    async def clear(self) -> None:
+        """Clear credentials from memory."""
+        self._credentials = AuthCredentials()
+
+
 class ChainedStorage(CredentialStorage):
     """Storage that tries multiple backends in order.
 
@@ -310,6 +335,6 @@ def create_storage(
     elif cookie_file:
         return FileStorage(cookie_file)
     else:
-        # No storage configured - use in-memory only via keyring
-        # (will fail gracefully if keyring not available)
-        return KeyringStorage()
+        # No storage configured - use in-memory only
+        # (useful for testing or ephemeral sessions)
+        return MemoryStorage()

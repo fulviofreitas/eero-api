@@ -4,6 +4,8 @@ Tests cover:
 - Authentication state management
 - Session data persistence patterns
 - Error handling across auth operations
+
+NOTE: All tests must use use_keyring=False to avoid polluting the real OS keychain.
 """
 
 from unittest.mock import MagicMock
@@ -22,7 +24,7 @@ class TestAuthStateManagement:
 
     def test_auth_api_initialization(self):
         """Test AuthAPI initializes correctly."""
-        auth_api = AuthAPI()
+        auth_api = AuthAPI(use_keyring=False)
 
         assert auth_api.is_authenticated is False
         assert auth_api.preferred_network_id is None
@@ -30,13 +32,13 @@ class TestAuthStateManagement:
     def test_auth_api_with_custom_session(self):
         """Test AuthAPI with a custom session."""
         mock_session = MagicMock()
-        auth_api = AuthAPI(session=mock_session)
+        auth_api = AuthAPI(session=mock_session, use_keyring=False)
 
         assert auth_api._session == mock_session
 
     def test_auth_api_session_data_management(self):
         """Test AuthAPI session data management."""
-        auth_api = AuthAPI()
+        auth_api = AuthAPI(use_keyring=False)
 
         # Initially not authenticated
         assert auth_api.is_authenticated is False
@@ -51,7 +53,7 @@ class TestAuthStateManagement:
 
     def test_preferred_network_setter(self):
         """Test setting preferred network."""
-        auth_api = AuthAPI()
+        auth_api = AuthAPI(use_keyring=False)
 
         auth_api.preferred_network_id = "network_123"
         assert auth_api.preferred_network_id == "network_123"
@@ -65,14 +67,14 @@ class TestEeroClientAuthState:
 
     def test_client_initialization(self):
         """Test EeroClient initializes correctly."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Client should have API components
         assert hasattr(client, "_api")
 
     def test_client_is_authenticated_property(self):
         """Test client is_authenticated property."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Initially not authenticated
         assert client.is_authenticated is False
@@ -87,7 +89,7 @@ class TestAuthFlowPatterns:
     @pytest.mark.asyncio
     async def test_unauthenticated_client_raises_for_protected_calls(self):
         """Test that unauthenticated client raises for protected calls."""
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             # Not authenticated, should raise
             with pytest.raises(EeroAuthenticationException):
                 await client.get_networks()
@@ -95,7 +97,7 @@ class TestAuthFlowPatterns:
     @pytest.mark.asyncio
     async def test_client_context_manager(self):
         """Test client works as async context manager."""
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             assert client is not None
             assert hasattr(client, "_api")
 
@@ -123,7 +125,7 @@ class TestCacheIntegrationWithAuth:
 
     def test_cache_initialization(self):
         """Test cache is properly initialized."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Cache should exist
         assert hasattr(client, "_cache")
@@ -131,7 +133,7 @@ class TestCacheIntegrationWithAuth:
 
     def test_cache_validity_check(self):
         """Test cache validity checking."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Empty cache should not be valid
         assert client._is_cache_valid("nonexistent_key") is False

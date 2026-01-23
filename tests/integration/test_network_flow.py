@@ -5,6 +5,8 @@ Tests cover:
 - Cache behavior patterns
 - Multi-component initialization
 - Error propagation
+
+NOTE: All tests must use use_keyring=False to avoid polluting the real OS keychain.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -35,7 +37,7 @@ class TestNetworkIDResolution:
     @pytest.mark.asyncio
     async def test_ensure_network_id_with_explicit_id(self):
         """Test _ensure_network_id with explicit network ID."""
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             # With explicit ID, should return it without API call
             result = await client._ensure_network_id("network_explicit", auto_discover=False)
             assert result == "network_explicit"
@@ -43,7 +45,7 @@ class TestNetworkIDResolution:
     @pytest.mark.asyncio
     async def test_ensure_network_id_with_preferred(self):
         """Test _ensure_network_id uses preferred network."""
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             # Set preferred network via API
             client._api.auth.preferred_network_id = "network_preferred"
 
@@ -54,7 +56,7 @@ class TestNetworkIDResolution:
     @pytest.mark.asyncio
     async def test_ensure_network_id_explicit_overrides_preferred(self):
         """Test explicit ID overrides preferred."""
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             client._api.auth.preferred_network_id = "network_preferred"
 
             result = await client._ensure_network_id("network_explicit", auto_discover=False)
@@ -69,7 +71,7 @@ class TestClientInitialization:
 
     def test_client_has_api_component(self):
         """Test client initializes API component."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Check main API exists
         assert hasattr(client, "_api")
@@ -77,14 +79,14 @@ class TestClientInitialization:
 
     def test_client_default_cache_timeout(self):
         """Test client has default cache timeout."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client, "_cache_timeout")
         assert client._cache_timeout > 0
 
     def test_client_with_custom_cache_timeout(self):
         """Test client accepts custom cache timeout."""
-        client = EeroClient(cache_timeout=120)
+        client = EeroClient(cache_timeout=120, use_keyring=False)
 
         assert client._cache_timeout == 120
 
@@ -97,7 +99,7 @@ class TestCacheBehaviorPatterns:
 
     def test_cache_structure(self):
         """Test cache has expected structure."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Cache should have predefined keys
         assert "account" in client._cache
@@ -108,14 +110,14 @@ class TestCacheBehaviorPatterns:
 
     def test_get_from_cache_returns_none_for_missing(self):
         """Test _get_from_cache returns None for missing keys."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         result = client._get_from_cache("nonexistent_key")
         assert result is None
 
     def test_cache_is_valid_for_missing_key(self):
         """Test _is_cache_valid returns False for missing keys."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         result = client._is_cache_valid("nonexistent_key")
         assert result is False
@@ -129,7 +131,7 @@ class TestPreferredNetworkManagement:
 
     def test_api_preferred_network_access(self):
         """Test accessing preferred network through API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Initially None
         assert client._api.auth.preferred_network_id is None
@@ -156,7 +158,7 @@ class TestErrorPropagation:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        async with EeroClient(session=mock_session) as client:
+        async with EeroClient(session=mock_session, use_keyring=False) as client:
             with pytest.raises(EeroAuthenticationException):
                 await client.get_networks()
 
@@ -169,7 +171,7 @@ class TestErrorPropagation:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        async with EeroClient(session=mock_session) as client:
+        async with EeroClient(session=mock_session, use_keyring=False) as client:
             with pytest.raises(EeroAuthenticationException):
                 await client.get_devices("network_123")
 
@@ -182,7 +184,7 @@ class TestErrorPropagation:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        async with EeroClient(session=mock_session) as client:
+        async with EeroClient(session=mock_session, use_keyring=False) as client:
             with pytest.raises(EeroAuthenticationException):
                 await client.get_eeros("network_123")
 
@@ -195,7 +197,7 @@ class TestErrorPropagation:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        async with EeroClient(session=mock_session) as client:
+        async with EeroClient(session=mock_session, use_keyring=False) as client:
             with pytest.raises(EeroAuthenticationException):
                 await client.get_profiles("network_123")
 
@@ -208,7 +210,7 @@ class TestAPIComponentAccess:
 
     def test_access_auth_via_api(self):
         """Test accessing auth via API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Auth should be accessible via EeroAPI
         assert hasattr(client._api, "auth")
@@ -216,56 +218,56 @@ class TestAPIComponentAccess:
 
     def test_access_networks_via_api(self):
         """Test accessing networks via API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "networks")
         assert client._api.networks is not None
 
     def test_access_devices_via_api(self):
         """Test accessing devices via API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "devices")
         assert client._api.devices is not None
 
     def test_access_eeros_via_api(self):
         """Test accessing eeros via API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "eeros")
         assert client._api.eeros is not None
 
     def test_access_profiles_via_api(self):
         """Test accessing profiles via API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "profiles")
         assert client._api.profiles is not None
 
     def test_access_dns_via_api(self):
         """Test accessing DNS API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "dns")
         assert client._api.dns is not None
 
     def test_access_security_via_api(self):
         """Test accessing security API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "security")
         assert client._api.security is not None
 
     def test_access_sqm_via_api(self):
         """Test accessing SQM API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "sqm")
         assert client._api.sqm is not None
 
     def test_access_schedule_via_api(self):
         """Test accessing schedule API."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         assert hasattr(client._api, "schedule")
         assert client._api.schedule is not None
@@ -282,7 +284,7 @@ class TestMultiComponentWorkflows:
         """Test client context manager properly cleans up."""
         client_ref = None
 
-        async with EeroClient() as client:
+        async with EeroClient(use_keyring=False) as client:
             client_ref = client
 
         # After context, client should still exist
@@ -290,7 +292,7 @@ class TestMultiComponentWorkflows:
 
     def test_cache_clear_resets_state(self):
         """Test clear_cache modifies cache state."""
-        client = EeroClient()
+        client = EeroClient(use_keyring=False)
 
         # Get initial cache state
         initial_keys = set(client._cache.keys())
