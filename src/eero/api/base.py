@@ -135,7 +135,8 @@ class BaseAPI:
                             response.status, f"Invalid JSON response: {response_text}"
                         )
                 elif response.status == 401:
-                    _LOGGER.error("Authentication failed: %s", response.status)
+                    # Use debug level - callers handle auth errors appropriately
+                    _LOGGER.debug("Authentication failed: %s", response.status)
                     raise EeroAuthenticationException(f"Authentication failed: {response_text}")
                 elif response.status == 404:
                     # Use debug level for 404s to reduce noise in CLI output

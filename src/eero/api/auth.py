@@ -333,10 +333,9 @@ class AuthAPI(BaseAPI):
         """Log out from the Eero API.
 
         Returns:
-            True if logout was successful
+            True if logout was successful (or session was already invalid)
 
         Raises:
-            EeroAuthenticationException: If not authenticated
             EeroNetworkException: If there's a network error
         """
         if not self.is_authenticated:
@@ -349,21 +348,26 @@ class AuthAPI(BaseAPI):
                 auth_token=self._credentials.session_id,
                 json={},  # Empty payload for logout
             )
-
-            # Clear session data (preserves preferred_network_id)
-            self._credentials.clear_all()
-
-            # Clear cookies
-            self.session.cookie_jar.clear()
-
-            # Update storage
-            await self._save_credentials()
-            return True
+            _LOGGER.debug("Logout API call succeeded")
+        except EeroAuthenticationException:
+            # 401 means session is already invalid on server - that's fine
+            _LOGGER.debug("Session already invalid on server, clearing local credentials")
         except EeroAPIException as err:
-            _LOGGER.error("Logout failed: %s", err)
-            return False
+            _LOGGER.warning("Logout API call failed: %s", err)
+            # Still clear local credentials even if server call failed
         except aiohttp.ClientError as err:
-            raise EeroNetworkException(f"Network error during logout: {err}") from err
+            _LOGGER.warning("Network error during logout: %s", err)
+            # Still clear local credentials even if network failed
+
+        # Always clear local credentials regardless of API response
+        self._credentials.clear_all()
+
+        # Clear cookies
+        self.session.cookie_jar.clear()
+
+        # Update storage
+        await self._save_credentials()
+        return True
 
     async def refresh_session(self) -> bool:
         """Refresh the session using the refresh token.

@@ -264,8 +264,21 @@ class ChainedStorage(CredentialStorage):
         return credentials
 
     async def save(self, credentials: AuthCredentials) -> None:
-        """Save to primary storage."""
-        await self._primary.save(credentials)
+        """Save to both storages for consistency.
+
+        Saves to both primary and fallback to ensure credentials are
+        persisted even if one storage backend fails.
+        """
+        # Save to both storages - if primary fails, fallback still works
+        try:
+            await self._primary.save(credentials)
+        except Exception as e:
+            _LOGGER.debug("Primary storage save failed, continuing with fallback: %s", e)
+
+        try:
+            await self._fallback.save(credentials)
+        except Exception as e:
+            _LOGGER.debug("Fallback storage save failed: %s", e)
 
     async def clear(self) -> None:
         """Clear both storages."""
