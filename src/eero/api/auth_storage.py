@@ -146,7 +146,8 @@ class KeyringStorage(CredentialStorage):
             keyring.set_password(self.SERVICE_NAME, self.ACCOUNT_NAME, data)
             _LOGGER.debug("Saved authentication data to keyring")
         except Exception as e:
-            _LOGGER.error("Error saving to keyring: %s", e)
+            # Log at debug level since file fallback works
+            _LOGGER.debug("Error saving to keyring (using file fallback): %s", e)
 
     async def clear(self) -> None:
         """Clear credentials from keyring."""

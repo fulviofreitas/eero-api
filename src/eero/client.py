@@ -234,6 +234,10 @@ class EeroClient:
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
+
+        Note:
+            The Eero API may return an empty list from the /networks endpoint.
+            In this case, we fall back to extracting networks from the /account endpoint.
         """
         if not refresh_cache and self._is_cache_valid("networks"):
             cached = self._get_from_cache("networks")
@@ -241,10 +245,43 @@ class EeroClient:
                 return cached
 
         response = await self._api.networks.get_networks()
+
+        # Check if response has networks
+        data = response.get("data", {})
+        networks = []
+        if isinstance(data, list):
+            networks = data
+        elif isinstance(data, dict):
+            networks = data.get("networks") or data.get("data") or []
+
+        # If /networks returns empty, fall back to /account endpoint
+        if not networks:
+            _LOGGER.debug("Networks endpoint returned empty, falling back to account endpoint")
+            try:
+                account_response = await self.get_account(refresh_cache=True)
+                account_data = account_response.get("data", {})
+                networks_data = account_data.get("networks", {})
+
+                # Extract networks from account response
+                if isinstance(networks_data, dict):
+                    networks = networks_data.get("data", [])
+                elif isinstance(networks_data, list):
+                    networks = networks_data
+
+                if networks:
+                    # Construct a response in the expected format
+                    response = {
+                        "meta": response.get("meta", {}),
+                        "data": {"networks": networks},
+                    }
+            except Exception as e:
+                _LOGGER.debug("Failed to get networks from account endpoint: %s", e)
+
         self._update_cache("networks", None, response)
 
         # Set preferred network ID if not already set
         if not self._api.preferred_network_id:
+            # Re-extract networks from updated response
             data = response.get("data", {})
             networks = []
             if isinstance(data, list):
