@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0](https://github.com/fulviofreitas/eero-api/compare/v2.0.2...v2.1.0) (2026-01-23)
+
+### ✨ Features
+
+* **ci:** add reusable actions for renovate workflow standardization ([a073135](https://github.com/fulviofreitas/eero-api/commit/a0731352be5128a17721421357481603850e1107))
+
 ## [2.0.2](https://github.com/fulviofreitas/eero-api/compare/v2.0.1...v2.0.2) (2026-01-22)
 
 ### 🐛 Bug Fixes
