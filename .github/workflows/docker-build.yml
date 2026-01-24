@@ -255,9 +255,14 @@ jobs:
         run: |
           # Get the latest tag digest
           LATEST_TAG="${{ inputs.image-name }}:latest"
-          DIGEST=$(docker buildx imagetools inspect "${LATEST_TAG}" --format '{{.Manifest.Digest}}' 2>/dev/null || echo "")
+          # Use raw format and parse with grep
+          DIGEST=$(docker buildx imagetools inspect "${LATEST_TAG}" --raw 2>/dev/null | jq -r '.manifests[0].digest // empty' || echo "")
+          if [ -z "$DIGEST" ]; then
+            # Fallback: get digest from inspect output
+            DIGEST=$(docker buildx imagetools inspect "${LATEST_TAG}" 2>&1 | grep -oP 'Digest:\s+\K\S+' | head -1 || echo "")
+          fi
           echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-          echo "📋 Multi-arch digest: ${DIGEST}"
+          echo "📋 Multi-arch digest: ${DIGEST:-unknown}"
 
       - name: 🧹 Cleanup temp tags
         continue-on-error: true
