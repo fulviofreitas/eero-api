@@ -1,0 +1,357 @@
+# ============================================================================
+# 🐳 Docker Build Reusable Workflow
+# ============================================================================
+# Builds multi-platform Docker images using native runners for each architecture.
+# Uses parallel builds for amd64 and arm64, then merges into multi-arch manifest.
+#
+# Usage:
+#   jobs:
+#     docker:
+#       uses: fulviofreitas/eero-api/.github/workflows/docker-build.yml@master
+#       with:
+#         image-name: ghcr.io/org/repo
+#         push: true
+#       secrets:
+#         registry-password: ${{ secrets.GITHUB_TOKEN }}
+# ============================================================================
+
+name: 🐳 Docker Build
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: "Docker image name (e.g., ghcr.io/org/repo)"
+        required: true
+        type: string
+      context:
+        description: "Docker build context"
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: "Path to Dockerfile"
+        required: false
+        type: string
+        default: "Dockerfile"
+      push:
+        description: "Push image to registry"
+        required: false
+        type: boolean
+        default: false
+      registry:
+        description: "Container registry"
+        required: false
+        type: string
+        default: "ghcr.io"
+      registry-username:
+        description: "Registry username"
+        required: false
+        type: string
+        default: ""
+      build-args:
+        description: "Build arguments"
+        required: false
+        type: string
+        default: ""
+      annotations:
+        description: "Image annotations"
+        required: false
+        type: string
+        default: ""
+      generate-sbom:
+        description: "Generate SBOM"
+        required: false
+        type: boolean
+        default: true
+      generate-provenance:
+        description: "Generate provenance attestation"
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      registry-password:
+        description: "Registry password/token"
+        required: false
+    outputs:
+      digest:
+        description: "Multi-arch image digest"
+        value: ${{ jobs.merge.outputs.digest }}
+      tags:
+        description: "Image tags"
+        value: ${{ jobs.build-amd64.outputs.tags }}
+
+jobs:
+  # ==========================================================================
+  # Prepare: Get version tag and generate metadata
+  # ==========================================================================
+  prepare:
+    name: 📋 Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version-tag: ${{ steps.get_tag.outputs.tag }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 🏷️ Get latest tag
+        id: get_tag
+        run: |
+          git fetch --tags
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+          echo "📌 Latest tag: ${LATEST_TAG:-none}"
+
+      - name: 🏷️ Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.image-name }}
+          tags: |
+            type=raw,value=latest,enable=${{ inputs.push }}
+            type=raw,value=${{ steps.get_tag.outputs.tag }},enable=${{ steps.get_tag.outputs.tag != '' && inputs.push }}
+            type=semver,pattern={{version}},value=${{ steps.get_tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_tag.outputs.tag }}
+            type=sha,prefix=
+            type=ref,event=pr
+
+  # ==========================================================================
+  # Build AMD64 on native x86_64 runner
+  # ==========================================================================
+  build-amd64:
+    name: 🏗️ Build AMD64
+    runs-on: ubuntu-24.04
+    needs: prepare
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tags: ${{ needs.prepare.outputs.tags }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔐 Log in to registry
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.registry-password }}
+
+      - name: 📦 Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/amd64
+          push: ${{ inputs.push }}
+          tags: ${{ inputs.image-name }}:amd64-${{ github.sha }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          annotations: ${{ inputs.annotations }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: |
+            type=gha,scope=${{ github.ref_name }}-amd64
+            type=gha,scope=master-amd64
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-amd64
+          provenance: ${{ inputs.generate-provenance && 'mode=min' || 'false' }}
+          sbom: ${{ inputs.generate-sbom }}
+
+  # ==========================================================================
+  # Build ARM64 on native ARM runner
+  # ==========================================================================
+  build-arm64:
+    name: 🏗️ Build ARM64
+    runs-on: ubuntu-24.04-arm
+    needs: prepare
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔐 Log in to registry
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.registry-password }}
+
+      - name: 📦 Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/arm64
+          push: ${{ inputs.push }}
+          tags: ${{ inputs.image-name }}:arm64-${{ github.sha }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          annotations: ${{ inputs.annotations }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: |
+            type=gha,scope=${{ github.ref_name }}-arm64
+            type=gha,scope=master-arm64
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-arm64
+          provenance: ${{ inputs.generate-provenance && 'mode=min' || 'false' }}
+          sbom: ${{ inputs.generate-sbom }}
+
+  # ==========================================================================
+  # Merge manifests into multi-arch image
+  # ==========================================================================
+  merge:
+    name: 🔀 Merge Manifests
+    runs-on: ubuntu-latest
+    needs: [prepare, build-amd64, build-arm64]
+    if: inputs.push
+    outputs:
+      digest: ${{ steps.inspect.outputs.digest }}
+    steps:
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔐 Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.registry-password }}
+
+      - name: 🔀 Create multi-arch manifest
+        run: |
+          # Parse tags and create manifests for each
+          TAGS="${{ needs.prepare.outputs.tags }}"
+          AMD64_TAG="${{ inputs.image-name }}:amd64-${{ github.sha }}"
+          ARM64_TAG="${{ inputs.image-name }}:arm64-${{ github.sha }}"
+          
+          echo "📦 Source images:"
+          echo "  - ${AMD64_TAG}"
+          echo "  - ${ARM64_TAG}"
+          echo ""
+          
+          # Create manifest for each tag
+          echo "$TAGS" | while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              echo "🔀 Creating manifest for: ${tag}"
+              docker buildx imagetools create \
+                --tag "${tag}" \
+                "${AMD64_TAG}" \
+                "${ARM64_TAG}"
+            fi
+          done
+
+      - name: 🔍 Inspect manifest
+        id: inspect
+        run: |
+          # Get the latest tag digest
+          LATEST_TAG="${{ inputs.image-name }}:latest"
+          DIGEST=$(docker buildx imagetools inspect "${LATEST_TAG}" --format '{{.Manifest.Digest}}' 2>/dev/null || echo "")
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "📋 Multi-arch digest: ${DIGEST}"
+
+      - name: 🧹 Cleanup temp tags
+        continue-on-error: true
+        run: |
+          # Note: GHCR doesn't support tag deletion via API easily
+          # The temp tags (amd64-sha, arm64-sha) will be overwritten on next build
+          echo "ℹ️ Temporary architecture tags will be overwritten on next build"
+
+      - name: 🔏 Generate attestation
+        if: inputs.generate-provenance
+        uses: actions/attest-build-provenance@v3
+        continue-on-error: true
+        with:
+          subject-name: ${{ inputs.image-name }}
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+
+      - name: 📊 Generate build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🐳 Docker Build Summary
+          
+          | Property | Value |
+          |:---------|:------|
+          | 📦 Image | \`${{ inputs.image-name }}\` |
+          | 🏗️ Platforms | \`linux/amd64, linux/arm64\` |
+          | 📤 Pushed | \`${{ inputs.push }}\` |
+          | 🔏 SBOM | \`${{ inputs.generate-sbom }}\` |
+          | 📝 Provenance | \`${{ inputs.generate-provenance }}\` |
+          | 🚀 Build Type | Native runners (parallel) |
+          
+          ### 🏷️ Tags
+          
+          \`\`\`
+          ${{ needs.prepare.outputs.tags }}
+          \`\`\`
+          
+          ### ⚡ Performance
+          
+          Built using native runners:
+          - AMD64: \`ubuntu-24.04\`
+          - ARM64: \`ubuntu-24.04-arm\`
+          
+          ---
+          
+          <sub>🤖 Built with Docker Buildx + Native Runners</sub>
+          EOF
+
+  # ==========================================================================
+  # PR Build (no push, uses QEMU for simplicity)
+  # ==========================================================================
+  build-pr:
+    name: 🏗️ Build (PR)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.push }}
+    needs: prepare
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🛠️ Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 📦 Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ needs.prepare.outputs.tags }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: |
+            type=gha,scope=${{ github.ref_name }}
+            type=gha,scope=master
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}
+
+      - name: 📊 Generate build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🐳 Docker Build Summary (PR)
+          
+          | Property | Value |
+          |:---------|:------|
+          | 📦 Image | \`${{ inputs.image-name }}\` |
+          | 🏗️ Platforms | \`linux/amd64, linux/arm64\` |
+          | 📤 Pushed | \`false\` |
+          | 🔍 Mode | PR validation (QEMU) |
+          
+          ---
+          
+          <sub>🤖 Built with Docker Buildx</sub>
+          EOF
