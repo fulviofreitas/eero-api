@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1](https://github.com/fulviofreitas/eero-api/compare/v4.0.0...v4.0.1) (2026-01-24)
+
+### 🐛 Bug Fixes
+
+* **ci:** fix manifest inspect command in docker-build workflow ([d7dbe00](https://github.com/fulviofreitas/eero-api/commit/d7dbe006fee7e789d1359cda70911d5ba00e6ff2))
+
 ## [4.0.0](https://github.com/fulviofreitas/eero-api/compare/v3.0.1...v4.0.0) (2026-01-23)
 
 ### ⚠ BREAKING CHANGES
