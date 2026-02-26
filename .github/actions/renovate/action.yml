@@ -128,7 +128,7 @@ runs:
 
     - name: 📤 Upload cache artifact
       if: always() && inputs.reset-cache != 'true'
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       continue-on-error: true
       with:
         name: renovate-cache-v1
