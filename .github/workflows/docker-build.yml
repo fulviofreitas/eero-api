@@ -273,7 +273,7 @@ jobs:
 
       - name: 🔏 Generate attestation
         if: inputs.generate-provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         continue-on-error: true
         with:
           subject-name: ${{ inputs.image-name }}

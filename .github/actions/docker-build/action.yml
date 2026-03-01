@@ -138,7 +138,7 @@ runs:
 
     - name: 🔏 Generate attestation
       if: inputs.push == 'true' && inputs.generate-provenance == 'true'
-      uses: actions/attest-build-provenance@v3
+      uses: actions/attest-build-provenance@v4
       continue-on-error: true
       with:
         subject-name: ${{ inputs.image-name }}
