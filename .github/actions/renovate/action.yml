@@ -58,7 +58,7 @@ runs:
     # ========================================================================
     - name: 📥 Download cache artifact
       if: inputs.reset-cache != 'true'
-      uses: dawidd6/action-download-artifact@v14
+      uses: dawidd6/action-download-artifact@v16
       continue-on-error: true
       with:
         name: renovate-cache-v1
