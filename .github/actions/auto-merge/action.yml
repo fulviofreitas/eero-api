@@ -84,7 +84,7 @@ runs:
     - name: 🔑 Generate GitHub App token
       id: app-token
       if: inputs.app-id != '' && inputs.app-private-key != ''
-      uses: actions/create-github-app-token@v2
+      uses: actions/create-github-app-token@v3
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
