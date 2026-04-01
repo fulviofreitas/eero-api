@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2](https://github.com/fulviofreitas/eero-api/compare/v4.0.1...v4.0.2) (2026-04-01)
+
+### 🐛 Bug Fixes
+
+* **deps:** consolidate all dependency updates ([#35](https://github.com/fulviofreitas/eero-api/issues/35)) ([a994cc3](https://github.com/fulviofreitas/eero-api/commit/a994cc3563431e9c6fcd0f1fc64fa21eb5a580ba)), closes [#27](https://github.com/fulviofreitas/eero-api/issues/27) [#29](https://github.com/fulviofreitas/eero-api/issues/29) [#30](https://github.com/fulviofreitas/eero-api/issues/30) [#31](https://github.com/fulviofreitas/eero-api/issues/31) [#32](https://github.com/fulviofreitas/eero-api/issues/32) [#33](https://github.com/fulviofreitas/eero-api/issues/33) [#34](https://github.com/fulviofreitas/eero-api/issues/34)
+
 ## [4.0.1](https://github.com/fulviofreitas/eero-api/compare/v4.0.0...v4.0.1) (2026-01-24)
 
 ### 🐛 Bug Fixes
