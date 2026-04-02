@@ -78,7 +78,7 @@ jobs:
       # 🔄 Run Renovate
       # ========================================================================
       - name: 🔄 Run Renovate
-        uses: ./.github/actions/renovate
+        uses: fulviofreitas/workflow-arsenal/.github/actions/renovate@master
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}

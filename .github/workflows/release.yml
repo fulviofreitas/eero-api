@@ -64,7 +64,7 @@ jobs:
 
       - name: 🚀 Run semantic-release
         id: release
-        uses: ./.github/actions/semantic-release
+        uses: fulviofreitas/workflow-arsenal/.github/actions/semantic-release@master
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           dry-run: ${{ github.event.inputs.dry_run || 'false' }}
@@ -211,7 +211,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🔔 Notify ${{ matrix.repo }}
-        uses: ./.github/actions/notify-downstream
+        uses: fulviofreitas/workflow-arsenal/.github/actions/notify-downstream@master
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           app-private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}

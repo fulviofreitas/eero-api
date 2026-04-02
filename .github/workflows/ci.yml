@@ -3,7 +3,7 @@
 # ============================================================================
 # Chain: Commit Lint → Lint & Format → [Type Check ‖ Security ‖ Tests] → CI Success
 #
-# All reusable actions are defined in .github/actions/
+# All reusable actions are sourced from fulviofreitas/workflow-arsenal
 # ============================================================================
 
 name: 🧪 CI Pipeline
@@ -43,7 +43,7 @@ jobs:
           fetch-depth: 0
 
       - name: 📝 Validate commits
-        uses: ./.github/actions/commitlint
+        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@master
         with:
           from-sha: ${{ github.event.pull_request.base.sha }}
           to-sha: ${{ github.event.pull_request.head.sha }}
@@ -62,13 +62,13 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🐍 Setup Python
-        uses: ./.github/actions/setup-python
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🧹 Run Python lint
-        uses: ./.github/actions/python-lint
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-lint@master
         with:
           src-path: "src/"
           tests-path: "tests/"
@@ -87,12 +87,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🐍 Setup Python
-        uses: ./.github/actions/setup-python
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 🔍 Run type check
-        uses: ./.github/actions/python-typecheck
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-typecheck@master
         with:
           src-path: "src/"
           fail-on-error: "true"
@@ -113,13 +113,13 @@ jobs:
           fetch-depth: 0
 
       - name: 🐍 Setup Python
-        uses: ./.github/actions/setup-python
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🛡️ Run security scan
-        uses: ./.github/actions/security-semgrep
+        uses: fulviofreitas/workflow-arsenal/.github/actions/security-semgrep@master
         with:
           config: "p/python p/security-audit"
           target-path: "src/"
@@ -143,12 +143,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🐍 Setup Python
-        uses: ./.github/actions/setup-python
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: 🧪 Run tests
-        uses: ./.github/actions/python-test
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-test@master
         with:
           test-path: "tests/"
           src-path: "src/eero"

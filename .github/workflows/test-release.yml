@@ -99,7 +99,7 @@ jobs:
           grep "^version" pyproject.toml
 
       - name: 📦 Publish to TestPyPI
-        uses: ./.github/actions/pypi-publish
+        uses: fulviofreitas/workflow-arsenal/.github/actions/pypi-publish@master
         with:
           version: ${{ steps.version.outputs.version }}
           repository-url: https://test.pypi.org/legacy/
