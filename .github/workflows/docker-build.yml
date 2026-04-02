@@ -7,7 +7,7 @@
 # Usage:
 #   jobs:
 #     docker:
-#       uses: fulviofreitas/eero-api/.github/workflows/docker-build.yml@master
+#       uses: fulviofreitas/workflow-arsenal/.github/workflows/docker-build.yml@master
 #       with:
 #         image-name: ghcr.io/org/repo
 #         push: true
