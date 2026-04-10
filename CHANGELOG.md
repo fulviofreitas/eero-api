@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.4](https://github.com/fulviofreitas/eero-api/compare/v4.0.3...v4.0.4) (2026-04-10)
+
+### 🐛 Bug Fixes
+
+* remove deprecated prTitle and invalid matchPackageNames from renovate config ([25feab6](https://github.com/fulviofreitas/eero-api/commit/25feab6629ea108f365608b7acfd7a5bb4684038))
+
 ## [4.0.3](https://github.com/fulviofreitas/eero-api/compare/v4.0.2...v4.0.3) (2026-04-10)
 
 ### 🐛 Bug Fixes
