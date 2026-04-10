@@ -4,15 +4,15 @@ IMPORTANT: This module returns RAW responses from the Eero Cloud API.
 All data extraction, field mapping, and transformation must be done by downstream clients.
 """
 
-import logging
 from typing import Any, Dict
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ..logging import get_secure_logger
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_secure_logger(__name__)
 
 
 class PasswordAPI(AuthenticatedAPI):
@@ -47,7 +47,7 @@ class PasswordAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Getting password for network %s", network_id)
+        _LOGGER.debug("Retrieving network credentials")
         return await self.get(
             f"networks/{network_id}/password",
             auth_token=auth_token,

@@ -117,10 +117,10 @@ class AuthAPI(BaseAPI):
             # Extract user_token from API response and store as session_id
             # (it becomes the session token after verification)
             user_token = response.get("data", {}).get("user_token")
-            _LOGGER.debug(
-                "User token %s",
-                "received" if user_token else "not received",
-            )
+            if user_token:
+                _LOGGER.debug("User token received")
+            else:
+                _LOGGER.debug("User token not received")
 
             if not user_token:
                 _LOGGER.error("Login failed: No user token received")
