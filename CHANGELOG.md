@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3](https://github.com/fulviofreitas/eero-api/compare/v4.0.2...v4.0.3) (2026-04-10)
+
+### 🐛 Bug Fixes
+
+* **ci:** use GitHub App token for semantic-release ([05cc595](https://github.com/fulviofreitas/eero-api/commit/05cc595827a7e2dcc9211b7037e1074fa003f69a))
+* resolve credential disclosure warnings in logger calls ([92d9196](https://github.com/fulviofreitas/eero-api/commit/92d91967ebdac89e3a4d8ed37debfe582ad2d6b2))
+
+### ♻️ Refactoring
+
+* point actions to centralized repo fulviofreitas/workflow-arsenal ([f3dd5da](https://github.com/fulviofreitas/eero-api/commit/f3dd5daf7151df4d93d567a0629fe06662590c21))
+* point reusable workflows to centralized workflow-arsenal repo ([e31a19c](https://github.com/fulviofreitas/eero-api/commit/e31a19c243e3e96f4b04edc877ae00424473465e))
+
 ## [4.0.2](https://github.com/fulviofreitas/eero-api/compare/v4.0.1...v4.0.2) (2026-04-01)
 
 ### 🐛 Bug Fixes
