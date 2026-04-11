@@ -210,7 +210,6 @@ jobs:
       fail-fast: false
       matrix:
         repo:
-          - eero-ui
           - eero-prometheus-exporter
           - eeroctl
 
