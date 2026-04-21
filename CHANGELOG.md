@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.6](https://github.com/fulviofreitas/eero-api/compare/v4.0.5...v4.0.6) (2026-04-21)
+
+### 🐛 Bug Fixes
+
+* **deps:** replace deprecated app-id with client-id in create-github-app-token ([759badd](https://github.com/fulviofreitas/eero-api/commit/759badd559a4c05bac546cb1c1492e0b7b54539c))
+
 ## [4.0.5](https://github.com/fulviofreitas/eero-api/compare/v4.0.4...v4.0.5) (2026-04-11)
 
 ### 🐛 Bug Fixes
