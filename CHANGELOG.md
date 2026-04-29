@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.7](https://github.com/fulviofreitas/eero-api/compare/v4.0.6...v4.0.7) (2026-04-29)
+
+### 🐛 Bug Fixes
+
+* replace secrets:inherit with explicit secret passthrough ([f344b07](https://github.com/fulviofreitas/eero-api/commit/f344b07e298f8ac7b42a723288f0dfe6b8d2053c)), closes [#41](https://github.com/fulviofreitas/eero-api/issues/41)
+
+### 📚 Documentation
+
+* add DeepWiki badge to README ([a02f6a9](https://github.com/fulviofreitas/eero-api/commit/a02f6a9e014ecc7d7c2f7d5ef8ab1d9d039ca5a6))
+* format DeepWiki badge to match shields.io for-the-badge style ([9db1427](https://github.com/fulviofreitas/eero-api/commit/9db1427d41349503b5db545ffd1559f0dbd8c376))
+
 ## [4.0.6](https://github.com/fulviofreitas/eero-api/compare/v4.0.5...v4.0.6) (2026-04-21)
 
 ### 🐛 Bug Fixes

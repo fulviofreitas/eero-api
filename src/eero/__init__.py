@@ -27,4 +27,4 @@ __all__ = [
     "redact_sensitive",
 ]
 
-__version__ = "4.0.6"
+__version__ = "4.0.7"
