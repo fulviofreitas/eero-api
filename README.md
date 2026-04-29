@@ -7,6 +7,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![PyPI](https://img.shields.io/pypi/v/eero-api?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/eero-api/)
 [![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/fulviofreitas/eero-api)
 
 ---
 
