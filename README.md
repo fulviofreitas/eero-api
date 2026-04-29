@@ -7,7 +7,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![PyPI](https://img.shields.io/pypi/v/eero-api?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/eero-api/)
 [![License](https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge)](LICENSE)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/fulviofreitas/eero-api)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-006bff?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZmlsbD0id2hpdGUiIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40NzcgMiAyIDYuNDc3IDIgMTJzNC40NzcgMTAgMTAgMTAgMTAtNC40NzcgMTAtMTBTMTcuNTIzIDIgMTIgMnptMCAxOGMtNC40MTEgMC04LTMuNTg5LTgtOHMzLjU4OS04IDgtOCA4IDMuNTg5IDggOC0zLjU4OSA4LTggOHptMC0xNGMtMi4yMDYgMC00IDEuNzk0LTQgNGgxLjVBMi41MDMgMi41MDMgMCAwIDEgMTIgNy41YzEuMzc4IDAgMi41IDEuMTIyIDIuNSAyLjUgMCAxLjg0LTEuNSAyLjUtMyAzLjV2MmgybC0uMDAxLS4yODRjLjU2NC0uNTUyIDMuMDAxLTEuNjIyIDMuMDAxLTQuNzE2IDAtMi4yMDYtMS43OTQtNC00LTR6bS0xIDEyaDJ2MmgtMnoiLz48L3N2Zz4=&logoColor=white)](https://deepwiki.com/fulviofreitas/eero-api)
 
 ---
 
