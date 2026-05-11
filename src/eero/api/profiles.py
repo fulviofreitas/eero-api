@@ -361,9 +361,7 @@ class ProfilesAPI(AuthenticatedAPI):
             json={"name": name},
         )
 
-    async def rename_profile(
-        self, network_id: str, profile_id: str, name: str
-    ) -> Dict[str, Any]:
+    async def rename_profile(self, network_id: str, profile_id: str, name: str) -> Dict[str, Any]:
         """Rename an existing profile - returns raw Eero API response.
 
         Args:

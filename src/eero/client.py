@@ -635,9 +635,7 @@ class EeroClient:
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
 
-    async def create_profile(
-        self, name: str, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def create_profile(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new profile on the network - returns raw Eero API response.
 
         Args:
