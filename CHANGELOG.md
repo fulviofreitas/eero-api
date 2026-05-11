@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0](https://github.com/fulviofreitas/eero-api/compare/v4.0.7...v4.1.0) (2026-05-11)
+
+### ✨ Features
+
+* **profiles:** add create, rename, and delete profile methods ([702ca29](https://github.com/fulviofreitas/eero-api/commit/702ca294715206c8d4f974569922fd4923c49d00))
+
 ## [4.0.7](https://github.com/fulviofreitas/eero-api/compare/v4.0.6...v4.0.7) (2026-04-29)
 
 ### 🐛 Bug Fixes
