@@ -157,7 +157,9 @@ class TestNetworksAPIGuestNetwork:
         assert payload["password"] == "securepass123"
 
     @pytest.mark.asyncio
-    async def test_set_guest_network_targets_guestnetwork_endpoint(self, networks_api, mock_session):
+    async def test_set_guest_network_targets_guestnetwork_endpoint(
+        self, networks_api, mock_session
+    ):
         """Test set_guest_network uses guestnetwork endpoint (not guest_network)."""
         expected_response = {"meta": {"code": 200}, "data": {}}
         mock_response = create_mock_response(200, expected_response)
