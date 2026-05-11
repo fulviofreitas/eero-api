@@ -81,9 +81,9 @@ class SqmAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
-            json={"sqm": {"enabled": enabled}},
+            json={"sqm": enabled},
         )
 
     async def set_sqm_bandwidth(
@@ -126,7 +126,7 @@ class SqmAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"sqm": sqm_payload},
         )
@@ -168,7 +168,7 @@ class SqmAPI(AuthenticatedAPI):
         _LOGGER.debug("Configuring SQM for network %s: %s", network_id, sqm_payload)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"sqm": sqm_payload},
         )
@@ -189,7 +189,7 @@ class SqmAPI(AuthenticatedAPI):
         _LOGGER.debug("Setting SQM to auto mode for network %s", network_id)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"sqm": {"enabled": True, "mode": "auto"}},
         )

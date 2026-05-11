@@ -84,7 +84,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"wpa3": enabled},
         )
@@ -117,7 +117,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"band_steering": enabled},
         )
@@ -150,7 +150,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"upnp": enabled},
         )
@@ -180,7 +180,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={
                 "ipv6_upstream": enabled,
@@ -216,7 +216,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"thread": enabled},
         )
@@ -276,7 +276,7 @@ class SecurityAPI(AuthenticatedAPI):
         _LOGGER.debug("Configuring security for network %s: %s", network_id, payload)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json=payload,
         )

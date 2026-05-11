@@ -103,7 +103,7 @@ class NetworksAPI(AuthenticatedAPI):
             payload["password"] = password
 
         return await self.put(
-            f"networks/{network_id}/guest_network",
+            f"networks/{network_id}/guestnetwork",
             auth_token=auth_token,
             json=payload,
         )
@@ -202,7 +202,7 @@ class NetworksAPI(AuthenticatedAPI):
         _LOGGER.debug("Setting network name for %s to '%s'", network_id, name)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"name": name},
         )

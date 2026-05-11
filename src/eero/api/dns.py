@@ -81,7 +81,7 @@ class DnsAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"dns_caching": enabled},
         )
@@ -118,7 +118,7 @@ class DnsAPI(AuthenticatedAPI):
         _LOGGER.debug("Setting custom DNS for network %s: %s", network_id, dns_servers)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"custom_dns": dns_servers},
         )
@@ -178,7 +178,7 @@ class DnsAPI(AuthenticatedAPI):
         _LOGGER.debug("Setting DNS mode to %s for network %s", mode, network_id)
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json=payload,
         )
@@ -208,7 +208,7 @@ class DnsAPI(AuthenticatedAPI):
         )
 
         return await self.put(
-            f"networks/{network_id}",
+            f"networks/{network_id}/settings",
             auth_token=auth_token,
             json={"ipv6_upstream": enabled},
         )
