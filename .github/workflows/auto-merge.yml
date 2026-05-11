@@ -13,7 +13,11 @@
 name: 🤖 Auto-Merge
 
 on:
-  pull_request:
+  # Use pull_request_target (not pull_request) so the workflow runs in the
+  # base repo's context and has access to secrets — required for fork PRs.
+  # Safe here because we don't check out or execute PR head code; the
+  # auto-merge action only reads PR metadata (labels, reviews, checks).
+  pull_request_target:
     types:
       - labeled
       - unlabeled
@@ -44,6 +48,13 @@ jobs:
     name: 🤖 Auto-Merge
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Skip pull_request_review events fired from forks — they don't have
+    # access to secrets, so the auto-merge action would fail on auth.
+    # The next pull_request_target.synchronize or check_suite.completed
+    # event runs in the base repo context and will re-evaluate the PR.
+    if: >-
+      github.event_name != 'pull_request_review' ||
+      github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
       - name: 📥 Checkout repository
