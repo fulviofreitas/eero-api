@@ -92,6 +92,18 @@ class TestSqmAPISetEnabled:
         assert call_args.kwargs["json"] == {"sqm": True}
 
     @pytest.mark.asyncio
+    async def test_set_sqm_enabled_targets_settings_endpoint(self, sqm_api, mock_session):
+        """Test set_sqm_enabled sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await sqm_api.set_sqm_enabled("network_123", True)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
+
+    @pytest.mark.asyncio
     async def test_set_sqm_enabled_not_authenticated(self, sqm_api):
         """Test set_sqm_enabled raises when not authenticated."""
         sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -140,6 +152,18 @@ class TestSqmAPISetBandwidth:
         assert payload["sqm"]["download_bandwidth"] == 500
 
     @pytest.mark.asyncio
+    async def test_set_sqm_bandwidth_targets_settings_endpoint(self, sqm_api, mock_session):
+        """Test set_sqm_bandwidth sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await sqm_api.set_sqm_bandwidth("network_123", upload_mbps=50)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
+
+    @pytest.mark.asyncio
     async def test_set_sqm_bandwidth_not_authenticated(self, sqm_api):
         """Test set_sqm_bandwidth raises when not authenticated."""
         sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -178,6 +202,18 @@ class TestSqmAPIConfigure:
         assert payload["sqm"]["enabled"] is True
 
     @pytest.mark.asyncio
+    async def test_configure_sqm_targets_settings_endpoint(self, sqm_api, mock_session):
+        """Test configure_sqm sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await sqm_api.configure_sqm("network_123", enabled=True, upload_mbps=100, download_mbps=500)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
+
+    @pytest.mark.asyncio
     async def test_configure_sqm_not_authenticated(self, sqm_api):
         """Test configure_sqm raises when not authenticated."""
         sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -209,6 +245,18 @@ class TestSqmAPISetAuto:
         call_args = mock_session.request.call_args
         payload = call_args.kwargs["json"]
         assert payload["sqm"]["mode"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_set_sqm_auto_targets_settings_endpoint(self, sqm_api, mock_session):
+        """Test set_sqm_auto sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await sqm_api.set_sqm_auto("network_123")
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
 
     @pytest.mark.asyncio
     async def test_set_sqm_auto_not_authenticated(self, sqm_api):

@@ -89,6 +89,18 @@ class TestDnsAPISetCaching:
         assert call_args.kwargs["json"] == {"dns_caching": True}
 
     @pytest.mark.asyncio
+    async def test_set_dns_caching_targets_settings_endpoint(self, dns_api, mock_session):
+        """Test set_dns_caching sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await dns_api.set_dns_caching("network_123", True)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
+
+    @pytest.mark.asyncio
     async def test_set_dns_caching_not_authenticated(self, dns_api):
         """Test set_dns_caching raises when not authenticated."""
         dns_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -131,6 +143,18 @@ class TestDnsAPISetCustomDNS:
         assert "meta" in result
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"custom_dns": ["8.8.8.8", "8.8.4.4"]}
+
+    @pytest.mark.asyncio
+    async def test_set_custom_dns_targets_settings_endpoint(self, dns_api, mock_session):
+        """Test set_custom_dns sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await dns_api.set_custom_dns("network_123", ["8.8.8.8"])
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
 
     @pytest.mark.asyncio
     async def test_set_custom_dns_not_authenticated(self, dns_api):
@@ -223,6 +247,18 @@ class TestDnsAPISetMode:
         assert "meta" in result
 
     @pytest.mark.asyncio
+    async def test_set_dns_mode_targets_settings_endpoint(self, dns_api, mock_session):
+        """Test set_dns_mode sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await dns_api.set_dns_mode("network_123", "google")
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
+
+    @pytest.mark.asyncio
     async def test_set_dns_mode_not_authenticated(self, dns_api):
         """Test set_dns_mode raises when not authenticated."""
         dns_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -253,6 +289,18 @@ class TestDnsAPISetIPv6:
         assert "meta" in result
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"ipv6_upstream": True}
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_dns_targets_settings_endpoint(self, dns_api, mock_session):
+        """Test set_ipv6_dns sends request to /settings endpoint."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await dns_api.set_ipv6_dns("network_123", True)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
 
     @pytest.mark.asyncio
     async def test_set_ipv6_dns_not_authenticated(self, dns_api):
