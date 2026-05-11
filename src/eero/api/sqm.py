@@ -125,6 +125,9 @@ class SqmAPI(AuthenticatedAPI):
             download_mbps,
         )
 
+        # TODO: Verify whether bandwidth payload should be flattened (e.g. {"sqm": true,
+        # "upload_bandwidth": N}) rather than nested ({"sqm": {...}}) — pending live API
+        # verification against the /settings endpoint.
         return await self.put(
             f"networks/{network_id}/settings",
             auth_token=auth_token,
@@ -167,6 +170,9 @@ class SqmAPI(AuthenticatedAPI):
 
         _LOGGER.debug("Configuring SQM for network %s: %s", network_id, sqm_payload)
 
+        # TODO: Verify whether combined enable+bandwidth payload should be flattened rather
+        # than nested ({"sqm": {...}}) — pending live API verification against the /settings
+        # endpoint.
         return await self.put(
             f"networks/{network_id}/settings",
             auth_token=auth_token,
@@ -188,6 +194,9 @@ class SqmAPI(AuthenticatedAPI):
 
         _LOGGER.debug("Setting SQM to auto mode for network %s", network_id)
 
+        # TODO: Verify whether auto-mode payload should be flattened (e.g. {"sqm": true,
+        # "mode": "auto"}) rather than nested ({"sqm": {"enabled": true, "mode": "auto"}}) —
+        # pending live API verification against the /settings endpoint.
         return await self.put(
             f"networks/{network_id}/settings",
             auth_token=auth_token,

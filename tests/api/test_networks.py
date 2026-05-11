@@ -156,6 +156,20 @@ class TestNetworksAPIGuestNetwork:
         assert payload["name"] == "My Guest Network"
         assert payload["password"] == "securepass123"
 
+    @pytest.mark.asyncio
+    async def test_set_guest_network_targets_guestnetwork_endpoint(self, networks_api, mock_session):
+        """Test set_guest_network uses guestnetwork endpoint (not guest_network)."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await networks_api.set_guest_network("network_123", enabled=True)
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "guestnetwork" in url
+        assert "guest_network" not in url
+
 
 class TestNetworksAPISpeedTest:
     """Tests for speed test functionality."""
@@ -281,3 +295,16 @@ class TestNetworksAPISetName:
 
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"name": "My Network"}
+
+    @pytest.mark.asyncio
+    async def test_set_network_name_targets_settings_endpoint(self, networks_api, mock_session):
+        """Test set_network_name sends request to /settings endpoint."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await networks_api.set_network_name("network_123", "My Network")
+
+        call_args = mock_session.request.call_args
+        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+        assert "networks/network_123/settings" in url
