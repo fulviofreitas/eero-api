@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1](https://github.com/fulviofreitas/eero-api/compare/v4.1.0...v4.1.1) (2026-05-11)
+
+### 🐛 Bug Fixes
+
+* **ci:** use pull_request_target so auto-merge can access secrets on fork PRs ([346acfb](https://github.com/fulviofreitas/eero-api/commit/346acfbee2b1c0a91f7773b26f6a5ca80f43f122)), closes [#42](https://github.com/fulviofreitas/eero-api/issues/42)
+
 ## [4.1.0](https://github.com/fulviofreitas/eero-api/compare/v4.0.7...v4.1.0) (2026-05-11)
 
 ### ✨ Features
