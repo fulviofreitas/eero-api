@@ -89,7 +89,7 @@ class TestSqmAPISetEnabled:
 
         assert "meta" in result
         call_args = mock_session.request.call_args
-        assert call_args.kwargs["json"] == {"sqm": {"enabled": True}}
+        assert call_args.kwargs["json"] == {"sqm": True}
 
     @pytest.mark.asyncio
     async def test_set_sqm_enabled_not_authenticated(self, sqm_api):
