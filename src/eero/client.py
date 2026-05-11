@@ -629,6 +629,73 @@ class EeroClient:
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
 
+    def _invalidate_profiles_list_cache(self, network_id: str) -> None:
+        """Invalidate the profiles list cache for a network."""
+        cache_key = f"{network_id}_profiles"
+        if cache_key in self._cache.get("profiles", {}):
+            del self._cache["profiles"][cache_key]
+
+    async def create_profile(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new profile on the network - returns raw Eero API response.
+
+        Args:
+            name: Name for the new profile
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        response = await self._api.profiles.create_profile(network_id, name)
+
+        self._invalidate_profiles_list_cache(network_id)
+
+        return response
+
+    async def rename_profile(
+        self, profile_id: str, name: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Rename an existing profile - returns raw Eero API response.
+
+        Args:
+            profile_id: ID of the profile to rename
+            name: New name for the profile
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        response = await self._api.profiles.rename_profile(network_id, profile_id, name)
+
+        self._invalidate_profile_cache(network_id, profile_id)
+
+        return response
+
+    async def delete_profile(
+        self, profile_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete a profile from the network - returns raw Eero API response.
+
+        Devices previously assigned to this profile will become unassigned.
+
+        Args:
+            profile_id: ID of the profile to delete
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {"code": 200, ...}}
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        response = await self._api.profiles.delete_profile(network_id, profile_id)
+
+        self._invalidate_profile_cache(network_id, profile_id)
+
+        return response
+
     # ==================== Guest Network ====================
 
     async def set_guest_network(

@@ -348,3 +348,147 @@ class TestProfilesAPIDeviceManagement:
             await profiles_api.set_profile_devices(
                 "network_123", "profile_001", ["/2.2/networks/net123/devices/dev001"]
             )
+
+
+class TestProfilesAPICreateProfile:
+    """Tests for create_profile method."""
+
+    @pytest.fixture
+    def profiles_api(self, mock_session):
+        """Create a ProfilesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ProfilesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_create_profile_returns_raw_response(self, profiles_api, mock_session):
+        """Test creating a profile returns raw response with profile data."""
+        profile_data = {
+            "url": "/2.2/networks/network_123/profiles/new_profile_001",
+            "name": "Kids",
+            "paused": False,
+            "devices": [],
+        }
+        expected_response = api_success_response(profile_data)
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.create_profile("network_123", "Kids")
+
+        assert "meta" in result
+        assert "data" in result
+        assert result["data"]["name"] == "Kids"
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"] == {"name": "Kids"}
+
+    @pytest.mark.asyncio
+    async def test_create_profile_uses_post_method(self, profiles_api, mock_session):
+        """Test create_profile sends a POST request."""
+        expected_response = api_success_response({"name": "Test"})
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await profiles_api.create_profile("network_123", "Test")
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "POST"
+
+    @pytest.mark.asyncio
+    async def test_create_profile_not_authenticated(self, profiles_api):
+        """Test create_profile raises when not authenticated."""
+        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await profiles_api.create_profile("network_123", "Kids")
+
+
+class TestProfilesAPIRenameProfile:
+    """Tests for rename_profile method."""
+
+    @pytest.fixture
+    def profiles_api(self, mock_session):
+        """Create a ProfilesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ProfilesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_rename_profile_returns_raw_response(self, profiles_api, mock_session):
+        """Test renaming a profile returns raw response."""
+        profile_data = {"name": "New Name", "paused": False}
+        expected_response = api_success_response(profile_data)
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.rename_profile("network_123", "profile_001", "New Name")
+
+        assert "meta" in result
+        assert result["data"]["name"] == "New Name"
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"] == {"name": "New Name"}
+
+    @pytest.mark.asyncio
+    async def test_rename_profile_uses_put_method(self, profiles_api, mock_session):
+        """Test rename_profile sends a PUT request."""
+        expected_response = api_success_response({"name": "Renamed"})
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await profiles_api.rename_profile("network_123", "profile_001", "Renamed")
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "PUT"
+
+    @pytest.mark.asyncio
+    async def test_rename_profile_not_authenticated(self, profiles_api):
+        """Test rename_profile raises when not authenticated."""
+        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await profiles_api.rename_profile("network_123", "profile_001", "New Name")
+
+
+class TestProfilesAPIDeleteProfile:
+    """Tests for delete_profile method."""
+
+    @pytest.fixture
+    def profiles_api(self, mock_session):
+        """Create a ProfilesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ProfilesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_delete_profile_returns_raw_response(self, profiles_api, mock_session):
+        """Test deleting a profile returns raw response."""
+        expected_response = {"meta": {"code": 200}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        result = await profiles_api.delete_profile("network_123", "profile_001")
+
+        assert "meta" in result
+        assert result["meta"]["code"] == 200
+
+    @pytest.mark.asyncio
+    async def test_delete_profile_uses_delete_method(self, profiles_api, mock_session):
+        """Test delete_profile sends a DELETE request."""
+        expected_response = {"meta": {"code": 200}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await profiles_api.delete_profile("network_123", "profile_001")
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "DELETE"
+
+    @pytest.mark.asyncio
+    async def test_delete_profile_not_authenticated(self, profiles_api):
+        """Test delete_profile raises when not authenticated."""
+        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await profiles_api.delete_profile("network_123", "profile_001")

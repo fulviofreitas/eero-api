@@ -332,3 +332,85 @@ class ProfilesAPI(AuthenticatedAPI):
             auth_token=auth_token,
             json={"blocked_applications": applications},
         )
+
+    async def create_profile(self, network_id: str, name: str) -> Dict[str, Any]:
+        """Create a new profile on the network - returns raw Eero API response.
+
+        Args:
+            network_id: ID of the network to create the profile on
+            name: Name for the new profile
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+            The data field contains the full profile object including
+            the assigned URL/ID.
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Creating profile '%s' in network %s", name, network_id)
+
+        return await self.post(
+            f"networks/{network_id}/profiles",
+            auth_token=auth_token,
+            json={"name": name},
+        )
+
+    async def rename_profile(self, network_id: str, profile_id: str, name: str) -> Dict[str, Any]:
+        """Rename an existing profile - returns raw Eero API response.
+
+        Args:
+            network_id: ID of the network the profile belongs to
+            profile_id: ID of the profile to rename
+            name: New name for the profile
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Renaming profile %s to '%s'", profile_id, name)
+
+        return await self.put(
+            f"networks/{network_id}/profiles/{profile_id}",
+            auth_token=auth_token,
+            json={"name": name},
+        )
+
+    async def delete_profile(self, network_id: str, profile_id: str) -> Dict[str, Any]:
+        """Delete a profile from the network - returns raw Eero API response.
+
+        Devices previously assigned to this profile will become unassigned.
+
+        Args:
+            network_id: ID of the network the profile belongs to
+            profile_id: ID of the profile to delete
+
+        Returns:
+            Raw API response: {"meta": {"code": 200, ...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Deleting profile %s from network %s", profile_id, network_id)
+
+        return await self.delete(
+            f"networks/{network_id}/profiles/{profile_id}",
+            auth_token=auth_token,
+        )
