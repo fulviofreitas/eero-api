@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.3](https://github.com/fulviofreitas/eero-api/compare/v4.1.2...v4.1.3) (2026-05-12)
+
+### 🐛 Bug Fixes
+
+* **profiles:** invalidate profiles list cache on rename and delete ([#47](https://github.com/fulviofreitas/eero-api/issues/47)) ([5221c12](https://github.com/fulviofreitas/eero-api/commit/5221c12dec2560879962681c933adbaa6350956c))
+
 ## [4.1.2](https://github.com/fulviofreitas/eero-api/compare/v4.1.1...v4.1.2) (2026-05-11)
 
 ### 🐛 Bug Fixes
