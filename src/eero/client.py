@@ -671,6 +671,7 @@ class EeroClient:
         response = await self._api.profiles.rename_profile(network_id, profile_id, name)
 
         self._invalidate_profile_cache(network_id, profile_id)
+        self._invalidate_profiles_list_cache(network_id)
 
         return response
 
@@ -693,6 +694,7 @@ class EeroClient:
         response = await self._api.profiles.delete_profile(network_id, profile_id)
 
         self._invalidate_profile_cache(network_id, profile_id)
+        self._invalidate_profiles_list_cache(network_id)
 
         return response
 
