@@ -43,7 +43,11 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write  # Required for Trusted Publishing
+  # Note: id-token: write is intentionally NOT set at workflow level.
+  # It is granted only to the test-publish job, which is bound to the
+  # testpypi GitHub Environment with branch protection. This scopes OIDC
+  # token minting to runs from the protected master branch, mitigating
+  # CVE-2026-45321 (Mini Shai-Hulud) trusted publishing abuse.
 
 jobs:
   # ============================================================================
@@ -57,6 +61,10 @@ jobs:
     environment:
       name: testpypi
       url: https://test.pypi.org/project/eero-api/
+
+    permissions:
+      id-token: write # Required for Trusted Publishing (scoped to this job)
+      contents: read
 
     steps:
       - name: 📥 Checkout repository
