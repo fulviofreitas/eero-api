@@ -37,7 +37,11 @@ class DataUsageAPI(AuthenticatedAPI):
 
         Args:
             network_id: ID of the network to get usage from
-            payload: JSON payload to send with the GET request
+            payload: JSON payload to send with the GET request.
+                Note: The eero cloud API expects a JSON body on this GET
+                request (e.g., timezone, period filters), which is uncommon
+                but matches the behavior used by Home Assistant's eero
+                integration.
             resource: Optional resource type (e.g., "devices", "eeros")
 
         Returns:
