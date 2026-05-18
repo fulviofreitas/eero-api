@@ -826,6 +826,18 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.transfer.get_transfer_stats(network_id, device_id)
 
+    async def get_data_usage(
+        self,
+        network_id: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        resource: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage statistics - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_data_usage(
+            network_id, payload or {}, resource
+        )
+
     async def get_burst_reporters(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get burst reporters - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
