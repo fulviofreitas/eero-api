@@ -10,6 +10,7 @@ from .auth import AuthAPI
 from .backup import BackupAPI
 from .blacklist import BlacklistAPI
 from .burst_reporters import BurstReportersAPI
+from .data_usage import DataUsageAPI
 from .devices import DevicesAPI
 from .diagnostics import DiagnosticsAPI
 from .dns import DnsAPI
@@ -72,6 +73,7 @@ class EeroAPI:
         self.forwards = ForwardsAPI(self.auth)
         self.transfer = TransferAPI(self.auth)
         self.burst_reporters = BurstReportersAPI(self.auth)
+        self.data_usage = DataUsageAPI(self.auth)
         self.ac_compat = ACCompatAPI(self.auth)
         self.ouicheck = OUICheckAPI(self.auth)
         self.password = PasswordAPI(self.auth)
