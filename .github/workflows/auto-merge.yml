@@ -27,10 +27,6 @@
 #     for the next CI re-run) to retrigger this workflow.
 #   - `check_suite` and `status` always run the workflow from the default
 #     branch, so they are already tamper-safe.
-#
-# NOTE: This comment line was added by a verification PR to confirm that a
-# change to this workflow file is blocked at the CODEOWNERS layer and that
-# the running workflow is still the master version. Safe to revert.
 # ============================================================================
 
 name: 🤖 Auto-Merge
