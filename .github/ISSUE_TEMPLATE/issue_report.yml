@@ -1,0 +1,96 @@
+name: 🐍 Issue Report
+description: Tell us what's going wrong (or what you'd love to see)
+title: "[<TYPE>]: <short description>"
+labels: ["triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        👋 Hey, thanks for taking a moment to file this! Sorry you ran into something — the more you can share below, the faster we can help. No pressure to fill every field, just whatever you've got handy.
+
+        > 🔒 A quick heads up: please scrub any secrets (session tokens, cookies, personal IPs, MAC addresses) before posting.
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: 🏷️ What kind of issue is this?
+      options:
+        - 🐛 Bug — something works incorrectly
+        - 🔐 Authentication / login problem
+        - ❓ Question / how-to
+        - ✨ Feature request
+        - 📚 Documentation
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 📍 Where did you run into it?
+      options:
+        - Python SDK (EeroClient / EeroAPI)
+        - CLI (`eero` command)
+        - Both / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 💬 What happened? What did you expect?
+      placeholder: I tried to do X, expected Y, but got Z instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 🔁 How can we reproduce it?
+      description: A minimal code snippet or the exact CLI command you ran is perfect.
+      value: |
+        ```python
+        # paste a minimal snippet, or the CLI command you used
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: ⚠️ Error message or traceback
+      description: |
+        For more detail, re-run with debug logs:
+        - CLI: `eero --debug <your-command>`
+        - SDK: `logging.basicConfig(level=logging.DEBUG)` before your code
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: versions
+    attributes:
+      label: 📦 Versions
+      description: 'Run: `eero --version && python --version`'
+      placeholder: eero 2.0.3, Python 3.12.4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 💻 Operating system
+      options:
+        - 🍎 macOS
+        - 🐧 Linux
+        - 🪟 Windows / WSL
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 🎁 Anything else?
+      description: Workarounds you tried, related issues, screenshots — anything that might help.
+    validations:
+      required: false
