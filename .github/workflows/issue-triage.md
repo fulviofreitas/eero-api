@@ -87,6 +87,7 @@ safe-outputs:
       - help wanted
       - critical
       - security
+      - try-fix
       - needs-review
   add-comment:
     target: triggering
@@ -117,6 +118,7 @@ These are the only labels you may apply. They all already exist in the repositor
 - `help wanted` — actionable but the maintainers would welcome outside contributions
 - `critical` — explicit data loss, security exposure, or "completely unusable" report
 - `security` — security-relevant: credential handling, keyring, OTP, session tokens, OS keyring fallback
+- `try-fix` — set ONLY when the issue is a well-scoped bug with reproduction steps and you're confident a coding agent could attempt a fix (a separate `draft-fix` workflow watches for this label and hands the issue off to the GitHub Copilot Coding Agent)
 - `needs-review` — you genuinely cannot classify the issue; flag it for a human
 
 ## Step 1 — Gather context
@@ -145,6 +147,16 @@ Add `security` whenever the report touches credentials, session tokens, the OS k
 Add `good first issue` only when the scope is genuinely small (single function, obvious fix, no architectural decisions).
 
 Add `help wanted` when the issue is actionable but maintainers would welcome an outside contribution.
+
+Add `try-fix` ONLY when ALL of the following hold:
+- You already applied `bug` (never apply `try-fix` to questions, feature requests, docs, duplicates, or `needs-review` issues).
+- The issue has concrete reproduction steps OR a precise component + observed behaviour (something a coding agent could open a file and start from).
+- The scope is small / localised — a likely 1–3 file change, not "rewrite X" or "the whole UI is broken".
+- You did NOT apply `critical` (critical issues need human eyes first — don't dispatch an autonomous agent at them).
+- You did NOT apply `needs-review` (if you're unsure about the category, you're definitely unsure whether to hand off).
+- The reporter is not asking for a design decision or new feature in disguise.
+
+When in doubt, do NOT apply `try-fix`. A maintainer can always add it manually later.
 
 Add `needs-review` only if the issue truly does not fit any of the categories above — prefer under-labelling to guessing.
 
