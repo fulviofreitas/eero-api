@@ -75,6 +75,10 @@ tools:
     min-integrity: none
 
 safe-outputs:
+  # Don't auto-create '[aw] ... failed' tracker issues on workflow
+  # failure — it just adds noise to the issue list. Look at the Actions
+  # tab if you need to investigate a failure.
+  report-failure-as-issue: false
   add-labels:
     target: triggering
     max: 10
@@ -118,7 +122,7 @@ These are the only labels you may apply. They all already exist in the repositor
 - `help wanted` — actionable but the maintainers would welcome outside contributions
 - `critical` — explicit data loss, security exposure, or "completely unusable" report
 - `security` — security-relevant: credential handling, keyring, OTP, session tokens, OS keyring fallback
-- `try-fix` — set ONLY when the issue is a well-scoped bug with reproduction steps and you're confident a coding agent could attempt a fix (a separate `draft-fix` workflow watches for this label and hands the issue off to the GitHub Copilot Coding Agent)
+- `try-fix` — set ONLY when the issue is a well-scoped bug with reproduction steps and you're confident a coding agent could attempt a fix (a separate `draft-fix` workflow watches for this label and hands the issue off to an automated agent)
 - `needs-review` — you genuinely cannot classify the issue; flag it for a human
 
 ## Step 1 — Gather context
