@@ -226,6 +226,36 @@ Maintainers can trigger a manual release via GitHub Actions:
 3. Optionally select "Dry-run mode" to simulate
 4. Click **Run workflow**
 
+## 🤖 Reporting issues — what happens after you file one
+
+This repo runs two AI-driven GitHub Actions workflows that may interact with your issue:
+
+### Triage agent (always runs, ~30 seconds)
+
+When you open an issue, an automated triage agent reads it and:
+
+- Applies categorisation labels (`bug`, `documentation`, `enhancement`, `question`, `security`, etc.)
+- Posts a friendly acknowledgement comment so you know it's been seen
+
+The labels and comment are purely informational. A maintainer will still review and respond.
+
+### Draft-fix agent (only on certain bugs, ~5–10 minutes)
+
+If your issue is labeled `bug` AND looks well-scoped (clear reproduction steps, small surface area, not flagged `critical`), the triage agent will also apply a `try-fix` label. That triggers an autonomous coding agent which will:
+
+1. Browse the repo to understand the code paths involved
+2. Propose a focused fix and add/update a test for it
+3. Run the test suite and linter — and only commit if both pass
+4. Open a **DRAFT** pull request linked to your issue with `Closes #<n>`
+
+A maintainer will then review the draft PR — it's a starting point, not a merge-ready submission. You may comment on it or wait for the maintainer to iterate.
+
+**If you'd rather opt out:** add a comment asking for the `try-fix` label to be removed. A maintainer can take it off and no further automated work will happen.
+
+**If you'd like to invite a draft-fix attempt on a bug that wasn't auto-flagged:** ask in a comment and a maintainer can apply the label manually.
+
+For full architecture and operating notes, see `claude/rules/agentic-workflows.md` in the [private context repo](https://github.com/fulviofreitas/eero-api-context).
+
 ## ❓ Questions?
 
 Open an issue or start a discussion. We're happy to help!
