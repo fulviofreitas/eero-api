@@ -10,6 +10,13 @@ LOGIN_VERIFY_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login/verify"
 LOGOUT_ENDPOINT: Final[str] = f"{API_ENDPOINT}/logout"
 ACCOUNT_ENDPOINT: Final[str] = f"{API_ENDPOINT}/account"
 
+# The API has been observed to accept session-refresh requests at either of
+# these paths.  Both are listed so the client can try them in order and remain
+# functional regardless of which endpoint shape is active on the server.
+LOGIN_REFRESH_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login/refresh"
+ACCOUNT_REFRESH_ENDPOINT: Final[str] = f"{API_ENDPOINT}/account/refresh"
+REFRESH_ENDPOINTS: Final[tuple[str, ...]] = (LOGIN_REFRESH_ENDPOINT, ACCOUNT_REFRESH_ENDPOINT)
+
 # Request headers
 # Mobile-style User-Agent to reduce the chance of rate-limiting on cloud API
 # endpoints that have been observed to treat non-mobile clients more aggressively.

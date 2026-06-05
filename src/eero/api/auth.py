@@ -7,11 +7,11 @@ import aiohttp
 from aiohttp import ClientSession
 
 from ..const import (
-    ACCOUNT_ENDPOINT,
     API_ENDPOINT,
     LOGIN_ENDPOINT,
     LOGIN_VERIFY_ENDPOINT,
     LOGOUT_ENDPOINT,
+    REFRESH_ENDPOINTS,
     SESSION_TOKEN_KEY,
 )
 from ..exceptions import (
@@ -278,40 +278,62 @@ class AuthAPI(BaseAPI):
     async def refresh_session(self) -> bool:
         """Refresh the session using the refresh token.
 
+        Attempts each endpoint in REFRESH_ENDPOINTS in order.  A 404 response
+        means that particular path is not present on the server; the next
+        endpoint is tried.  Any other API error (401, 403, 5xx, …) is treated
+        as a definitive failure and causes credentials to be cleared
+        immediately without trying further endpoints.
+
         Returns:
             True if session refresh was successful
 
         Raises:
-            EeroAuthenticationException: If refresh fails
+            EeroAuthenticationException: If no refresh token is available
             EeroNetworkException: If there's a network error
         """
         if not self._credentials.refresh_token:
             raise EeroAuthenticationException("No refresh token available")
 
         try:
-            response = await self.post(
-                f"{ACCOUNT_ENDPOINT}/refresh",
-                json={"refresh_token": self._credentials.refresh_token},
+            for endpoint in REFRESH_ENDPOINTS:
+                try:
+                    response = await self.post(
+                        endpoint,
+                        json={"refresh_token": self._credentials.refresh_token},
+                    )
+                except EeroAPIException as err:
+                    if err.status_code == 404:
+                        _LOGGER.debug(
+                            "Refresh endpoint not available on server, trying next: %s",
+                            endpoint,
+                        )
+                        continue
+                    # Non-404 API error (e.g. 401, 403, 5xx) — treat as terminal.
+                    _LOGGER.error("Session refresh failed: %s", err)
+                    self._credentials.clear_all()
+                    await self._save_credentials()
+                    return False
+
+                response_data = response.get("data", {})
+                self._credentials.session_id = response_data.get(SESSION_TOKEN_KEY)
+                self._credentials.refresh_token = response_data.get("refresh_token")
+
+                # Set expiry to 30 days from now
+                self._credentials.session_expiry = datetime.now().replace(
+                    microsecond=0
+                ) + timedelta(days=30)
+
+                # Update session cookie for future requests
+                if self._credentials.session_id:
+                    self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
+                    await self._save_credentials()
+                    return True
+                return False
+
+            # All endpoints returned 404 — no accepted refresh path found.
+            _LOGGER.error(
+                "Session refresh failed: no refresh endpoint was accepted by the server"
             )
-
-            response_data = response.get("data", {})
-            self._credentials.session_id = response_data.get(SESSION_TOKEN_KEY)
-            self._credentials.refresh_token = response_data.get("refresh_token")
-
-            # Set expiry to 30 days from now
-            self._credentials.session_expiry = datetime.now().replace(microsecond=0) + timedelta(
-                days=30
-            )
-
-            # Update session cookie for future requests
-            if self._credentials.session_id:
-                self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-                await self._save_credentials()
-                return True
-            return False
-        except EeroAPIException as err:
-            _LOGGER.error("Session refresh failed: %s", err)
-            # Clear all tokens on failure
             self._credentials.clear_all()
             await self._save_credentials()
             return False

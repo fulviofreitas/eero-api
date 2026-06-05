@@ -11,12 +11,14 @@ Tests cover:
 
 import json
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from eero.api.auth import AuthAPI
 from eero.api.auth_storage import AuthCredentials
-from eero.exceptions import EeroAuthenticationException
+from eero.const import LOGIN_REFRESH_ENDPOINT, REFRESH_ENDPOINTS
+from eero.exceptions import EeroAPIException, EeroAuthenticationException
 
 from .conftest import api_error_response, api_success_response, create_mock_response
 
@@ -468,7 +470,7 @@ class TestAuthAPISessionRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_session_success(self, api_with_refresh_token, mock_session):
-        """Test successful session refresh."""
+        """Test successful session refresh via the first endpoint in REFRESH_ENDPOINTS."""
         mock_response = create_mock_response(
             200,
             api_success_response(
@@ -484,6 +486,9 @@ class TestAuthAPISessionRefresh:
 
         assert result is True
         assert api_with_refresh_token._credentials.session_id == "new_session"
+        # Confirm the first endpoint in the ordered list was used.
+        call_args = mock_session.request.call_args
+        assert REFRESH_ENDPOINTS[0] in str(call_args)
 
     @pytest.mark.asyncio
     async def test_refresh_without_token_raises(self, mock_session):
@@ -493,6 +498,88 @@ class TestAuthAPISessionRefresh:
 
         with pytest.raises(EeroAuthenticationException, match="No refresh token"):
             await api.refresh_session()
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_falls_back_on_404(self, api_with_refresh_token, mock_session):
+        """Test that a 404 from the first endpoint causes fall-through to the second.
+
+        The first endpoint (LOGIN_REFRESH_ENDPOINT) returns 404; the second
+        (ACCOUNT_REFRESH_ENDPOINT) succeeds.  Both endpoints must be tried in
+        order and the session must be fully refreshed.
+        """
+        # BaseAPI.post() returns a parsed dict, not an aiohttp response object.
+        success_dict = api_success_response(
+            {
+                "session_token": "refreshed_session",
+                "refresh_token": "refreshed_token",
+            }
+        )
+
+        call_count = 0
+
+        async def side_effect(url, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if LOGIN_REFRESH_ENDPOINT in url:
+                raise EeroAPIException(404, "not found")
+            # Second endpoint (ACCOUNT_REFRESH_ENDPOINT) — return parsed dict.
+            return success_dict
+
+        with patch.object(api_with_refresh_token, "post", new=AsyncMock(side_effect=side_effect)):
+            result = await api_with_refresh_token.refresh_session()
+
+        assert result is True
+        assert api_with_refresh_token._credentials.session_id == "refreshed_session"
+        assert api_with_refresh_token._credentials.refresh_token == "refreshed_token"
+        # Both endpoints must have been tried.
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_does_not_fall_back_on_401(
+        self, api_with_refresh_token, mock_session
+    ):
+        """Test that a 401 from the first endpoint is treated as terminal.
+
+        A 401 signals a real authentication failure, not a missing endpoint.
+        The second endpoint must NOT be attempted and credentials must be
+        cleared.
+        """
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise EeroAPIException(401, "unauthorized")
+
+        with patch.object(api_with_refresh_token, "post", new=AsyncMock(side_effect=side_effect)):
+            result = await api_with_refresh_token.refresh_session()
+
+        assert result is False
+        # Only the first endpoint should have been tried.
+        assert call_count == 1
+        assert api_with_refresh_token._credentials.session_id is None
+        assert api_with_refresh_token._credentials.refresh_token is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_returns_false_if_all_endpoints_404(
+        self, api_with_refresh_token, mock_session
+    ):
+        """Test that False is returned and credentials are cleared when every endpoint 404s.
+
+        If neither refresh endpoint is recognised by the server, the client
+        must clear credentials and return False rather than leaving stale tokens
+        in place.
+        """
+
+        async def side_effect(*args, **kwargs):
+            raise EeroAPIException(404, "not found")
+
+        with patch.object(api_with_refresh_token, "post", new=AsyncMock(side_effect=side_effect)):
+            result = await api_with_refresh_token.refresh_session()
+
+        assert result is False
+        assert api_with_refresh_token._credentials.session_id is None
+        assert api_with_refresh_token._credentials.refresh_token is None
 
 
 class TestAuthAPIEnsureAuthenticated:
