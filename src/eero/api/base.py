@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
 from aiohttp import ClientSession
@@ -46,6 +46,7 @@ class BaseAPI:
         self._base_url = base_url
         self._headers = DEFAULT_HEADERS.copy()
         self._should_close_session = False
+        self._refresh_hook: Optional[Callable[[], Awaitable[bool]]] = None
 
     async def __aenter__(self) -> "BaseAPI":
         """Enter async context manager."""
@@ -81,6 +82,8 @@ class BaseAPI:
         method: str,
         url: str,
         auth_token: Optional[str] = None,
+        *,
+        _refresh_retried: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """Make a request to the API.
@@ -89,6 +92,9 @@ class BaseAPI:
             method: HTTP method (GET, POST, PUT, DELETE)
             url: API endpoint URL
             auth_token: Optional authentication token
+            _refresh_retried: Internal flag — True when this call is already a
+                retry after a server-driven session refresh.  Prevents infinite
+                loops if the retry itself receives a refresh signal.
             **kwargs: Additional parameters to pass to the request
 
         Returns:
@@ -171,6 +177,37 @@ class BaseAPI:
                 elif response.status == 401:
                     # Use debug level - callers handle auth errors appropriately
                     _LOGGER.debug("Authentication failed: %s", response.status)
+
+                    # Check for a server-driven session-refresh signal.
+                    # The server signals "session still valid but must be refreshed"
+                    # via {"meta": {"error": "error.session.refresh", ...}}.
+                    # When detected, transparently refresh the session and retry
+                    # the original request once.  The one-shot guard (_refresh_retried)
+                    # prevents looping if the retry itself receives the same signal.
+                    if not _refresh_retried and self._refresh_hook is not None:
+                        try:
+                            body = json.loads(response_text)
+                            server_error = body.get("meta", {}).get("error")
+                        except Exception:
+                            body = None
+                            server_error = None
+
+                        if server_error == "error.session.refresh":
+                            _LOGGER.debug(
+                                "Server requested session refresh; refreshing and retrying"
+                            )
+                            refreshed = await self._refresh_hook()
+                            if refreshed:
+                                return await self._request(
+                                    method,
+                                    url,
+                                    auth_token,
+                                    _refresh_retried=True,
+                                    **kwargs,
+                                )
+                            # Refresh failed — fall through to raise below.
+                            _LOGGER.debug("Session refresh returned False; raising auth exception")
+
                     raise EeroAuthenticationException(f"Authentication failed: {response_text}")
                 elif response.status == 404:
                     # Use debug level for 404s to reduce noise in CLI output
@@ -261,6 +298,12 @@ class AuthenticatedAPI(BaseAPI):
         # Pass None for session - we'll delegate to auth_api
         super().__init__(session=None, cookie_file=None, base_url=base_url)
         self._auth_api = auth_api
+        # Wire the server-driven session-refresh hook so that any 401 carrying
+        # the "error.session.refresh" signal causes a transparent refresh+retry.
+        # AuthAPI itself intentionally does NOT set this hook — its own
+        # refresh_session method calls _request, and we must not create an
+        # infinite loop if the refresh endpoint also returns 401-with-signal.
+        self._refresh_hook = auth_api.refresh_session
 
     @property
     def session(self) -> ClientSession:

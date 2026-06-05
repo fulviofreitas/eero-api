@@ -8,6 +8,7 @@ Tests cover:
 - URL construction
 - Response body size enforcement
 - Redirect protection (defensive session-cookie hardening)
+- Server-driven session refresh (error.session.refresh signal)
 """
 
 import asyncio
@@ -526,3 +527,153 @@ class TestBaseAPIRedirectProtection:
 
         call_kwargs = mock_session.request.call_args[1]
         assert call_kwargs.get("allow_redirects") is True
+
+
+# ========================== Server-Driven Session Refresh Tests ==========================
+
+
+class TestServerDrivenSessionRefresh:
+    """Tests for the server-driven session-refresh path in BaseAPI._request.
+
+    The server signals that a session needs refreshing by returning HTTP 401
+    with a body containing {"meta": {"error": "error.session.refresh"}}.
+    When this signal is received and a _refresh_hook is set, the client should:
+    1. Call the hook to refresh the session.
+    2. Retry the original request exactly once.
+    3. Return the result of the retried request on success.
+    4. Raise EeroAuthenticationException if the hook returns False or if
+       the retry itself also receives a 401.
+    """
+
+    SESSION_REFRESH_BODY = {"meta": {"code": 401, "error": "error.session.refresh"}}
+
+    @pytest.fixture
+    def api_with_hook(self, mock_session):
+        """Create a BaseAPI with a mock _refresh_hook set."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        api._refresh_hook = AsyncMock(return_value=True)
+        return api
+
+    @pytest.mark.asyncio
+    async def test_401_with_session_refresh_signal_triggers_refresh_and_retry(
+        self, api_with_hook, mock_session
+    ):
+        """First call returns 401+signal; second call succeeds after refresh."""
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        result = await api_with_hook.get("/endpoint")
+
+        assert mock_session.request.call_count == 2
+        api_with_hook._refresh_hook.assert_awaited_once()
+        assert result["data"] == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_401_with_session_refresh_signal_but_hook_returns_false_raises(
+        self, api_with_hook, mock_session
+    ):
+        """When the refresh hook returns False, EeroAuthenticationException is raised."""
+        api_with_hook._refresh_hook = AsyncMock(return_value=False)
+        mock_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+            await api_with_hook.get("/endpoint")
+
+        api_with_hook._refresh_hook.assert_awaited_once()
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_401_with_session_refresh_signal_does_not_loop_on_second_failure(
+        self, api_with_hook, mock_session
+    ):
+        """Retry that also returns 401+signal must NOT trigger a second refresh.
+
+        The hook is called exactly once; the request is made exactly twice;
+        and EeroAuthenticationException is raised from the retry.
+        """
+        refresh_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        mock_session.request.side_effect = [refresh_response, refresh_response]
+
+        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+            await api_with_hook.get("/endpoint")
+
+        assert mock_session.request.call_count == 2
+        api_with_hook._refresh_hook.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_401_without_session_refresh_signal_raises_immediately(
+        self, mock_session
+    ):
+        """A plain 401 (no refresh signal) must raise without calling the hook."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        hook = AsyncMock(return_value=True)
+        api._refresh_hook = hook
+
+        mock_response = create_mock_response(401, None, "Unauthorized")
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+            await api.get("/endpoint")
+
+        hook.assert_not_awaited()
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_401_without_refresh_hook_raises_immediately(self, mock_session):
+        """When _refresh_hook is None, a 401 raises immediately without any retry."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        assert api._refresh_hook is None
+
+        mock_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+            await api.get("/endpoint")
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_401_with_non_json_body_raises_immediately(self, mock_session):
+        """A 401 with a non-JSON body falls through cleanly without a retry."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        hook = AsyncMock(return_value=True)
+        api._refresh_hook = hook
+
+        mock_response = create_mock_response(401, body_bytes=b"not json at all")
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+            await api.get("/endpoint")
+
+        hook.assert_not_awaited()
+        assert mock_session.request.call_count == 1
+
+
+# ========================== AuthenticatedAPI Refresh Hook Wiring Tests ==========================
+
+
+class TestAuthenticatedAPIRefreshHookWiring:
+    """Tests that AuthenticatedAPI correctly wires _refresh_hook to auth_api.refresh_session."""
+
+    @pytest.fixture
+    def mock_auth_api(self, mock_session):
+        """Create a mock AuthAPI with a refresh_session method."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.refresh_session = AsyncMock(return_value=True)
+        return auth_api
+
+    def test_refresh_hook_is_wired_to_auth_api_refresh_session(self, mock_auth_api):
+        """AuthenticatedAPI._refresh_hook must be auth_api.refresh_session after construction."""
+        api = AuthenticatedAPI(mock_auth_api, base_url="https://api.example.com")
+
+        assert api._refresh_hook is mock_auth_api.refresh_session
+
+    def test_base_api_refresh_hook_defaults_to_none(self):
+        """BaseAPI._refresh_hook must default to None (no auto-refresh unless wired)."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        assert api._refresh_hook is None
