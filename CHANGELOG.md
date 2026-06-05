@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0](https://github.com/fulviofreitas/eero-api/compare/v4.2.0...v4.3.0) (2026-06-05)
+
+### ✨ Features
+
+* **base:** cap response body size at 10 MiB ([2d67cf4](https://github.com/fulviofreitas/eero-api/commit/2d67cf44eb24feb0a652118aed56132f942a0719))
+
+### 📚 Documentation
+
+* **contributing:** explain triage + draft-fix agents to contributors ([d2e72e1](https://github.com/fulviofreitas/eero-api/commit/d2e72e1a5e0392b44b7b878581281285d1497705)), closes [#N](https://github.com/fulviofreitas/eero-api/issues/N)
+* deprecate v1.x migration guide ([681ee54](https://github.com/fulviofreitas/eero-api/commit/681ee545849fdac8d490874a242eed7001adc0da))
+* **readme:** update ecosystem link from eero-cli to eeroctl ([4ea760a](https://github.com/fulviofreitas/eero-api/commit/4ea760aeb6e0a7eb3b80dfe2d7dd2435bc1f9335))
+
 ## [4.2.0](https://github.com/fulviofreitas/eero-api/compare/v4.1.3...v4.2.0) (2026-05-18)
 
 ### ✨ Features
