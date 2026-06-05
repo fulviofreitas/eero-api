@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -12,7 +13,7 @@ from aiohttp import ClientSession
 if TYPE_CHECKING:
     from .auth import AuthAPI
 
-from ..const import DEFAULT_HEADERS
+from ..const import DEFAULT_HEADERS, MAX_RESPONSE_BYTES
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
@@ -119,8 +120,18 @@ class BaseAPI:
 
         try:
             async with self.session.request(method, url, **kwargs) as response:
-                response_text = await response.text()
                 _LOGGER.debug("Response status: %s", response.status)
+
+                # Read at most MAX_RESPONSE_BYTES + 1 bytes so that exceeding
+                # the limit is detectable without buffering an unbounded body.
+                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                    raise EeroAPIException(
+                        response.status,
+                        f"Response body exceeded max size of {MAX_RESPONSE_BYTES} bytes",
+                    )
+
+                response_text = raw_bytes.decode("utf-8")
 
                 # All 2xx status codes are success responses
                 if 200 <= response.status < 300:
@@ -128,7 +139,7 @@ class BaseAPI:
                     if response.status == 204 or not response_text.strip():
                         return {}
                     try:
-                        return await response.json()
+                        return json.loads(response_text)
                     except Exception as e:
                         _LOGGER.error("Error parsing JSON response: %s", e)
                         raise EeroAPIException(

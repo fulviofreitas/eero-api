@@ -19,6 +19,9 @@ DEFAULT_HEADERS: Final[Dict[str, str]] = {
 # Cache timeouts (in seconds)
 CACHE_TIMEOUT: Final[int] = 60  # Default cache timeout
 
+# Response body size limit — guards against unbounded memory consumption
+MAX_RESPONSE_BYTES: Final[int] = 10 * 1024 * 1024  # 10 MiB
+
 # Session keys
 SESSION_TOKEN_KEY: Final[str] = "session_token"
 REFRESH_TOKEN_KEY: Final[str] = "refresh_token"

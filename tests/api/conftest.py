@@ -20,6 +20,7 @@ def create_mock_response(
     json_data: Optional[Dict[str, Any]] = None,
     text: str = "",
     raise_for_status: bool = False,
+    body_bytes: Optional[bytes] = None,
 ) -> MagicMock:
     """Create a mock aiohttp response.
 
@@ -28,14 +29,28 @@ def create_mock_response(
         json_data: JSON response data
         text: Text response
         raise_for_status: Whether to raise on non-2xx status
+        body_bytes: Raw bytes returned by ``response.content.read()``.
+            When omitted, the bytes are derived from ``text`` or ``json_data``
+            so that existing call sites continue to work without modification.
 
     Returns:
         Mock response object
     """
     mock_response = MagicMock()
     mock_response.status = status
-    mock_response.text = AsyncMock(return_value=text or json.dumps(json_data or {}))
+
+    # Derive a canonical text representation used for both the legacy
+    # ``response.text`` mock and as the default source for body_bytes.
+    resolved_text = text or json.dumps(json_data or {})
+    mock_response.text = AsyncMock(return_value=resolved_text)
     mock_response.json = AsyncMock(return_value=json_data or {})
+
+    # ``response.content.read(n)`` is the bounded-read path used by BaseAPI.
+    # Use caller-supplied bytes when given; otherwise derive them from text so
+    # that pre-existing tests work without any changes to their call sites.
+    resolved_bytes = body_bytes if body_bytes is not None else resolved_text.encode("utf-8")
+    mock_response.content = MagicMock()
+    mock_response.content.read = AsyncMock(return_value=resolved_bytes)
 
     if raise_for_status and status >= 400:
         mock_response.raise_for_status = MagicMock(

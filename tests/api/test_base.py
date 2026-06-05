@@ -6,15 +6,18 @@ Tests cover:
 - Async context manager lifecycle
 - Request timeout handling
 - URL construction
+- Response body size enforcement
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
 from eero.api.base import AuthenticatedAPI, BaseAPI
+from eero.const import MAX_RESPONSE_BYTES
 from eero.exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
@@ -288,16 +291,76 @@ class TestBaseAPIErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_json_raises_api_exception(self, api_with_session, mock_session):
         """Test that invalid JSON response raises EeroAPIException."""
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.text = AsyncMock(return_value="not valid json")
-        mock_response.json = AsyncMock(side_effect=Exception("Invalid JSON"))
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_response = create_mock_response(200, body_bytes=b"not valid json")
         mock_session.request.return_value = mock_response
 
         with pytest.raises(EeroAPIException, match="Invalid JSON"):
             await api_with_session.get("/endpoint")
+
+
+class TestBaseAPIResponseSizeLimit:
+    """Tests for the response body size cap enforced by BaseAPI._request."""
+
+    @pytest.fixture
+    def api_with_session(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    async def test_response_under_limit_succeeds(self, api_with_session, mock_session):
+        """Test that a response body smaller than MAX_RESPONSE_BYTES succeeds normally."""
+        payload = api_success_response({"key": "value"})
+        body = json.dumps(payload).encode("utf-8")
+        assert len(body) < MAX_RESPONSE_BYTES
+
+        mock_response = create_mock_response(200, payload, body_bytes=body)
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.get("/endpoint")
+
+        assert result["data"] == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_response_exactly_at_limit_succeeds(self, api_with_session, mock_session):
+        """Test that a response body of exactly MAX_RESPONSE_BYTES succeeds.
+
+        The read call returns MAX_RESPONSE_BYTES + 1 bytes only when there is
+        more data than the limit; a body of exactly MAX_RESPONSE_BYTES bytes is
+        therefore within the allowed ceiling and must not raise.
+        """
+        # Build a JSON payload padded to exactly MAX_RESPONSE_BYTES bytes.
+        # The padding is added inside the JSON string value so the result is
+        # still valid JSON that can be decoded.
+        prefix = b'{"meta": {"code": 200}, "data": {"pad": "'
+        suffix = b'"}}'
+        pad_length = MAX_RESPONSE_BYTES - len(prefix) - len(suffix)
+        body = prefix + (b"x" * pad_length) + suffix
+        assert len(body) == MAX_RESPONSE_BYTES
+
+        mock_response = create_mock_response(200, body_bytes=body)
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.get("/endpoint")
+
+        assert result["meta"]["code"] == 200
+
+    @pytest.mark.asyncio
+    async def test_response_exceeding_limit_raises_api_exception(
+        self, api_with_session, mock_session
+    ):
+        """Test that a response body larger than MAX_RESPONSE_BYTES raises EeroAPIException.
+
+        The read helper is configured to return MAX_RESPONSE_BYTES + 1 bytes,
+        which is the sentinel value that triggers the size-limit guard.
+        """
+        oversized_bytes = b"x" * (MAX_RESPONSE_BYTES + 1)
+        mock_response = create_mock_response(200, body_bytes=oversized_bytes)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert f"exceeded max size of {MAX_RESPONSE_BYTES} bytes" in exc_info.value.message
 
 
 class TestAuthenticatedAPI:
