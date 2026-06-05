@@ -72,8 +72,6 @@ All API methods return the exact JSON from Eero's API:
 }
 ```
 
-See [MIGRATION.md](MIGRATION.md) for details on the raw response architecture.
-
 ## 📚 Docs
 
 | Guide | What's inside |
@@ -81,7 +79,6 @@ See [MIGRATION.md](MIGRATION.md) for details on the raw response architecture.
 | **[📖 Python API](../../wiki/Python-API)** | Full API reference |
 | **[⚙️ Configuration](../../wiki/Configuration)** | Auth & settings |
 | **[🔧 Troubleshooting](../../wiki/Troubleshooting)** | Common fixes |
-| **[🔄 Migration Guide](MIGRATION.md)** | v1.x → v2.0 migration |
 | **[🏠 Wiki Home](../../wiki)** | All documentation |
 
 ## 🔗 Ecosystem
