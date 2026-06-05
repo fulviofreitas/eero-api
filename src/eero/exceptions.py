@@ -8,11 +8,17 @@ class EeroException(Exception):
         self.message = message
         super().__init__(message)
 
+    def is_auth_error(self) -> bool:
+        """Return True if this exception represents an authentication failure."""
+        return False
+
 
 class EeroAuthenticationException(EeroException):
     """Exception raised for authentication errors."""
 
-    pass
+    def is_auth_error(self) -> bool:
+        """Always True — authentication exceptions are by definition auth errors."""
+        return True
 
 
 class EeroRateLimitException(EeroException):
@@ -34,6 +40,10 @@ class EeroAPIException(EeroException):
         self.status_code = status_code
         self.message = message
         super().__init__(f"API error {status_code}: {message}")
+
+    def is_auth_error(self) -> bool:
+        """True when the HTTP status code is 401 (Unauthorized)."""
+        return self.status_code == 401
 
 
 class EeroTimeoutException(EeroException):
