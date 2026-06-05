@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0](https://github.com/fulviofreitas/eero-api/compare/v4.3.0...v4.4.0) (2026-06-05)
+
+### ✨ Features
+
+* **auth:** try multiple refresh endpoints in order ([a134391](https://github.com/fulviofreitas/eero-api/commit/a134391bffb21b7c450f558c3e6244f779b205a6))
+* **base:** auto-refresh on server-driven session-refresh signal ([ce240bd](https://github.com/fulviofreitas/eero-api/commit/ce240bda605fab23e5666b48551256329e3e01f3))
+* **base:** refuse 3xx redirects to protect session cookie ([065b8dd](https://github.com/fulviofreitas/eero-api/commit/065b8ddcb48e5f78b38137ceba38091f05c0c964))
+* **const:** use mobile-style default User-Agent ([ba548b6](https://github.com/fulviofreitas/eero-api/commit/ba548b652b1dd966f9585f0aeb3e709e5b1b9ce0))
+
 ## [4.3.0](https://github.com/fulviofreitas/eero-api/compare/v4.2.0...v4.3.0) (2026-06-05)
 
 ### ✨ Features
