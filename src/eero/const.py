@@ -11,8 +11,10 @@ LOGOUT_ENDPOINT: Final[str] = f"{API_ENDPOINT}/logout"
 ACCOUNT_ENDPOINT: Final[str] = f"{API_ENDPOINT}/account"
 
 # Request headers
+# Mobile-style User-Agent to reduce the chance of rate-limiting on cloud API
+# endpoints that have been observed to treat non-mobile clients more aggressively.
 DEFAULT_HEADERS: Final[Dict[str, str]] = {
-    "User-Agent": "eero-api/1.0.0",
+    "User-Agent": "eero/3.0 (iPhone; iOS 17.0)",
     "Content-Type": "application/json",
 }
 
