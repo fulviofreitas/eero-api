@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0](https://github.com/fulviofreitas/eero-api/compare/v4.5.0...v4.6.0) (2026-06-05)
+
+### ✨ Features
+
+* **api:** add id_from_url URL/ID extraction helper ([fa16610](https://github.com/fulviofreitas/eero-api/commit/fa16610fcce0d0efcabf7f07acce1f0d4488264b))
+
 ## [4.5.0](https://github.com/fulviofreitas/eero-api/compare/v4.4.0...v4.5.0) (2026-06-05)
 
 ### ✨ Features
