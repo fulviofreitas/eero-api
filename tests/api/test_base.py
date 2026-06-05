@@ -7,6 +7,7 @@ Tests cover:
 - Request timeout handling
 - URL construction
 - Response body size enforcement
+- Redirect protection (defensive session-cookie hardening)
 """
 
 import asyncio
@@ -388,3 +389,140 @@ class TestAuthenticatedAPI:
         result = api.session
 
         assert result is mock_session
+
+
+# ========================== Redirect Protection Tests ==========================
+
+
+class TestBaseAPIRedirectProtection:
+    """Tests for defensive session-cookie hardening via redirect blocking.
+
+    Any 3xx response received from the upstream API must be refused so that
+    the session cookie is never forwarded to an unintended host.
+    """
+
+    @pytest.fixture
+    def api_with_session(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api-user.e2ro.com/2.2")
+
+    # ---- 301 Moved Permanently ----
+
+    @pytest.mark.asyncio
+    async def test_301_with_location_raises_api_exception(self, api_with_session, mock_session):
+        """Test that a 301 redirect with a Location header raises EeroAPIException."""
+        mock_response = MagicMock()
+        mock_response.status = 301
+        mock_response.headers = {"Location": "https://evil.example.com/steal"}
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 301
+        assert "Redirect not followed" in exc_info.value.message
+
+    # ---- 302 Found ----
+
+    @pytest.mark.asyncio
+    async def test_302_cross_origin_location_raises_api_exception(
+        self, api_with_session, mock_session
+    ):
+        """Test that a 302 redirect to a foreign host raises EeroAPIException."""
+        mock_response = MagicMock()
+        mock_response.status = 302
+        mock_response.headers = {"Location": "https://evil.example.com/leak"}
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 302
+        assert "Redirect not followed" in exc_info.value.message
+        assert "evil.example.com" in exc_info.value.message
+
+    # ---- 307 Temporary Redirect ----
+
+    @pytest.mark.asyncio
+    async def test_307_raises_api_exception(self, api_with_session, mock_session):
+        """Test that a 307 redirect raises EeroAPIException."""
+        mock_response = MagicMock()
+        mock_response.status = 307
+        mock_response.headers = {"Location": "https://attacker.net/capture"}
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 307
+        assert "Redirect not followed" in exc_info.value.message
+
+    # ---- 308 Permanent Redirect ----
+
+    @pytest.mark.asyncio
+    async def test_308_raises_api_exception(self, api_with_session, mock_session):
+        """Test that a 308 redirect raises EeroAPIException."""
+        mock_response = MagicMock()
+        mock_response.status = 308
+        mock_response.headers = {"Location": "https://attacker.net/capture"}
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 308
+        assert "Redirect not followed" in exc_info.value.message
+
+    # ---- 302 with no Location header ----
+
+    @pytest.mark.asyncio
+    async def test_302_without_location_raises_api_exception(
+        self, api_with_session, mock_session
+    ):
+        """Test that a 302 with no Location header raises EeroAPIException."""
+        mock_response = MagicMock()
+        mock_response.status = 302
+        mock_response.headers = {}
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 302
+        assert "no Location header" in exc_info.value.message
+
+    # ---- allow_redirects default ----
+
+    @pytest.mark.asyncio
+    async def test_allow_redirects_defaults_to_false(self, api_with_session, mock_session):
+        """Test that allow_redirects=False is passed to the underlying request call."""
+        mock_response = create_mock_response(200, api_success_response({}))
+        mock_session.request.return_value = mock_response
+
+        await api_with_session.get("/endpoint")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_allow_redirects_caller_override_is_preserved(
+        self, api_with_session, mock_session
+    ):
+        """Test that an explicit allow_redirects value supplied by the caller is not overwritten."""
+        mock_response = create_mock_response(200, api_success_response({}))
+        mock_session.request.return_value = mock_response
+
+        await api_with_session.get("/endpoint", allow_redirects=True)
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs.get("allow_redirects") is True

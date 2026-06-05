@@ -115,12 +115,35 @@ class BaseAPI:
         if not url.startswith(("http://", "https://")):
             url = f"{self._base_url.rstrip('/')}/{url.lstrip('/')}"
 
+        # Defensive session-cookie hardening: disable automatic redirect
+        # following so that any 3xx response is inspected before cookies
+        # travel to a potentially different host.
+        kwargs.setdefault("allow_redirects", False)
+
         # Enhanced request logging
         _LOGGER.debug("Request: %s %s", method, url)
 
         try:
             async with self.session.request(method, url, **kwargs) as response:
                 _LOGGER.debug("Response status: %s", response.status)
+
+                # Defensive session-cookie hardening: refuse any redirect
+                # outright.  Because allow_redirects=False is set above,
+                # aiohttp never follows redirects automatically; any 3xx that
+                # reaches this point is surfaced as an EeroAPIException so the
+                # session cookie is never forwarded to an unintended host.
+                if 300 <= response.status < 400:
+                    location = response.headers.get("Location", "")
+                    _LOGGER.warning(
+                        "Redirect response %s blocked (Location: %s)",
+                        response.status,
+                        location or "<none>",
+                    )
+                    raise EeroAPIException(
+                        response.status,
+                        f"Redirect not followed: {response.status}"
+                        + (f" -> {location}" if location else " (no Location header)"),
+                    )
 
                 # Read at most MAX_RESPONSE_BYTES + 1 bytes so that exceeding
                 # the limit is detectable without buffering an unbounded body.
