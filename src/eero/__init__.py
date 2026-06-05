@@ -1,6 +1,7 @@
 """Eero API - Async Python client for Eero mesh WiFi networks."""
 
 from .api import EeroAPI
+from .api.base import id_from_url
 from .client import EeroClient
 from .exceptions import (
     EeroAPIException,
@@ -9,6 +10,7 @@ from .exceptions import (
     EeroNetworkException,
     EeroRateLimitException,
     EeroTimeoutException,
+    EeroValidationException,
 )
 from .logging import SecureLoggerAdapter, get_secure_logger, redact_sensitive
 
@@ -21,6 +23,9 @@ __all__ = [
     "EeroNetworkException",
     "EeroRateLimitException",
     "EeroTimeoutException",
+    "EeroValidationException",
+    # URL / ID utilities
+    "id_from_url",
     # Secure logging utilities
     "get_secure_logger",
     "SecureLoggerAdapter",

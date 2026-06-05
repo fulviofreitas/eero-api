@@ -20,9 +20,34 @@ from ..exceptions import (
     EeroNetworkException,
     EeroRateLimitException,
     EeroTimeoutException,
+    EeroValidationException,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def id_from_url(id_or_url: str) -> str:
+    """Extract the trailing numeric / opaque ID from an Eero API URL or bare ID.
+
+    Accepts either a bare identifier (e.g. ``"12345"`` or ``"p_abc"``) or a
+    URL fragment as returned by the API (e.g. ``"/2.2/networks/12345"``,
+    ``"/2.2/networks/12345/profiles/p_abc"``).  In all cases the trailing
+    path segment is returned unchanged.
+
+    Args:
+        id_or_url: A bare ID or an API URL / URL fragment.
+
+    Returns:
+        The trailing path segment of the input.
+
+    Raises:
+        EeroValidationException: If the input is empty or not a string.
+    """
+    if not isinstance(id_or_url, str) or not id_or_url:
+        raise EeroValidationException("id_or_url", "must be a non-empty string")
+    # Strip any trailing slash, then return the last path segment.
+    stripped = id_or_url.rstrip("/")
+    return stripped.rsplit("/", 1)[-1]
 
 
 class BaseAPI:
