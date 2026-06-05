@@ -88,7 +88,7 @@ See [MIGRATION.md](MIGRATION.md) for details on the raw response architecture.
 
 | Project | Description |
 |---------|-------------|
-| **[🖥️ eero-cli](https://github.com/fulviofreitas/eero-cli)** | Terminal interface for Eero networks |
+| **[🖥️ eeroctl](https://github.com/fulviofreitas/eeroctl)** | Terminal interface for Eero networks |
 | **[🛜 eero-ui](https://github.com/fulviofreitas/eero-ui)** | Svelte dashboard for network management |
 | **[📊 eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter)** | Prometheus metrics for monitoring |
 
