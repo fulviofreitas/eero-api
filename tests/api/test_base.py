@@ -485,9 +485,7 @@ class TestBaseAPIRedirectProtection:
     # ---- 302 with no Location header ----
 
     @pytest.mark.asyncio
-    async def test_302_without_location_raises_api_exception(
-        self, api_with_session, mock_session
-    ):
+    async def test_302_without_location_raises_api_exception(self, api_with_session, mock_session):
         """Test that a 302 with no Location header raises EeroAPIException."""
         mock_response = MagicMock()
         mock_response.status = 302
@@ -604,9 +602,7 @@ class TestServerDrivenSessionRefresh:
         api_with_hook._refresh_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_401_without_session_refresh_signal_raises_immediately(
-        self, mock_session
-    ):
+    async def test_401_without_session_refresh_signal_raises_immediately(self, mock_session):
         """A plain 401 (no refresh signal) must raise without calling the hook."""
         api = BaseAPI(session=mock_session, base_url="https://api.example.com")
         hook = AsyncMock(return_value=True)

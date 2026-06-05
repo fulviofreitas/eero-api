@@ -331,9 +331,7 @@ class AuthAPI(BaseAPI):
                 return False
 
             # All endpoints returned 404 — no accepted refresh path found.
-            _LOGGER.error(
-                "Session refresh failed: no refresh endpoint was accepted by the server"
-            )
+            _LOGGER.error("Session refresh failed: no refresh endpoint was accepted by the server")
             self._credentials.clear_all()
             await self._save_credentials()
             return False
