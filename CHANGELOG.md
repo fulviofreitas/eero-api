@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0](https://github.com/fulviofreitas/eero-api/compare/v4.4.0...v4.5.0) (2026-06-05)
+
+### ✨ Features
+
+* **auth:** add set_session_token and clear_session_token ([0a8a470](https://github.com/fulviofreitas/eero-api/commit/0a8a470f43d1df4e1b5adc4c10cfe2a26881ba08))
+* **exceptions:** add is_auth_error predicate to EeroException ([d912c4e](https://github.com/fulviofreitas/eero-api/commit/d912c4e524c9c017a5897784929d81516c3ee83d))
+
 ## [4.4.0](https://github.com/fulviofreitas/eero-api/compare/v4.3.0...v4.4.0) (2026-06-05)
 
 ### ✨ Features
