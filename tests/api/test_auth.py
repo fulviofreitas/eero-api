@@ -7,6 +7,7 @@ Tests cover:
 - Session management and expiry
 - Token storage (keyring and file)
 - Session refresh
+- set_session_token / clear_session_token helpers
 """
 
 import json
@@ -18,7 +19,7 @@ import pytest
 from eero.api.auth import AuthAPI
 from eero.api.auth_storage import AuthCredentials
 from eero.const import LOGIN_REFRESH_ENDPOINT, REFRESH_ENDPOINTS
-from eero.exceptions import EeroAPIException, EeroAuthenticationException
+from eero.exceptions import EeroAPIException, EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_error_response, api_success_response, create_mock_response
 
@@ -606,3 +607,92 @@ class TestAuthAPIEnsureAuthenticated:
         result = await api.ensure_authenticated()
 
         assert result is True
+
+
+# ========================== SetSessionToken Tests ==========================
+
+
+class TestSetSessionToken:
+    """Tests for AuthAPI.set_session_token helper."""
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_installs_cookie_and_credentials(
+        self, mock_session, mock_cookie_jar
+    ):
+        """Test that set_session_token stores creds and updates the cookie jar."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+
+        await api.set_session_token("token-abc")
+
+        assert api._credentials.session_id == "token-abc"
+        assert api._credentials.session_expiry is not None
+        # Expiry should be roughly 30 days from now (allow ±5 s of clock skew).
+        delta = api._credentials.session_expiry - datetime.now()
+        assert timedelta(days=29, hours=23) < delta < timedelta(days=30, seconds=5)
+        mock_cookie_jar.update_cookies.assert_called_with({"s": "token-abc"})
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_empty_string_raises(self, mock_session):
+        """Test that set_session_token raises EeroValidationException for an empty string."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+
+        with pytest.raises(EeroValidationException):
+            await api.set_session_token("")
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_non_string_raises(self, mock_session):
+        """Test that set_session_token raises EeroValidationException for a non-string."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+
+        with pytest.raises(EeroValidationException):
+            await api.set_session_token(None)  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_persists_via_storage(self, mock_session):
+        """Test that set_session_token awaits _save_credentials."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+
+        with patch.object(api, "_save_credentials", new=AsyncMock()) as mock_save:
+            await api.set_session_token("token-xyz")
+
+        mock_save.assert_awaited_once()
+
+
+# ========================== ClearSessionToken Tests ==========================
+
+
+class TestClearSessionToken:
+    """Tests for AuthAPI.clear_session_token helper."""
+
+    @pytest.mark.asyncio
+    async def test_clear_session_token_clears_credentials_and_cookies(
+        self, mock_session, mock_cookie_jar
+    ):
+        """Test that clear_session_token nulls credentials and clears cookie jar."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+        api._credentials.session_id = "existing-token"
+        api._credentials.session_expiry = datetime.now() + timedelta(days=30)
+
+        await api.clear_session_token()
+
+        assert api._credentials.session_id is None
+        assert api._credentials.session_expiry is None
+        mock_cookie_jar.clear.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_session_token_persists_via_storage(self, mock_session):
+        """Test that clear_session_token awaits _save_credentials."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+        api._credentials.session_id = "existing-token"
+        api._credentials.session_expiry = datetime.now() + timedelta(days=30)
+
+        with patch.object(api, "_save_credentials", new=AsyncMock()) as mock_save:
+            await api.clear_session_token()
+
+        mock_save.assert_awaited_once()

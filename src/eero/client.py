@@ -203,6 +203,34 @@ class EeroClient:
             self.clear_cache()
         return result
 
+    async def set_session_token(self, token: str) -> None:
+        """Seed the active session with a pre-existing session token.
+
+        Bypasses the interactive login + verify flow.  Useful when the token
+        is supplied externally (e.g. from a secret manager, environment
+        variable, or test fixture).
+
+        Any in-memory cache entries are invalidated so that the very next
+        request uses the new session.
+
+        Args:
+            token: The opaque session-cookie value (the ``s=`` cookie).
+
+        Raises:
+            EeroValidationException: If the token is empty or non-string.
+        """
+        await self._api.auth.set_session_token(token)
+        self.clear_cache()
+
+    async def clear_session_token(self) -> None:
+        """Clear the active session token from cookie jar, in-memory creds, and storage.
+
+        Any in-memory cache entries are invalidated alongside the token so that
+        subsequent requests are not served stale data from a previous session.
+        """
+        await self._api.auth.clear_session_token()
+        self.clear_cache()
+
     # ==================== Account ====================
 
     async def get_account(self, refresh_cache: bool = False) -> Dict[str, Any]:

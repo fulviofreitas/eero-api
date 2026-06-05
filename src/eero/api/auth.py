@@ -18,6 +18,7 @@ from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
     EeroNetworkException,
+    EeroValidationException,
 )
 from ..logging import get_secure_logger
 from .auth_storage import AuthCredentials, CredentialStorage, create_storage
@@ -385,3 +386,48 @@ class AuthAPI(BaseAPI):
         await self._storage.clear()
 
         _LOGGER.debug("Cleared all authentication data")
+
+    async def set_session_token(self, token: str) -> None:
+        """Seed the active session with a pre-existing session token.
+
+        Bypasses the interactive login + verify flow.  Useful when the token
+        is supplied externally (e.g. from a secret manager, environment
+        variable, or test fixture).
+
+        The token is written to the in-memory AuthCredentials, persisted via
+        the configured storage backend, and installed into the aiohttp
+        cookie jar as ``s=<token>`` so the very next request is authenticated.
+
+        Args:
+            token: The opaque session-cookie value (the ``s=`` cookie).
+
+        Raises:
+            EeroValidationException: If the token is empty or non-string.
+        """
+        if not isinstance(token, str) or not token:
+            raise EeroValidationException("token", "must be a non-empty string")
+
+        self._credentials.session_id = token
+        self._credentials.session_expiry = datetime.now().replace(microsecond=0) + timedelta(
+            days=30
+        )
+
+        self.session.cookie_jar.update_cookies({"s": token})
+        await self._save_credentials()
+
+        _LOGGER.debug("Session token injected externally")
+
+    async def clear_session_token(self) -> None:
+        """Clear the active session token from cookie jar, in-memory creds, and storage.
+
+        This is a narrower counterpart to ``clear_auth_data``: it removes the
+        session token but does not touch any other persisted state beyond
+        what is implied by re-saving credentials after clearing.
+        """
+        self._credentials.session_id = None
+        self._credentials.session_expiry = None
+
+        self.session.cookie_jar.clear()
+        await self._save_credentials()
+
+        _LOGGER.debug("Session token cleared")
