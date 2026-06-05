@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.1](https://github.com/fulviofreitas/eero-api/compare/v4.6.0...v4.6.1) (2026-06-05)
+
+### 🐛 Bug Fixes
+
+* **api:** stream response body to avoid truncating large responses ([2a72b64](https://github.com/fulviofreitas/eero-api/commit/2a72b649d2f2efe4f7bf470c65e692a21636f289))
+
 ## [4.6.0](https://github.com/fulviofreitas/eero-api/compare/v4.5.0...v4.6.0) (2026-06-05)
 
 ### ✨ Features
