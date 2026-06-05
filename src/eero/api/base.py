@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 import aiohttp
 from aiohttp import ClientSession
@@ -13,7 +13,7 @@ from aiohttp import ClientSession
 if TYPE_CHECKING:
     from .auth import AuthAPI
 
-from ..const import DEFAULT_HEADERS, MAX_RESPONSE_BYTES
+from ..const import DEFAULT_HEADERS, MAX_ERROR_BODY_CHARS, MAX_RESPONSE_BYTES
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
@@ -24,6 +24,13 @@ from ..exceptions import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _truncate_for_error(text: str) -> str:
+    """Cap a response body for inclusion in error messages / logs."""
+    if len(text) <= MAX_ERROR_BODY_CHARS:
+        return text
+    return f"{text[:MAX_ERROR_BODY_CHARS]}... [truncated, {len(text)} chars total]"
 
 
 def id_from_url(id_or_url: str) -> str:
@@ -132,9 +139,11 @@ class BaseAPI:
             EeroNetworkException: If there's a network error
             EeroTimeoutException: If request times out
         """
-        # Set default timeout if not provided
+        # Set default timeout if not provided.  ``sock_read`` bounds the wait
+        # for any single chunk so a slow-trickle ("slowloris") upstream fails
+        # fast even when a caller raises ``total``.
         if "timeout" not in kwargs:
-            kwargs["timeout"] = aiohttp.ClientTimeout(total=30)
+            kwargs["timeout"] = aiohttp.ClientTimeout(total=30, sock_read=10)
 
         # Add authentication token if provided
         if auth_token:
@@ -176,14 +185,22 @@ class BaseAPI:
                         + (f" -> {location}" if location else " (no Location header)"),
                     )
 
-                # Read at most MAX_RESPONSE_BYTES + 1 bytes so that exceeding
-                # the limit is detectable without buffering an unbounded body.
-                raw_bytes = await response.content.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw_bytes) > MAX_RESPONSE_BYTES:
-                    raise EeroAPIException(
-                        response.status,
-                        f"Response body exceeded max size of {MAX_RESPONSE_BYTES} bytes",
-                    )
+                # Stream the body in chunks so the full response is read even
+                # when delivered over multiple TCP segments, while still
+                # enforcing the max-size cap.  ``StreamReader.read(n)`` returns
+                # only what is currently buffered (not necessarily n bytes), so
+                # using it directly truncates large responses.
+                chunks: List[bytes] = []
+                total = 0
+                async for chunk in response.content.iter_chunked(65536):
+                    total += len(chunk)
+                    if total > MAX_RESPONSE_BYTES:
+                        raise EeroAPIException(
+                            response.status,
+                            f"Response body exceeded max size of {MAX_RESPONSE_BYTES} bytes",
+                        )
+                    chunks.append(chunk)
+                raw_bytes = b"".join(chunks)
 
                 response_text = raw_bytes.decode("utf-8")
 
@@ -197,7 +214,8 @@ class BaseAPI:
                     except Exception as e:
                         _LOGGER.error("Error parsing JSON response: %s", e)
                         raise EeroAPIException(
-                            response.status, f"Invalid JSON response: {response_text}"
+                            response.status,
+                            f"Invalid JSON response: {_truncate_for_error(response_text)}",
                         )
                 elif response.status == 401:
                     # Use debug level - callers handle auth errors appropriately
@@ -233,19 +251,22 @@ class BaseAPI:
                             # Refresh failed — fall through to raise below.
                             _LOGGER.debug("Session refresh returned False; raising auth exception")
 
-                    raise EeroAuthenticationException(f"Authentication failed: {response_text}")
+                    raise EeroAuthenticationException(
+                        f"Authentication failed: {_truncate_for_error(response_text)}"
+                    )
                 elif response.status == 404:
                     # Use debug level for 404s to reduce noise in CLI output
                     _LOGGER.debug("Resource not found at %s", url)
                     raise EeroAPIException(
                         response.status,
-                        f"Resource not found: {response_text}. URL: {url}",
+                        f"Resource not found: {_truncate_for_error(response_text)}. URL: {url}",
                     )
                 elif response.status == 429:
                     raise EeroRateLimitException("Rate limit exceeded")
                 else:
-                    _LOGGER.error("API error %s: %s", response.status, response_text)
-                    raise EeroAPIException(response.status, response_text)
+                    truncated = _truncate_for_error(response_text)
+                    _LOGGER.error("API error %s: %s", response.status, truncated)
+                    raise EeroAPIException(response.status, truncated)
         except asyncio.TimeoutError as err:
             _LOGGER.error("Request to %s timed out", url)
             raise EeroTimeoutException("Request timed out") from err

@@ -326,9 +326,9 @@ class TestBaseAPIResponseSizeLimit:
     async def test_response_exactly_at_limit_succeeds(self, api_with_session, mock_session):
         """Test that a response body of exactly MAX_RESPONSE_BYTES succeeds.
 
-        The read call returns MAX_RESPONSE_BYTES + 1 bytes only when there is
-        more data than the limit; a body of exactly MAX_RESPONSE_BYTES bytes is
-        therefore within the allowed ceiling and must not raise.
+        Streaming via iter_chunked accumulates the running total per chunk; a
+        body of exactly MAX_RESPONSE_BYTES never exceeds the ceiling and must
+        not raise.
         """
         # Build a JSON payload padded to exactly MAX_RESPONSE_BYTES bytes.
         # The padding is added inside the JSON string value so the result is
@@ -347,13 +347,45 @@ class TestBaseAPIResponseSizeLimit:
         assert result["meta"]["code"] == 200
 
     @pytest.mark.asyncio
+    async def test_response_delivered_in_multiple_chunks_is_fully_read(
+        self, api_with_session, mock_session
+    ):
+        """Regression: a body delivered across many TCP chunks must be read in full.
+
+        The previous implementation used ``content.read(N)``, which returns
+        only what is currently buffered and truncates large responses mid-JSON.
+        This test reproduces the failure mode by feeding a body that spans
+        many 64 KiB chunks and asserts the full payload is parsed correctly.
+        """
+        # Build a payload large enough to span dozens of 64 KiB chunks. Each
+        # device entry is ~1 KiB, so 5000 entries comfortably exceeds the
+        # chunk boundary that triggered the original truncation bug.
+        devices = [
+            {"url": f"/2.2/networks/n/devices/d{i}", "mac": f"aa:bb:cc:dd:ee:{i:02x}"}
+            for i in range(5000)
+        ]
+        payload = api_success_response(devices)
+        body = json.dumps(payload).encode("utf-8")
+        assert len(body) > 65536  # spans at least 2 chunks
+        assert len(body) < MAX_RESPONSE_BYTES
+
+        mock_response = create_mock_response(200, body_bytes=body)
+        mock_session.request.return_value = mock_response
+
+        result = await api_with_session.get("/endpoint")
+
+        assert len(result["data"]) == 5000
+        assert result["data"][0]["mac"] == "aa:bb:cc:dd:ee:00"
+        assert result["data"][-1]["url"] == "/2.2/networks/n/devices/d4999"
+
+    @pytest.mark.asyncio
     async def test_response_exceeding_limit_raises_api_exception(
         self, api_with_session, mock_session
     ):
         """Test that a response body larger than MAX_RESPONSE_BYTES raises EeroAPIException.
 
-        The read helper is configured to return MAX_RESPONSE_BYTES + 1 bytes,
-        which is the sentinel value that triggers the size-limit guard.
+        Streaming via iter_chunked aborts as soon as the running total exceeds
+        the cap, so an oversized body trips the guard partway through the body.
         """
         oversized_bytes = b"x" * (MAX_RESPONSE_BYTES + 1)
         mock_response = create_mock_response(200, body_bytes=oversized_bytes)

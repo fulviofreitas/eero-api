@@ -31,6 +31,10 @@ CACHE_TIMEOUT: Final[int] = 60  # Default cache timeout
 # Response body size limit — guards against unbounded memory consumption
 MAX_RESPONSE_BYTES: Final[int] = 10 * 1024 * 1024  # 10 MiB
 
+# Max characters of a response body to embed in error messages / logs.
+# Caps log amplification when an upstream returns a hostile or oversized body.
+MAX_ERROR_BODY_CHARS: Final[int] = 512
+
 # Session keys
 SESSION_TOKEN_KEY: Final[str] = "session_token"
 REFRESH_TOKEN_KEY: Final[str] = "refresh_token"

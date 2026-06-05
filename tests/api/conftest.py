@@ -45,12 +45,31 @@ def create_mock_response(
     mock_response.text = AsyncMock(return_value=resolved_text)
     mock_response.json = AsyncMock(return_value=json_data or {})
 
-    # ``response.content.read(n)`` is the bounded-read path used by BaseAPI.
-    # Use caller-supplied bytes when given; otherwise derive them from text so
-    # that pre-existing tests work without any changes to their call sites.
+    # BaseAPI streams the body via ``response.content.iter_chunked(n)``.  Mock
+    # that path by yielding the body in 64 KiB pieces, which mirrors how
+    # aiohttp delivers larger responses across multiple TCP segments.
+    #
+    # ``content.read(n)`` is also mocked to match aiohttp StreamReader
+    # semantics: with positive n it returns only what is currently buffered
+    # (i.e. the first chunk), NOT n bytes from the full body.  This is the
+    # behavior the production bug relied on, so simulating it correctly here
+    # means a regression to bounded-read truncation is caught by any test that
+    # uses a body larger than one chunk.
     resolved_bytes = body_bytes if body_bytes is not None else resolved_text.encode("utf-8")
+    _CHUNK = 65536
+
+    async def _iter_chunked(chunk_size: int = _CHUNK):
+        for offset in range(0, len(resolved_bytes), chunk_size):
+            yield resolved_bytes[offset : offset + chunk_size]
+
+    async def _read(n: int = -1) -> bytes:
+        if n == -1:
+            return resolved_bytes
+        return resolved_bytes[: min(n, _CHUNK)]
+
     mock_response.content = MagicMock()
-    mock_response.content.read = AsyncMock(return_value=resolved_bytes)
+    mock_response.content.read = AsyncMock(side_effect=_read)
+    mock_response.content.iter_chunked = MagicMock(side_effect=_iter_chunked)
 
     if raise_for_status and status >= 400:
         mock_response.raise_for_status = MagicMock(
