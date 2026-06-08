@@ -327,7 +327,6 @@ def valid_session_data() -> Dict[str, Any]:
     return {
         "session_id": "session_valid_id",
         "refresh_token": "rt_refresh_token",
-        "preferred_network_id": "network_123",
         "session_expiry": (datetime.now() + timedelta(days=30)).isoformat(),
     }
 
@@ -338,7 +337,6 @@ def expired_session_data() -> Dict[str, Any]:
     return {
         "session_id": "session_expired_id",
         "refresh_token": "rt_expired_refresh",
-        "preferred_network_id": "network_123",
         "session_expiry": (datetime.now() - timedelta(days=1)).isoformat(),
     }
 

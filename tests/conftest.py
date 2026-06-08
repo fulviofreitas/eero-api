@@ -59,7 +59,6 @@ def mock_cookie_file(temp_config_dir: Path) -> Path:
                 "session_id": "mock_session_id_67890",
                 "refresh_token": None,
                 "session_expiry": None,
-                "preferred_network_id": None,
             }
         )
     )
