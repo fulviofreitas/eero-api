@@ -142,6 +142,26 @@ class TestPreferredNetworkManagement:
         # Verify
         assert client.preferred_network_id == "network_123"
 
+    @pytest.mark.asyncio
+    async def test_client_preference_drives_domain_call_when_only_client_set(self):
+        """Regression for deprecate-api-preferred-network task (4.7.0 → 5.0.0).
+
+        Setting only the CLIENT-level preference must still resolve network_id
+        for downstream domain API calls. Guards against accidentally rewiring
+        EeroClient._ensure_network_id() to read the (deprecated) API-level slot
+        on EeroAPI.
+        """
+        async with EeroClient(use_keyring=False) as client:
+            client.set_preferred_network("network_client_only")
+            # Crucially: do NOT touch client._api._preferred_network_id.
+            client._api.devices.get_devices = AsyncMock(
+                return_value={"meta": {"code": 200}, "data": []}
+            )
+
+            await client.get_devices()
+
+            client._api.devices.get_devices.assert_awaited_once_with("network_client_only")
+
 
 # ========================== Error Propagation Tests ==========================
 

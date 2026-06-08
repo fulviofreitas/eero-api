@@ -188,28 +188,38 @@ class TestEeroAPIAuthentication:
         api.auth.logout.assert_awaited_once()
 
 
-class TestEeroAPIPreferredNetwork:
-    """Tests for preferred network management (in-memory only)."""
+class TestEeroAPIPreferredNetworkDeprecation:
+    """The API-level setter / getter are deprecated as of v4.7.0; removed in v5.0.0.
 
-    def test_set_preferred_network(self, mock_session):
-        """Test setting preferred network ID."""
+    Behavior is preserved during the deprecation window: the slot still stores
+    and returns the value. Only the public entry points emit a warning.
+    """
+
+    def test_set_preferred_network_emits_deprecation_warning(self, mock_session):
+        """Setter emits DeprecationWarning but still writes the slot."""
         api = EeroAPI(session=mock_session)
 
-        api.set_preferred_network("network_123")
+        with pytest.warns(DeprecationWarning, match="deprecated since 4.7.0"):
+            api.set_preferred_network("network_123")
 
         assert api._preferred_network_id == "network_123"
 
-    def test_get_preferred_network_id(self, mock_session):
-        """Test getting preferred network ID."""
+    def test_preferred_network_id_property_emits_deprecation_warning(self, mock_session):
+        """Property read emits DeprecationWarning but still returns the slot value."""
         api = EeroAPI(session=mock_session)
         api._preferred_network_id = "network_456"
 
-        result = api.preferred_network_id
+        with pytest.warns(DeprecationWarning, match="deprecated since 4.7.0"):
+            result = api.preferred_network_id
 
         assert result == "network_456"
 
-    def test_preferred_network_id_none_by_default(self, mock_session):
-        """Test that preferred network ID is None by default."""
+    def test_warning_points_at_caller_stacklevel(self, mock_session, recwarn):
+        """stacklevel=2 makes the warning blame the caller, not eero.api."""
         api = EeroAPI(session=mock_session)
 
-        assert api.preferred_network_id is None
+        api.set_preferred_network("network_abc")
+
+        assert any(
+            w.category is DeprecationWarning and "test_eero_api.py" in w.filename for w in recwarn
+        ), "DeprecationWarning should point at the calling test file, not eero/api/__init__.py"
