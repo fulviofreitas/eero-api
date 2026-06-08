@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0](https://github.com/fulviofreitas/eero-api/compare/v4.6.1...v4.7.0) (2026-06-08)
+
+### ✨ Features
+
+* **api:** deprecate EeroAPI.set_preferred_network and preferred_network_id ([880c2f9](https://github.com/fulviofreitas/eero-api/commit/880c2f996165f41988adc0ea5a8e360f474852a5))
+
 ## [4.6.1](https://github.com/fulviofreitas/eero-api/compare/v4.6.0...v4.6.1) (2026-06-05)
 
 ### 🐛 Bug Fixes
