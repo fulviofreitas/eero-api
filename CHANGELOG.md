@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0](https://github.com/fulviofreitas/eero-api/compare/v4.7.0...v5.0.0) (2026-06-11)
+
+### ⚠ BREAKING CHANGES
+
+* **api:** EeroAPI.set_preferred_network() and
+EeroAPI.preferred_network_id have been removed (deprecated since 4.7.0).
+Use EeroClient.set_preferred_network() / EeroClient.preferred_network_id,
+or pass network_id= explicitly to each EeroAPI domain method.
+
+### ♻️ Refactoring
+
+* **api:** remove EeroAPI.set_preferred_network and preferred_network_id ([#66](https://github.com/fulviofreitas/eero-api/issues/66)) ([9ba8a52](https://github.com/fulviofreitas/eero-api/commit/9ba8a5277530e78fc13a21d0ab346ad4d0d59e5b))
+
 ## [4.7.0](https://github.com/fulviofreitas/eero-api/compare/v4.6.1...v4.7.0) (2026-06-08)
 
 ### ✨ Features
