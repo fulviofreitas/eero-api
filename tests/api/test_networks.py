@@ -42,7 +42,6 @@ class TestNetworksAPIGetNetworks:
         auth_api = MagicMock()
         auth_api.session = mock_session
         auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        auth_api.preferred_network_id = None
         api = NetworksAPI(auth_api)
         return api
 
