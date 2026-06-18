@@ -11,7 +11,7 @@
 #
 # Consumed by .github/workflows/draft-fix.yml via the `container:` key.
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
