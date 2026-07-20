@@ -81,7 +81,19 @@ network: defaults
 
 timeout-minutes: 10
 
+# gh-aw v0.82.x added `tools.cli-proxy` (was `mount-as-clis` /
+# `features.mcp-cli` before v0.82). Default is `true` — every MCP
+# server gets exposed as a shell command (`github issue_read ...`).
+# With copilot-cli 1.0.71 the shell wrapper output is misinterpreted
+# by every model (both gpt-4o AND claude-haiku-4.5) as "issue is
+# filtered by secrecy policy" even though the MCP gateway responds
+# with the full issue body — confirmed against issue #102, runs
+# 29783487133 and 29783799397. Setting cli-proxy: false disables the
+# CLI wrapper so github is exposed as a native MCP tool, matching
+# the working pre-v0.82 behaviour (only `safeoutputs` was CLI-mounted
+# because it needs to write to a shared jsonl).
 tools:
+  cli-proxy: false
   github:
     toolsets: [issues, labels]
     min-integrity: none
