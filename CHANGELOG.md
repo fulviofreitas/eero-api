@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.4](https://github.com/fulviofreitas/eero-api/compare/v5.0.3...v5.0.4) (2026-07-20)
+
+### 🐛 Bug Fixes
+
+* **ci:** use current github-mcp-server v1.6 tool names in triage ([debd404](https://github.com/fulviofreitas/eero-api/commit/debd404cfd8b86abc87c3fe75a22bbfe26fcd907))
+
 ## [5.0.3](https://github.com/fulviofreitas/eero-api/compare/v5.0.2...v5.0.3) (2026-07-20)
 
 ### 🐛 Bug Fixes
