@@ -135,15 +135,17 @@ These are the only labels you may apply. They all already exist in the repositor
 
 Two MCP servers are mounted as CLIs on your PATH: `github` and `safeoutputs`.
 **Read tools live on `github`; write tools live on `safeoutputs`.** Do NOT
-guess a server prefix — using the wrong one silently fails with "tool not
-recognized" and the workflow ends with nothing applied.
+guess a server prefix or tool name — using the wrong one silently fails with
+"tool not recognized" and the workflow ends with nothing applied.
 
-1. Run `github get_issue --issue_number ${{ github.event.issue.number }}` (NOT `safeoutputs get_issue`).
-2. Run `github get_issue_comments --issue_number ${{ github.event.issue.number }}`.
-3. Run `github list_labels` once to confirm the labels above exist (treat the allowed list as authoritative — never propose a label that is not on it).
-4. Optionally run `github search_issues` for likely duplicates if the title is distinctive.
+The `github` server is `github-mcp-server` v1.6+, which uses a `<resource>_<verb>` naming scheme with a `--method` flag for issue operations. The exact commands to run:
 
-For Step 4 (writing), use `safeoutputs add_labels` and `safeoutputs add_comment`.
+1. Issue details: `github issue_read --method get --issue_number ${{ github.event.issue.number }}`
+2. Issue comments: `github issue_read --method get_comments --issue_number ${{ github.event.issue.number }}`
+3. Labels list: `github list_label` (NOT `list_labels` — the tool is singular. Treat the allowed list above as authoritative — never propose a label that is not on it.)
+4. Optionally: `github search_issues --query "…"` for likely duplicates if the title is distinctive.
+
+For Step 3/Step 4 (writing), use `safeoutputs add_labels` and `safeoutputs add_comment` (these ARE plural/singular as written).
 
 ## Step 2 — Classify
 
