@@ -75,7 +75,7 @@ permissions:
 #     for triage than gpt-4o.
 engine:
   id: copilot
-  model: haiku
+  model: gpt-4o
 
 network: defaults
 
