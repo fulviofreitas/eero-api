@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.9](https://github.com/fulviofreitas/eero-api/compare/v5.0.8...v5.0.9) (2026-07-20)
+
+### 🐛 Bug Fixes
+
+* **ci:** switch triage model to gpt-4.1-mini + correct earlier claim ([f858694](https://github.com/fulviofreitas/eero-api/commit/f858694f550dabb046dd99a2f4157963d0936763))
+* **ci:** use gpt-4o-mini (copilot-cli 1.0.63 rejects gpt-4.1-mini) ([c5fbad5](https://github.com/fulviofreitas/eero-api/commit/c5fbad59fefc5c25ea6f0d0662c097b2e219fa3f))
+
 ## [5.0.8](https://github.com/fulviofreitas/eero-api/compare/v5.0.7...v5.0.8) (2026-07-20)
 
 ### 🐛 Bug Fixes
