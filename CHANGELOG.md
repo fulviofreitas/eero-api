@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1](https://github.com/fulviofreitas/eero-api/compare/v5.0.0...v5.0.1) (2026-07-20)
+
+### 🐛 Bug Fixes
+
+* **ci:** recompile issue-triage with gh-aw v0.82.14 to fix squid startup ([d831ba6](https://github.com/fulviofreitas/eero-api/commit/d831ba6a1ce77e5db5547fe46b27c8ab39fd01e2)), closes [#102](https://github.com/fulviofreitas/eero-api/issues/102)
+
 ## [5.0.0](https://github.com/fulviofreitas/eero-api/compare/v4.7.0...v5.0.0) (2026-06-11)
 
 ### ⚠ BREAKING CHANGES
