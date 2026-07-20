@@ -56,26 +56,14 @@ permissions:
   issues: read
   pull-requests: read
 
-# Pin the model. History:
-#   - Copilot CLI's built-in default is a premium model
-#     (claude-sonnet-4.5+) that used to fail with
-#     "400 The requested model is not supported" on non-Enterprise
-#     Copilot tiers.
-#   - We originally pinned to gpt-4o for universal Copilot availability,
-#     but as of copilot-cli 1.0.71 + gh-aw v0.82.14 + github-mcp-server
-#     v1.6, gpt-4o started hallucinating tool responses (successfully
-#     retrieving issue bodies then declaring "issue is filtered by
-#     secrecy policy" and no-op'ing). Confirmed against run 29783487133
-#     on issue #102: `github issue_read` returned the full bug report
-#     text and label list, model ignored it and called `safeoutputs noop`.
-#   - `haiku` maps to the Copilot `haiku` group (Claude Haiku 4.5+ via
-#     Copilot's cascade), which is Anthropic-side and available on
-#     Copilot Pro / Business / Enterprise. It's cheap, fast, and
-#     purpose-built for structured tool-calling — a much better fit
-#     for triage than gpt-4o.
+# Pin the model — Copilot CLI's built-in default is a premium model
+# that fails with "400 The requested model is not supported" on
+# non-Enterprise Copilot tiers. gpt-4.1-mini is on the Copilot Free
+# tier, newer than gpt-4o, mini-tier (cheap, fast), and plenty for a
+# structured triage task.
 engine:
   id: copilot
-  model: gpt-4o
+  model: gpt-4.1-mini
 
 network: defaults
 
