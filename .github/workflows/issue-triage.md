@@ -61,9 +61,9 @@ permissions:
 # causes runs to fail with "400 The requested model is not supported."
 # gpt-4o is universally available (Copilot Free / Pro / Business / Enterprise)
 # and is more than enough horsepower for a structured triage task.
+model: gpt-4o
 engine:
   id: copilot
-  model: gpt-4o
 
 network: defaults
 
