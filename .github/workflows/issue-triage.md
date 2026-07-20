@@ -73,9 +73,9 @@ permissions:
 #     Copilot Pro / Business / Enterprise. It's cheap, fast, and
 #     purpose-built for structured tool-calling — a much better fit
 #     for triage than gpt-4o.
-model: haiku
 engine:
   id: copilot
+  model: haiku
 
 network: defaults
 
@@ -93,7 +93,6 @@ timeout-minutes: 10
 # the working pre-v0.82 behaviour (only `safeoutputs` was CLI-mounted
 # because it needs to write to a shared jsonl).
 tools:
-  cli-proxy: false
   github:
     toolsets: [issues, labels]
     min-integrity: none
@@ -157,19 +156,12 @@ These are the only labels you may apply. They all already exist in the repositor
 
 ## Step 1 — Gather context
 
-Two MCP servers are mounted as CLIs on your PATH: `github` and `safeoutputs`.
-**Read tools live on `github`; write tools live on `safeoutputs`.** Do NOT
-guess a server prefix or tool name — using the wrong one silently fails with
-"tool not recognized" and the workflow ends with nothing applied.
+The `github` MCP server exposes issue and label tools directly (call them as MCP tools, not shell commands — their exact names depend on the server version, so use the MCP tool discovery to find the read-issue, read-comments, and list-labels tools). The `safeoutputs` server is CLI-mounted for writes.
 
-The `github` server is `github-mcp-server` v1.6+, which uses a `<resource>_<verb>` naming scheme with a `--method` flag for issue operations. The exact commands to run:
-
-1. Issue details: `github issue_read --method get --issue_number ${{ github.event.issue.number }}`
-2. Issue comments: `github issue_read --method get_comments --issue_number ${{ github.event.issue.number }}`
-3. Labels list: `github list_label` (NOT `list_labels` — the tool is singular. Treat the allowed list above as authoritative — never propose a label that is not on it.)
-4. Optionally: `github search_issues --query "…"` for likely duplicates if the title is distinctive.
-
-For Step 3/Step 4 (writing), use `safeoutputs add_labels` and `safeoutputs add_comment` (these ARE plural/singular as written).
+1. Read the details of issue `#${{ github.event.issue.number }}` via the github MCP.
+2. Read its existing comments via the github MCP.
+3. Confirm the labels below exist by listing repository labels via the github MCP (treat the allowed list as authoritative — never propose a label that is not on it).
+4. Optionally search for duplicates via `search_issues` if the title is distinctive.
 
 ## Step 2 — Classify
 
@@ -233,8 +225,8 @@ If you applied `question`, suggest in "Likely next step" that the reporter also 
 
 ## Constraints
 
-- You **must** call `safeoutputs add_comment` exactly once.
-- You **must** call `safeoutputs add_labels` at least once unless you applied `needs-review` and there is genuinely nothing else to add (in which case `needs-review` alone is fine).
+- You **must** call `safeoutputs add_comment` (or `add_comment` if invoked as an MCP tool) exactly once.
+- You **must** call `safeoutputs add_labels` (or `add_labels` via MCP) at least once unless you applied `needs-review` and there is genuinely nothing else to add (in which case `needs-review` alone is fine).
 - Never apply a label outside the allowed list.
 - Never edit the issue body, never close the issue, never assign the issue.
 - Cap labels at 10 (the `safe-outputs.add-labels.max` setting will enforce this regardless).
