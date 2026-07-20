@@ -58,12 +58,13 @@ permissions:
 
 # Pin the model — Copilot CLI's built-in default is a premium model
 # that fails with "400 The requested model is not supported" on
-# non-Enterprise Copilot tiers. gpt-4.1-mini is on the Copilot Free
-# tier, newer than gpt-4o, mini-tier (cheap, fast), and plenty for a
-# structured triage task.
+# non-Enterprise Copilot tiers. gpt-4o-mini is on the Copilot Free
+# tier, mini-tier (cheap, fast), and plenty for a structured triage
+# task. It's the model copilot-cli 1.0.63 itself recommends when
+# other minis aren't recognised.
 engine:
   id: copilot
-  model: gpt-4.1-mini
+  model: gpt-4o-mini
 
 network: defaults
 
