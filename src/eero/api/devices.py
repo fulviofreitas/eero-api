@@ -120,9 +120,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("Setting nickname for device %s to '%s'", device_id, nickname)
 
-        return await self._update_device(
-            network_id, device_id, {"nickname": nickname}, auth_token
-        )
+        return await self._update_device(network_id, device_id, {"nickname": nickname}, auth_token)
 
     async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]:
         """Block or unblock a device - returns raw Eero API response.
@@ -145,9 +143,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("%s device %s", "Blocking" if blocked else "Unblocking", device_id)
 
-        return await self._update_device(
-            network_id, device_id, {"blocked": blocked}, auth_token
-        )
+        return await self._update_device(network_id, device_id, {"blocked": blocked}, auth_token)
 
     async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]:
         """Pause or unpause internet access for a device - returns raw Eero API response.
@@ -178,9 +174,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("%s device %s", "Pausing" if paused else "Unpausing", device_id)
 
-        return await self._update_device(
-            network_id, device_id, {"paused": paused}, auth_token
-        )
+        return await self._update_device(network_id, device_id, {"paused": paused}, auth_token)
 
     async def set_device_priority(
         self,
