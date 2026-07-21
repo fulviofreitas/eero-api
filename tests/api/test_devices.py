@@ -137,6 +137,19 @@ class TestDevicesAPISetNickname:
         assert call_args.kwargs["json"] == {"nickname": "New Name"}
 
     @pytest.mark.asyncio
+    async def test_set_nickname_targets_v2_3_endpoint(self, devices_api, mock_session):
+        """Test the nickname PUT targets the 2.3 endpoint (issue #102)."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await devices_api.set_device_nickname("network_123", "device_abc", "New Name")
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
+
+    @pytest.mark.asyncio
     async def test_set_nickname_not_authenticated(self, devices_api):
         """Test set_device_nickname raises when not authenticated."""
         devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -179,6 +192,23 @@ class TestDevicesAPIBlockDevice:
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"blocked": True}
 
+    @pytest.mark.asyncio
+    async def test_block_device_targets_v2_3_endpoint(self, devices_api, mock_session):
+        """Test the block PUT targets the 2.3 endpoint (issue #102).
+
+        On 2.2 the backend returns 200 OK but silently ignores the mutation, so
+        the write must go to 2.3 for the block to actually persist.
+        """
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await devices_api.block_device("network_123", "device_abc", True)
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
+
 
 class TestDevicesAPIPauseDevice:
     """Tests for pause_device method."""
@@ -213,6 +243,23 @@ class TestDevicesAPIPauseDevice:
 
         call_args = mock_session.request.call_args
         assert call_args.kwargs["json"] == {"paused": True}
+
+    @pytest.mark.asyncio
+    async def test_pause_device_targets_v2_3_endpoint(self, devices_api, mock_session):
+        """Test the pause PUT targets the 2.3 endpoint (issue #102).
+
+        On 2.2 the backend returns 200 OK but silently ignores the mutation, so
+        the write must go to 2.3 for the pause to actually persist.
+        """
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await devices_api.pause_device("network_123", "device_abc", True)
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
 
     @pytest.mark.asyncio
     async def test_pause_device_not_authenticated(self, devices_api):
@@ -263,3 +310,16 @@ class TestDevicesAPIPriority:
         payload = call_args.kwargs["json"]
         assert payload["prioritized"] is True
         assert payload["priority_duration"] == 120
+
+    @pytest.mark.asyncio
+    async def test_set_device_priority_targets_v2_3_endpoint(self, devices_api, mock_session):
+        """Test the priority PUT targets the 2.3 endpoint (issue #102)."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"

@@ -7,7 +7,7 @@ All data extraction, field mapping, and transformation must be done by downstrea
 import logging
 from typing import Any, Dict, Optional
 
-from ..const import API_ENDPOINT
+from ..const import API_ENDPOINT, DEVICE_UPDATE_ENDPOINT
 from ..exceptions import EeroAuthenticationException
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
@@ -29,6 +29,29 @@ class DevicesAPI(AuthenticatedAPI):
             auth_api: Authentication API instance
         """
         super().__init__(auth_api, API_ENDPOINT)
+
+    async def _update_device(
+        self, network_id: str, device_id: str, payload: Dict[str, Any], auth_token: str
+    ) -> Dict[str, Any]:
+        """Send a device-mutation PUT against the 2.3 API endpoint.
+
+        Device writes (nickname/blocked/paused/prioritized) are silently dropped
+        on the default 2.2 endpoint — the backend returns 200 OK but the change
+        never persists. Version 2.3 processes them correctly, so all device
+        mutations are routed here via an absolute 2.3 URL while reads continue to
+        use the 2.2 base URL. See issue #102.
+
+        Args:
+            network_id: ID of the network the device belongs to
+            device_id: ID of the device
+            payload: JSON body describing the mutation
+            auth_token: Authentication token
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
+        url = f"{DEVICE_UPDATE_ENDPOINT}/networks/{network_id}/devices/{device_id}"
+        return await self.put(url, auth_token=auth_token, json=payload)
 
     async def get_devices(self, network_id: str) -> Dict[str, Any]:
         """Get list of connected devices - returns raw Eero API response.
@@ -97,11 +120,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("Setting nickname for device %s to '%s'", device_id, nickname)
 
-        return await self.put(
-            f"networks/{network_id}/devices/{device_id}",
-            auth_token=auth_token,
-            json={"nickname": nickname},
-        )
+        return await self._update_device(network_id, device_id, {"nickname": nickname}, auth_token)
 
     async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]:
         """Block or unblock a device - returns raw Eero API response.
@@ -124,11 +143,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("%s device %s", "Blocking" if blocked else "Unblocking", device_id)
 
-        return await self.put(
-            f"networks/{network_id}/devices/{device_id}",
-            auth_token=auth_token,
-            json={"blocked": blocked},
-        )
+        return await self._update_device(network_id, device_id, {"blocked": blocked}, auth_token)
 
     async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]:
         """Pause or unpause internet access for a device - returns raw Eero API response.
@@ -159,11 +174,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         _LOGGER.debug("%s device %s", "Pausing" if paused else "Unpausing", device_id)
 
-        return await self.put(
-            f"networks/{network_id}/devices/{device_id}",
-            auth_token=auth_token,
-            json={"paused": paused},
-        )
+        return await self._update_device(network_id, device_id, {"paused": paused}, auth_token)
 
     async def set_device_priority(
         self,
@@ -203,8 +214,4 @@ class DevicesAPI(AuthenticatedAPI):
             f" for {duration_minutes} minutes" if duration_minutes else "",
         )
 
-        return await self.put(
-            f"networks/{network_id}/devices/{device_id}",
-            auth_token=auth_token,
-            json=payload,
-        )
+        return await self._update_device(network_id, device_id, payload, auth_token)
