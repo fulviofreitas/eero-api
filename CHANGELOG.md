@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.12](https://github.com/fulviofreitas/eero-api/compare/v5.0.11...v5.0.12) (2026-07-21)
+
+### 🐛 Bug Fixes
+
+* **devices:** route mutation PUTs to /2.3 endpoint ([#108](https://github.com/fulviofreitas/eero-api/issues/108)) ([8dd7d5a](https://github.com/fulviofreitas/eero-api/commit/8dd7d5adcc0340a73def47a3da082df06b5622af)), closes [#109](https://github.com/fulviofreitas/eero-api/issues/109) [#111](https://github.com/fulviofreitas/eero-api/issues/111) [#110](https://github.com/fulviofreitas/eero-api/issues/110)
+
 ## [5.0.11](https://github.com/fulviofreitas/eero-api/compare/v5.0.10...v5.0.11) (2026-07-21)
 
 ### 🐛 Bug Fixes
