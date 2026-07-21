@@ -87,6 +87,16 @@ tools:
     min-integrity: none
 
 safe-outputs:
+  # Authenticate label/comment writes as the ff-renovate GitHub App
+  # (same App draft-fix.yml uses to push branches). This is what makes
+  # the try-fix → draft-fix hand-off actually work: labels applied by
+  # `GITHUB_TOKEN` are subject to GitHub's anti-recursion policy and
+  # do NOT trigger downstream `issues: [labeled]` workflows. Labels
+  # applied by an App do fire those events, so triage → try-fix →
+  # draft-fix runs end-to-end without a maintainer in the loop.
+  github-app:
+    app-id: ${{ secrets.RENOVATE_APP_ID }}
+    private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
   # Don't auto-create '[aw] ... failed' tracker issues on workflow
   # failure — it just adds noise to the issue list. Look at the Actions
   # tab if you need to investigate a failure.
