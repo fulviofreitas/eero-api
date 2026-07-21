@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.10](https://github.com/fulviofreitas/eero-api/compare/v5.0.9...v5.0.10) (2026-07-21)
+
+### 🐛 Bug Fixes
+
+* **ci:** auth triage safe-outputs as ff-renovate App to trigger draft-fix ([1828ff5](https://github.com/fulviofreitas/eero-api/commit/1828ff517f60a00eab0a3f665216a25a3f241ac5))
+
 ## [5.0.9](https://github.com/fulviofreitas/eero-api/compare/v5.0.8...v5.0.9) (2026-07-20)
 
 ### 🐛 Bug Fixes
