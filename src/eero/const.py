@@ -5,6 +5,12 @@ from typing import Dict, Final
 
 # API Endpoints
 API_ENDPOINT: Final[str] = "https://api-user.e2ro.com/2.2"
+
+# Device-mutation writes (pause/block/nickname/priority) are silently dropped on
+# API version 2.2: the backend accepts the PUT and returns 200 OK but the change
+# never persists server-side. Version 2.3 processes them correctly. Reads and
+# other resources continue to use API_ENDPOINT (2.2). See issue #102.
+DEVICE_UPDATE_ENDPOINT: Final[str] = "https://api-user.e2ro.com/2.3"
 LOGIN_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login"
 LOGIN_VERIFY_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login/verify"
 LOGOUT_ENDPOINT: Final[str] = f"{API_ENDPOINT}/logout"
