@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.11](https://github.com/fulviofreitas/eero-api/compare/v5.0.10...v5.0.11) (2026-07-21)
+
+### 🐛 Bug Fixes
+
+* **ci:** suppress '[aw] No-Op Runs' tracker issue ([b9ac470](https://github.com/fulviofreitas/eero-api/commit/b9ac470ed502bec8ba414c3a22835631c8266951)), closes [#103](https://github.com/fulviofreitas/eero-api/issues/103)
+
 ## [5.0.10](https://github.com/fulviofreitas/eero-api/compare/v5.0.9...v5.0.10) (2026-07-21)
 
 ### 🐛 Bug Fixes
