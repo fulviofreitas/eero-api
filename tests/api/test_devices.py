@@ -349,7 +349,12 @@ class TestDevicesAPIPauseDevice:
 
 
 class TestDevicesAPIPriority:
-    """Tests for device priority management."""
+    """Tests for device priority management.
+
+    set_device_priority is deprecated (issue #111): Eero's cloud API no longer
+    exposes device-level priority. The method still performs a PUT and returns 200
+    OK, but the change has no observable effect on the network.
+    """
 
     @pytest.fixture
     def devices_api(self, mock_session):
@@ -360,15 +365,46 @@ class TestDevicesAPIPriority:
         return DevicesAPI(auth_api)
 
     @pytest.mark.asyncio
+    async def test_set_device_priority_emits_deprecation_warning(self, devices_api, mock_session):
+        """Test that calling set_device_priority raises DeprecationWarning (issue #111)."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        with pytest.warns(DeprecationWarning, match="set_device_priority is a no-op"):
+            await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
+
+    @pytest.mark.asyncio
+    async def test_set_device_priority_warning_mentions_issue_url(self, devices_api, mock_session):
+        """Test the DeprecationWarning message includes the tracking issue URL."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        with pytest.warns(DeprecationWarning, match="issues/111"):
+            await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
+
+    @pytest.mark.asyncio
+    async def test_set_device_priority_warning_mentions_v6_removal(self, devices_api, mock_session):
+        """Test the DeprecationWarning message mentions scheduled removal in v6.0.0."""
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_response = create_mock_response(200, expected_response)
+        mock_session.request.return_value = mock_response
+
+        with pytest.warns(DeprecationWarning, match="v6.0.0"):
+            await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
+
+    @pytest.mark.asyncio
     async def test_set_device_priority_returns_raw_response(self, devices_api, mock_session):
         """Test enabling device priority returns raw response."""
         expected_response = {"meta": {"code": 200}, "data": {}}
         mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
-        result = await devices_api.set_device_priority(
-            "network_123", "device_abc", prioritized=True
-        )
+        with pytest.warns(DeprecationWarning):
+            result = await devices_api.set_device_priority(
+                "network_123", "device_abc", prioritized=True
+            )
 
         assert "meta" in result
 
@@ -379,9 +415,10 @@ class TestDevicesAPIPriority:
         mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
-        result = await devices_api.set_device_priority(
-            "network_123", "device_abc", prioritized=True, duration_minutes=120
-        )
+        with pytest.warns(DeprecationWarning):
+            result = await devices_api.set_device_priority(
+                "network_123", "device_abc", prioritized=True, duration_minutes=120
+            )
 
         assert "meta" in result
         call_args = mock_session.request.call_args
@@ -391,12 +428,13 @@ class TestDevicesAPIPriority:
 
     @pytest.mark.asyncio
     async def test_set_device_priority_targets_v2_3_endpoint(self, devices_api, mock_session):
-        """Test the priority PUT targets the 2.3 endpoint (issue #102)."""
+        """Test the priority PUT still targets the 2.3 endpoint (issue #102)."""
         expected_response = {"meta": {"code": 200}, "data": {}}
         mock_response = create_mock_response(200, expected_response)
         mock_session.request.return_value = mock_response
 
-        await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
+        with pytest.warns(DeprecationWarning):
+            await devices_api.set_device_priority("network_123", "device_abc", prioritized=True)
 
         method, url = mock_session.request.call_args.args[:2]
         assert method == "PUT"

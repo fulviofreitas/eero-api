@@ -5,6 +5,7 @@ All data extraction, field mapping, and transformation must be done by downstrea
 """
 
 import logging
+import warnings
 from typing import Any, Dict, Optional
 
 from ..const import API_ENDPOINT, DEVICE_UPDATE_ENDPOINT
@@ -209,6 +210,14 @@ class DevicesAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Set priority for a device (bandwidth prioritization) - returns raw Eero API response.
 
+        **Deprecated**: ``DevicesAPI.set_device_priority`` is a no-op. Eero's cloud
+        API no longer exposes device-level priority — there is no ``/priority`` or
+        ``/qos`` endpoint, and the ``prioritized`` field is absent from the device
+        object. Sending ``{prioritized: bool}`` via the device PUT returns 200 OK
+        but does not change any observable state (live-verified). This method is
+        scheduled for removal in v6.0.0. See
+        https://github.com/fulviofreitas/eero-api/issues/111
+
         Args:
             network_id: ID of the network
             device_id: ID of the device
@@ -222,6 +231,15 @@ class DevicesAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
+        warnings.warn(
+            "DevicesAPI.set_device_priority is a no-op — Eero's cloud API no longer exposes"
+            " device-level priority. The method returns 200 OK but does not change state."
+            " Scheduled for removal in v6.0.0."
+            " See https://github.com/fulviofreitas/eero-api/issues/111",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
