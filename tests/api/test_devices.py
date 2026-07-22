@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.devices import DevicesAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAPIException, EeroAuthenticationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -286,6 +286,29 @@ class TestDevicesAPIBlockDevice:
 
         with pytest.raises(EeroAuthenticationException):
             await devices_api.block_device("network_123", "device_abc", True)
+
+    @pytest.mark.asyncio
+    async def test_block_device_raises_when_device_response_missing_mac(
+        self, devices_api, mock_session
+    ):
+        """Test block(True) raises EeroAPIException(502) if get_device omits `mac`.
+
+        Guards the documented Raises contract: without a MAC we can't build the
+        blacklist POST payload, so we must fail loudly instead of silently
+        misbehaving. The blacklist POST must NOT be attempted in this case.
+        """
+        malformed = {"meta": {"code": 200}, "data": {"nickname": "no-mac-device"}}
+        get_device_response = create_mock_response(200, malformed)
+        mock_session.request.return_value = get_device_response
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await devices_api.block_device("network_123", "device_abc", True)
+
+        assert exc_info.value.status_code == 502
+        assert "missing 'mac' field" in str(exc_info.value)
+        # Only the get_device call happened; no POST to /blacklist was attempted.
+        assert mock_session.request.call_count == 1
+        assert mock_session.request.call_args.args[0] == "GET"
 
 
 class TestDevicesAPIPauseDevice:
