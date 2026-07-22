@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.13](https://github.com/fulviofreitas/eero-api/compare/v5.0.12...v5.0.13) (2026-07-22)
+
+### 🐛 Bug Fixes
+
+* **blacklist:** correct add_to_blacklist payload and rename remove parameter ([87ffc8a](https://github.com/fulviofreitas/eero-api/commit/87ffc8aab44a103f4317cfdf5495e8dce5eed750)), closes [#110](https://github.com/fulviofreitas/eero-api/issues/110)
+* **devices:** block_device now routes through /blacklist (issue [#109](https://github.com/fulviofreitas/eero-api/issues/109)) ([dcca132](https://github.com/fulviofreitas/eero-api/commit/dcca132e19883c9a004a94548099dbf9018d1b80))
+
+### ♻️ Refactoring
+
+* **devices:** deprecate set_device_priority (issue [#111](https://github.com/fulviofreitas/eero-api/issues/111)) ([091de92](https://github.com/fulviofreitas/eero-api/commit/091de920e96ca238275122b683a8436439b9bfc4))
+
 ## [5.0.12](https://github.com/fulviofreitas/eero-api/compare/v5.0.11...v5.0.12) (2026-07-21)
 
 ### 🐛 Bug Fixes
