@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional
 from aiohttp import ClientSession
 
 from .api import EeroAPI
-from .api.activity import ACTIVITY_DEPRECATION_MSG
 from .api.devices import PRIORITY_DEPRECATION_MSG
 from .exceptions import EeroException
 
@@ -933,30 +932,24 @@ class EeroClient:
     #
     # Every /networks/{id}/activity* endpoint now returns 404 (live-verified on
     # both API 2.2 and 2.3, and against the network's own resource map which
-    # lists `insights` but no `activity`). Retained with DeprecationWarning for
-    # one release cycle; removal in v6.0.0. See issue #107 and the
-    # ACTIVITY_DEPRECATION_MSG constant in api/activity.py.
+    # lists `insights` but no `activity`). Retained for one release cycle;
+    # removal in v6.0.0. See issue #107.
+    #
+    # The DeprecationWarning is emitted by the delegated ActivityAPI methods
+    # (see api/activity.py) — these wrappers deliberately do not fire their
+    # own warning to avoid double-signalling on every call. The warning
+    # message still names the intended migration targets.
     #
     # Migrate to get_insights(...) for category / adblock / inspected breakdowns
     # or get_data_usage(...) for bandwidth per client / node.
 
     async def get_activity(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        warnings.warn(
-            f"EeroClient.get_activity: {ACTIVITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity(network_id)
 
     async def get_activity_clients(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        warnings.warn(
-            f"EeroClient.get_activity_clients: {ACTIVITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_clients(network_id)
 
@@ -964,11 +957,6 @@ class EeroClient:
         self, device_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        warnings.warn(
-            f"EeroClient.get_activity_for_device: {ACTIVITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_for_device(network_id, device_id)
 
@@ -976,21 +964,11 @@ class EeroClient:
         self, network_id: Optional[str] = None, period: str = "day"
     ) -> Dict[str, Any]:
         """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        warnings.warn(
-            f"EeroClient.get_activity_history: {ACTIVITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_history(network_id, period)
 
     async def get_activity_categories(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        warnings.warn(
-            f"EeroClient.get_activity_categories: {ACTIVITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_categories(network_id)
 
