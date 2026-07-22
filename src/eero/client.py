@@ -821,10 +821,40 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.settings.get_settings(network_id)
 
-    async def get_insights(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get network insights - returns raw Eero API response."""
+    async def get_insights(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        insight_type: str,
+        cadence: str = "daily",
+    ) -> Dict[str, Any]:
+        """Query insights time-series data - returns raw Eero API response.
+
+        Thin wrapper over :meth:`InsightsAPI.get_insights`. See that method's
+        docstring for parameter semantics and response shape. The Eero cloud
+        API requires ``start``, ``end``, ``insight_type``, and ``cadence``
+        as query parameters; only ``cadence`` has an SDK-supplied default
+        (``"daily"``) since it controls display bucketing rather than data
+        scope.
+
+        Args:
+            network_id: ID of the network (uses preferred if None).
+            start: Window start, ISO 8601 timestamp (e.g. ``"2026-07-21T00:00:00Z"``).
+            end: Window end, ISO 8601 timestamp.
+            insight_type: One of ``"adblock"``, ``"blocked"``, ``"inspected"``.
+            cadence: One of ``"hourly"``, ``"daily"``, ``"weekly"``. Defaults to
+                ``"daily"``.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.insights.get_insights(network_id)
+        return await self._api.insights.get_insights(
+            network_id,
+            start=start,
+            end=end,
+            insight_type=insight_type,
+            cadence=cadence,
+        )
 
     async def get_routing(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get network routing - returns raw Eero API response."""
@@ -898,34 +928,47 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.updates.get_updates(network_id)
 
-    # ==================== Activity (Eero Plus) ====================
+    # ==================== Activity (Eero Plus) — DEPRECATED ====================
+    #
+    # Every /networks/{id}/activity* endpoint now returns 404 (live-verified on
+    # both API 2.2 and 2.3, and against the network's own resource map which
+    # lists `insights` but no `activity`). Retained for one release cycle;
+    # removal in v6.0.0. See issue #107.
+    #
+    # The DeprecationWarning is emitted by the delegated ActivityAPI methods
+    # (see api/activity.py) — these wrappers deliberately do not fire their
+    # own warning to avoid double-signalling on every call. The warning
+    # message still names the intended migration targets.
+    #
+    # Migrate to get_insights(...) for category / adblock / inspected breakdowns
+    # or get_data_usage(...) for bandwidth per client / node.
 
     async def get_activity(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get network activity - returns raw Eero API response."""
+        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity(network_id)
 
     async def get_activity_clients(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get per-client activity - returns raw Eero API response."""
+        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_clients(network_id)
 
     async def get_activity_for_device(
         self, device_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get activity for a device - returns raw Eero API response."""
+        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_for_device(network_id, device_id)
 
     async def get_activity_history(
         self, network_id: Optional[str] = None, period: str = "day"
     ) -> Dict[str, Any]:
-        """Get activity history - returns raw Eero API response."""
+        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_history(network_id, period)
 
     async def get_activity_categories(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get activity categories - returns raw Eero API response."""
+        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.activity.get_activity_categories(network_id)
 
