@@ -78,9 +78,7 @@ class BlacklistAPI(AuthenticatedAPI):
             json={"mac": mac},
         )
 
-    async def remove_from_blacklist(
-        self, network_id: str, mac_or_device_id: str
-    ) -> Dict[str, Any]:
+    async def remove_from_blacklist(self, network_id: str, mac_or_device_id: str) -> Dict[str, Any]:
         """Remove a device from the blacklist - returns raw Eero API response.
 
         Args:
@@ -101,9 +99,7 @@ class BlacklistAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(
-            "Removing %s from blacklist for network %s", mac_or_device_id, network_id
-        )
+        _LOGGER.debug("Removing %s from blacklist for network %s", mac_or_device_id, network_id)
         return await self.delete(
             f"networks/{network_id}/blacklist/{mac_or_device_id}",
             auth_token=auth_token,

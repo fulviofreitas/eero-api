@@ -9,11 +9,21 @@ import warnings
 from typing import Any, Dict, Optional
 
 from ..const import API_ENDPOINT, DEVICE_UPDATE_ENDPOINT
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAPIException, EeroAuthenticationException
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 
 _LOGGER = logging.getLogger(__name__)
+
+# Shared by DevicesAPI.set_device_priority and EeroClient.set_device_priority
+# (imported by client.py). Keep the message in one place so both surfaces stay
+# in sync when the removal target changes.
+PRIORITY_DEPRECATION_MSG = (
+    "set_device_priority is a no-op — Eero's cloud API no longer exposes"
+    " device-level priority. The method returns 200 OK but does not change state."
+    " Scheduled for removal in v6.0.0."
+    " See https://github.com/fulviofreitas/eero-api/issues/111"
+)
 
 
 class DevicesAPI(AuthenticatedAPI):
@@ -159,7 +169,12 @@ class DevicesAPI(AuthenticatedAPI):
         if blocked:
             # Resolve the canonical MAC from the device object.
             device_response = await self.get_device(network_id, device_id)
-            mac = device_response["data"]["mac"]
+            mac = (device_response or {}).get("data", {}).get("mac")
+            if not mac:
+                raise EeroAPIException(
+                    502,
+                    f"Device {device_id} response missing 'mac' field; cannot blacklist",
+                )
             _LOGGER.debug(
                 "Blocking device %s (resolved MAC %s) via POST /blacklist", device_id, mac
             )
@@ -232,10 +247,7 @@ class DevicesAPI(AuthenticatedAPI):
             EeroAPIException: If the API returns an error
         """
         warnings.warn(
-            "DevicesAPI.set_device_priority is a no-op — Eero's cloud API no longer exposes"
-            " device-level priority. The method returns 200 OK but does not change state."
-            " Scheduled for removal in v6.0.0."
-            " See https://github.com/fulviofreitas/eero-api/issues/111",
+            f"DevicesAPI.{PRIORITY_DEPRECATION_MSG}",
             DeprecationWarning,
             stacklevel=2,
         )
