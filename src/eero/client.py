@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from aiohttp import ClientSession
 
 from .api import EeroAPI
+from .api.devices import PRIORITY_DEPRECATION_MSG
 from .exceptions import EeroException
 
 _LOGGER = logging.getLogger(__name__)
@@ -515,7 +516,14 @@ class EeroClient:
     async def block_device(
         self, device_id: str, blocked: bool, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Block or unblock a device - returns raw Eero API response.
+        """Block or unblock a device via the /blacklist endpoint.
+
+        As of the fix for issue #109, blocking is routed through the
+        ``/networks/{id}/blacklist`` resource rather than the device PUT
+        (which the Eero cloud silently no-ops). When ``blocked=True`` this
+        performs a GET (to resolve the canonical MAC) followed by a POST,
+        so the call is no longer atomic — a transient error on the lookup
+        surfaces as an exception before any state change occurs.
 
         Args:
             device_id: ID of the device
@@ -1169,10 +1177,7 @@ class EeroClient:
             Raw API response: {"meta": {...}, "data": {...}}
         """
         warnings.warn(
-            "EeroClient.set_device_priority is a no-op — Eero's cloud API no longer exposes"
-            " device-level priority. The method returns 200 OK but does not change state."
-            " Scheduled for removal in v6.0.0."
-            " See https://github.com/fulviofreitas/eero-api/issues/111",
+            f"EeroClient.{PRIORITY_DEPRECATION_MSG}",
             DeprecationWarning,
             stacklevel=2,
         )
