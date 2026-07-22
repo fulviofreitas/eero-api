@@ -53,12 +53,12 @@ class BlacklistAPI(AuthenticatedAPI):
             auth_token=auth_token,
         )
 
-    async def add_to_blacklist(self, network_id: str, device_id: str) -> Dict[str, Any]:
+    async def add_to_blacklist(self, network_id: str, mac: str) -> Dict[str, Any]:
         """Add a device to the blacklist - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
-            device_id: ID of the device to blacklist
+            mac: MAC address of the device to blacklist (colon-separated, e.g. "AA:BB:CC:11:22:33")
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -71,19 +71,24 @@ class BlacklistAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Adding device %s to blacklist for network %s", device_id, network_id)
+        _LOGGER.debug("Adding MAC %s to blacklist for network %s", mac, network_id)
         return await self.post(
             f"networks/{network_id}/blacklist",
             auth_token=auth_token,
-            json={"device_id": device_id},
+            json={"mac": mac},
         )
 
-    async def remove_from_blacklist(self, network_id: str, device_id: str) -> Dict[str, Any]:
+    async def remove_from_blacklist(
+        self, network_id: str, mac_or_device_id: str
+    ) -> Dict[str, Any]:
         """Remove a device from the blacklist - returns raw Eero API response.
 
         Args:
             network_id: ID of the network
-            device_id: ID of the device to remove from blacklist
+            mac_or_device_id: MAC address or device ID to remove from the blacklist.
+                Live-verified: Eero's ``device_id`` for a blacklisted entry is the MAC
+                address with colons stripped (e.g. ``"AABBCC112233"``), so both the
+                raw MAC and the colon-stripped form are accepted as the URL segment.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -96,8 +101,10 @@ class BlacklistAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Removing device %s from blacklist for network %s", device_id, network_id)
+        _LOGGER.debug(
+            "Removing %s from blacklist for network %s", mac_or_device_id, network_id
+        )
         return await self.delete(
-            f"networks/{network_id}/blacklist/{device_id}",
+            f"networks/{network_id}/blacklist/{mac_or_device_id}",
             auth_token=auth_token,
         )
