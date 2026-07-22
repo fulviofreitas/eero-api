@@ -123,27 +123,51 @@ class DevicesAPI(AuthenticatedAPI):
         return await self._update_device(network_id, device_id, {"nickname": nickname}, auth_token)
 
     async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]:
-        """Block or unblock a device - returns raw Eero API response.
+        """Block or unblock a device via the /blacklist endpoint.
+
+        The Eero cloud API does not honour a ``blocked`` field on the device
+        object — sending ``PUT /devices/{id}`` with ``{"blocked": true}`` is a
+        silent no-op (200 OK, state unchanged). Blocking is instead managed
+        through the ``/blacklist`` resource: POSTing ``{"mac": <mac>}`` adds the
+        device to the blacklist and DELETEing ``/blacklist/{device_id}`` removes
+        it. This method was rewritten to use that mechanism (issue #109).
+
+        Implementation detail: ``get_device`` is called first to resolve the
+        canonical MAC address (colon-separated, from ``data.mac``). The MAC is
+        then used as the payload for the POST. The DELETE continues to use the
+        caller-supplied ``device_id``, which Eero accepts as the URL segment
+        (live-verified: the blacklist entry's ``device_id`` is the MAC with
+        colons stripped).
 
         Args:
             network_id: ID of the network the device belongs to
-            device_id: ID of the device
-            blocked: Whether to block or unblock the device
+            device_id: ID of the device to block or unblock
+            blocked: True to add the device to the blacklist, False to remove it
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
+            EeroAPIException: If the API returns an error or device lookup fails
         """
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("%s device %s", "Blocking" if blocked else "Unblocking", device_id)
+        if blocked:
+            # Resolve the canonical MAC from the device object.
+            device_response = await self.get_device(network_id, device_id)
+            mac = device_response["data"]["mac"]
+            _LOGGER.debug(
+                "Blocking device %s (resolved MAC %s) via POST /blacklist", device_id, mac
+            )
+            url = f"{API_ENDPOINT}/networks/{network_id}/blacklist"
+            return await self.post(url, auth_token=auth_token, json={"mac": mac})
 
-        return await self._update_device(network_id, device_id, {"blocked": blocked}, auth_token)
+        _LOGGER.debug("Unblocking device %s via DELETE /blacklist/%s", device_id, device_id)
+        url = f"{API_ENDPOINT}/networks/{network_id}/blacklist/{device_id}"
+        return await self.delete(url, auth_token=auth_token)
 
     async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]:
         """Pause or unpause internet access for a device - returns raw Eero API response.
