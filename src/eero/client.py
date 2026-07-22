@@ -7,6 +7,7 @@ Response format: {"meta": {...}, "data": {...}}
 
 import logging
 import time
+import warnings
 from typing import Any, Dict, List, Optional
 
 from aiohttp import ClientSession
@@ -1148,7 +1149,33 @@ class EeroClient:
         duration_minutes: Optional[int] = None,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Set device priority - returns raw Eero API response."""
+        """Set device priority - returns raw Eero API response.
+
+        **Deprecated**: ``EeroClient.set_device_priority`` is a no-op. Eero's cloud
+        API no longer exposes device-level priority — there is no ``/priority`` or
+        ``/qos`` endpoint, and the ``prioritized`` field is absent from the device
+        object. Sending ``{prioritized: bool}`` via the device PUT returns 200 OK
+        but does not change any observable state (live-verified). This method is
+        scheduled for removal in v6.0.0. See
+        https://github.com/fulviofreitas/eero-api/issues/111
+
+        Args:
+            device_id: ID of the device
+            prioritized: True to prioritize, False to remove priority
+            duration_minutes: Duration in minutes (0 or None = indefinite)
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
+        warnings.warn(
+            "EeroClient.set_device_priority is a no-op — Eero's cloud API no longer exposes"
+            " device-level priority. The method returns 200 OK but does not change state."
+            " Scheduled for removal in v6.0.0."
+            " See https://github.com/fulviofreitas/eero-api/issues/111",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.devices.set_device_priority(
             network_id, device_id, prioritized, duration_minutes
