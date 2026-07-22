@@ -22,7 +22,12 @@ class TestInsightsAPIInit:
 
 
 class TestInsightsAPIGetInsights:
-    """Tests for get_insights method."""
+    """Tests for get_insights method — verifies required query params.
+
+    The Eero cloud API rejects /insights without start/end/insight_type/cadence
+    (400 error.form.errors), so the SDK forwards all four as query params.
+    Only cadence has an SDK-supplied default of "daily".
+    """
 
     @pytest.fixture
     def insights_api(self, mock_session):
@@ -33,16 +38,67 @@ class TestInsightsAPIGetInsights:
         return InsightsAPI(auth_api)
 
     @pytest.mark.asyncio
-    async def test_get_insights_returns_raw_response(self, insights_api, mock_session):
-        """Test get_insights returns raw response."""
-        insights_data = {"network_health": "good", "recommendations": []}
-        mock_response = create_mock_response(200, api_success_response(insights_data))
+    async def test_get_insights_forwards_all_params(self, insights_api, mock_session):
+        """Test all four required params (start/end/insight_type/cadence) are sent."""
+        mock_response = create_mock_response(200, api_success_response({"series": []}))
         mock_session.request.return_value = mock_response
 
-        result = await insights_api.get_insights("network_123")
+        await insights_api.get_insights(
+            "network_123",
+            start="2026-07-21T00:00:00Z",
+            end="2026-07-22T00:00:00Z",
+            insight_type="adblock",
+            cadence="hourly",
+        )
 
-        assert "meta" in result
-        assert "data" in result
+        params = mock_session.request.call_args.kwargs["params"]
+        assert params == {
+            "start": "2026-07-21T00:00:00Z",
+            "end": "2026-07-22T00:00:00Z",
+            "cadence": "hourly",
+            "insight_type": "adblock",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_insights_cadence_defaults_to_daily(self, insights_api, mock_session):
+        """Test cadence defaults to 'daily' when caller omits it (only SDK default)."""
+        mock_response = create_mock_response(200, api_success_response({"series": []}))
+        mock_session.request.return_value = mock_response
+
+        await insights_api.get_insights(
+            "network_123",
+            start="2026-07-21T00:00:00Z",
+            end="2026-07-22T00:00:00Z",
+            insight_type="blocked",
+        )
+
+        params = mock_session.request.call_args.kwargs["params"]
+        assert params["cadence"] == "daily"
+
+    @pytest.mark.asyncio
+    async def test_get_insights_returns_raw_response(self, insights_api, mock_session):
+        """Test get_insights returns raw response without transformation."""
+        raw = {"meta": {"code": 200}, "data": {"series": [{"insight_type": "adblock"}]}}
+        mock_response = create_mock_response(200, raw)
+        mock_session.request.return_value = mock_response
+
+        result = await insights_api.get_insights(
+            "network_123",
+            start="2026-07-21T00:00:00Z",
+            end="2026-07-22T00:00:00Z",
+            insight_type="adblock",
+        )
+
+        # v2.0 contract: envelope passes through untouched.
+        assert result == raw
+
+    @pytest.mark.asyncio
+    async def test_get_insights_requires_keyword_args(self, insights_api):
+        """Test start/end/insight_type are keyword-only (positional call raises)."""
+        with pytest.raises(TypeError):
+            await insights_api.get_insights(
+                "network_123", "2026-07-21T00:00:00Z"  # type: ignore[call-arg]
+            )
 
     @pytest.mark.asyncio
     async def test_get_insights_not_authenticated(self, insights_api):
@@ -50,7 +106,12 @@ class TestInsightsAPIGetInsights:
         insights_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
-            await insights_api.get_insights("network_123")
+            await insights_api.get_insights(
+                "network_123",
+                start="2026-07-21T00:00:00Z",
+                end="2026-07-22T00:00:00Z",
+                insight_type="adblock",
+            )
 
 
 class TestInsightsAPIRunInsights:
