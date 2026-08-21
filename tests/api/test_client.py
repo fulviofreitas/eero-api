@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from eero.client import EeroClient
-from eero.exceptions import EeroException
+from eero.exceptions import EeroAuthenticationException, EeroException
 
 
 class TestEeroClientInit:
@@ -292,3 +292,111 @@ class TestEeroClientCacheIntegration:
 
         assert client._get_from_cache("networks") is None
         assert client._get_from_cache("network", "net_1") is not None
+
+
+class TestEeroClientReservationWrites:
+    """Tests for reservation write wrappers on EeroClient."""
+
+    @pytest.mark.asyncio
+    async def test_create_reservation_delegates(self, mock_session):
+        """Test create_reservation passes through to the API layer."""
+        client = EeroClient(session=mock_session)
+        payload = {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.1.50", "description": "nas"}
+        expected = {"meta": {"code": 201}, "data": {"id": "res_1"}}
+        client._api.reservations.create_reservation = AsyncMock(return_value=expected)
+
+        result = await client.create_reservation(payload, network_id="network_123")
+
+        assert result == expected
+        client._api.reservations.create_reservation.assert_awaited_once_with(
+            "network_123", payload
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_reservation_requires_network_id(self, mock_session):
+        """Test create_reservation raises when no network ID is available."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.create_reservation({"mac": "aa:bb:cc:dd:ee:ff"})
+
+    @pytest.mark.asyncio
+    async def test_create_reservation_propagates_auth_error(self, mock_session):
+        """Test create_reservation propagates authentication errors."""
+        client = EeroClient(session=mock_session)
+        client._api.reservations.create_reservation = AsyncMock(
+            side_effect=EeroAuthenticationException("Not authenticated")
+        )
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.create_reservation({"mac": "aa:bb:cc:dd:ee:ff"}, network_id="network_123")
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_delegates(self, mock_session):
+        """Test update_reservation passes through to the API layer."""
+        client = EeroClient(session=mock_session)
+        payload = {"ip": "192.168.1.51"}
+        expected = {"meta": {"code": 200}, "data": {"id": "res_1"}}
+        client._api.reservations.update_reservation = AsyncMock(return_value=expected)
+
+        result = await client.update_reservation("res_1", payload, network_id="network_123")
+
+        assert result == expected
+        client._api.reservations.update_reservation.assert_awaited_once_with(
+            "network_123", "res_1", payload
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_requires_network_id(self, mock_session):
+        """Test update_reservation raises when no network ID is available."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.update_reservation("res_1", {"ip": "192.168.1.51"})
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_propagates_auth_error(self, mock_session):
+        """Test update_reservation propagates authentication errors."""
+        client = EeroClient(session=mock_session)
+        client._api.reservations.update_reservation = AsyncMock(
+            side_effect=EeroAuthenticationException("Not authenticated")
+        )
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.update_reservation("res_1", {}, network_id="network_123")
+
+    @pytest.mark.asyncio
+    async def test_delete_reservation_delegates(self, mock_session):
+        """Test delete_reservation passes through to the API layer."""
+        client = EeroClient(session=mock_session)
+        expected = {"meta": {"code": 200}, "data": {}}
+        client._api.reservations.delete_reservation = AsyncMock(return_value=expected)
+
+        result = await client.delete_reservation("res_1", network_id="network_123")
+
+        assert result == expected
+        client._api.reservations.delete_reservation.assert_awaited_once_with(
+            "network_123", "res_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_reservation_requires_network_id(self, mock_session):
+        """Test delete_reservation raises when no network ID is available."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.delete_reservation("res_1")
+
+    @pytest.mark.asyncio
+    async def test_delete_reservation_propagates_auth_error(self, mock_session):
+        """Test delete_reservation propagates authentication errors."""
+        client = EeroClient(session=mock_session)
+        client._api.reservations.delete_reservation = AsyncMock(
+            side_effect=EeroAuthenticationException("Not authenticated")
+        )
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.delete_reservation("res_1", network_id="network_123")

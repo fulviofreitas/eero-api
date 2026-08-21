@@ -884,13 +884,7 @@ class EeroClient:
     async def create_reservation(
         self, reservation_data: Dict[str, Any], network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Create a DHCP reservation - returns raw Eero API response.
-
-        reservation_data accepts the raw API payload, e.g.
-        {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.4.50", "description": "nas"}.
-        The API returns 409 (error.reservation.failed) if the MAC or IP is
-        already reserved.
-        """
+        """Create a DHCP reservation - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.reservations.create_reservation(network_id, reservation_data)
 
