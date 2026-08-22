@@ -881,6 +881,32 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.reservations.get_reservations(network_id)
 
+    async def create_reservation(
+        self, reservation_data: Dict[str, Any], network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a DHCP reservation - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.reservations.create_reservation(network_id, reservation_data)
+
+    async def update_reservation(
+        self,
+        reservation_id: str,
+        reservation_data: Dict[str, Any],
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update a DHCP reservation - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.reservations.update_reservation(
+            network_id, reservation_id, reservation_data
+        )
+
+    async def delete_reservation(
+        self, reservation_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete a DHCP reservation - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.reservations.delete_reservation(network_id, reservation_id)
+
     async def get_forwards(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get port forwards - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
