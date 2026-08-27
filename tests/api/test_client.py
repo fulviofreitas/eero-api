@@ -308,9 +308,7 @@ class TestEeroClientReservationWrites:
         result = await client.create_reservation(payload, network_id="network_123")
 
         assert result == expected
-        client._api.reservations.create_reservation.assert_awaited_once_with(
-            "network_123", payload
-        )
+        client._api.reservations.create_reservation.assert_awaited_once_with("network_123", payload)
 
     @pytest.mark.asyncio
     async def test_create_reservation_requires_network_id(self, mock_session):
@@ -377,9 +375,7 @@ class TestEeroClientReservationWrites:
         result = await client.delete_reservation("res_1", network_id="network_123")
 
         assert result == expected
-        client._api.reservations.delete_reservation.assert_awaited_once_with(
-            "network_123", "res_1"
-        )
+        client._api.reservations.delete_reservation.assert_awaited_once_with("network_123", "res_1")
 
     @pytest.mark.asyncio
     async def test_delete_reservation_requires_network_id(self, mock_session):
