@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0](https://github.com/fulviofreitas/eero-api/compare/v6.0.0...v6.1.0) (2026-08-28)
+
+### ✨ Features
+
+* **client:** expose create/update/delete reservation methods on EeroClient ([#120](https://github.com/fulviofreitas/eero-api/issues/120)) ([0ef4863](https://github.com/fulviofreitas/eero-api/commit/0ef4863a6b67c0ddcb8ce9f0f1a7dfc0e3e93618))
+
+### ♻️ Refactoring
+
+* **ci:** migrate issue-triage and draft-fix to workflow-arsenal reusables ([e59e043](https://github.com/fulviofreitas/eero-api/commit/e59e043b294294b0aa97171017887baf0ea648d4))
+
 ## [6.0.0](https://github.com/fulviofreitas/eero-api/compare/v5.0.13...v6.0.0) (2026-07-22)
 
 ### ⚠ BREAKING CHANGES
