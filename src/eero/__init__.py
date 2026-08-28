@@ -32,4 +32,4 @@ __all__ = [
     "redact_sensitive",
 ]
 
-__version__ = "6.1.0"
+__version__ = "6.2.0"

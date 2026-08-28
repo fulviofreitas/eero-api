@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.0](https://github.com/fulviofreitas/eero-api/compare/v6.1.0...v6.2.0) (2026-08-28)
+
+### ✨ Features
+
+* **client:** expose create_forward / delete_forward on EeroClient ([#122](https://github.com/fulviofreitas/eero-api/issues/122)) ([95a8786](https://github.com/fulviofreitas/eero-api/commit/95a878632c88fa8206265592656f4de2676addc5)), closes [#121](https://github.com/fulviofreitas/eero-api/issues/121)
+
 ## [6.1.0](https://github.com/fulviofreitas/eero-api/compare/v6.0.0...v6.1.0) (2026-08-28)
 
 ### ✨ Features
