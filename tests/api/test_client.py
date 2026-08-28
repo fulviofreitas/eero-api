@@ -396,3 +396,80 @@ class TestEeroClientReservationWrites:
 
         with pytest.raises(EeroAuthenticationException):
             await client.delete_reservation("res_1", network_id="network_123")
+
+
+class TestEeroClientForwardWrites:
+    """Tests for port forward write wrappers on EeroClient."""
+
+    @pytest.mark.asyncio
+    async def test_create_forward_delegates(self, mock_session):
+        """Test create_forward passes through to the API layer."""
+        client = EeroClient(session=mock_session)
+        payload = {
+            "ip": "192.168.1.50",
+            "protocol": "tcp",
+            "port_external": 8080,
+            "port_internal": 80,
+            "description": "web",
+        }
+        expected = {"meta": {"code": 201}, "data": {"id": "fwd_1"}}
+        client._api.forwards.create_forward = AsyncMock(return_value=expected)
+
+        result = await client.create_forward(payload, network_id="network_123")
+
+        assert result == expected
+        client._api.forwards.create_forward.assert_awaited_once_with("network_123", payload)
+
+    @pytest.mark.asyncio
+    async def test_create_forward_requires_network_id(self, mock_session):
+        """Test create_forward raises when no network ID is available."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.create_forward({"ip": "192.168.1.50", "protocol": "tcp"})
+
+    @pytest.mark.asyncio
+    async def test_create_forward_propagates_auth_error(self, mock_session):
+        """Test create_forward propagates authentication errors."""
+        client = EeroClient(session=mock_session)
+        client._api.forwards.create_forward = AsyncMock(
+            side_effect=EeroAuthenticationException("Not authenticated")
+        )
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.create_forward(
+                {"ip": "192.168.1.50", "protocol": "tcp"}, network_id="network_123"
+            )
+
+    @pytest.mark.asyncio
+    async def test_delete_forward_delegates(self, mock_session):
+        """Test delete_forward passes through to the API layer."""
+        client = EeroClient(session=mock_session)
+        expected = {"meta": {"code": 200}, "data": {}}
+        client._api.forwards.delete_forward = AsyncMock(return_value=expected)
+
+        result = await client.delete_forward("forward_1", network_id="network_123")
+
+        assert result == expected
+        client._api.forwards.delete_forward.assert_awaited_once_with("network_123", "forward_1")
+
+    @pytest.mark.asyncio
+    async def test_delete_forward_requires_network_id(self, mock_session):
+        """Test delete_forward raises when no network ID is available."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.delete_forward("forward_1")
+
+    @pytest.mark.asyncio
+    async def test_delete_forward_propagates_auth_error(self, mock_session):
+        """Test delete_forward propagates authentication errors."""
+        client = EeroClient(session=mock_session)
+        client._api.forwards.delete_forward = AsyncMock(
+            side_effect=EeroAuthenticationException("Not authenticated")
+        )
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.delete_forward("forward_1", network_id="network_123")

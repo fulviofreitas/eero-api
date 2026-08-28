@@ -912,6 +912,20 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.forwards.get_forwards(network_id)
 
+    async def create_forward(
+        self, forward_data: Dict[str, Any], network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a port forward - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.forwards.create_forward(network_id, forward_data)
+
+    async def delete_forward(
+        self, forward_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete a port forward - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.forwards.delete_forward(network_id, forward_id)
+
     async def get_transfer_stats(
         self, network_id: Optional[str] = None, device_id: Optional[str] = None
     ) -> Dict[str, Any]:
