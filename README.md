@@ -89,6 +89,13 @@ All API methods return the exact JSON from Eero's API:
 | **[🛜 eero-ui](https://github.com/fulviofreitas/eero-ui)** | Svelte dashboard for network management |
 | **[📊 eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter)** | Prometheus metrics for monitoring |
 
+## 🌱 Used By
+
+Building something on top of `eero-api`? Open a PR to list your project here.
+
+| Project | Description |
+|---------|-------------|
+
 ## ⚠️ Important Notes
 
 > **Unofficial Project**: This library uses reverse-engineered APIs and is not affiliated with or endorsed by Eero.

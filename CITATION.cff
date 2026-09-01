@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "eero-api"
+abstract: "Production-grade async Python SDK for managing Eero mesh Wi-Fi networks programmatically."
+type: software
+authors:
+  - family-names: "Freitas"
+    given-names: "Fulvio"
+url: "https://github.com/fulviofreitas/eero-api"
+repository-code: "https://github.com/fulviofreitas/eero-api"
+license: MIT
+version: 6.2.0
+date-released: "2026-08-28"
