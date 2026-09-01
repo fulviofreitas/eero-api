@@ -95,6 +95,7 @@ Building something on top of `eero-api`? Open a PR to list your project here.
 
 | Project | Description |
 |---------|-------------|
+| **[eero-dashboard](https://github.com/xrvk/eero-dashboard)** | Self-hosted React + FastAPI dashboard for eero mesh networks |
 
 ## ⚠️ Important Notes
 
