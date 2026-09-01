@@ -96,6 +96,9 @@ Building something on top of `eero-api`? Open a PR to list your project here.
 | Project | Description |
 |---------|-------------|
 | **[eero-dashboard](https://github.com/xrvk/eero-dashboard)** | Self-hosted React + FastAPI dashboard for eero mesh networks |
+| **[eero-cli](https://github.com/lidless-labs/eero-cli)** | Tiny CLI for non-interactive SMS auth, device listing, and bulk block |
+| **[py-bandwith-monitor](https://github.com/awongCM/py-bandwith-monitor)** | Python bandwidth monitor with an optional eero-backed data source |
+| **[assorted](https://github.com/jss367/assorted/tree/master/network_debug/check_eero_routers)** | Personal eero router debug/inspection scripts |
 
 ## ⚠️ Important Notes
 
