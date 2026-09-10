@@ -9,7 +9,7 @@ already been removed entirely.
 
 | Surface | Since | What happens when you call it | Replacement | Status |
 |---|---|---|---|---|
-| 🚫 `DevicesAPI.set_device_priority` / `EeroClient.set_device_priority` | deprecated (no upstream endpoint) | `DeprecationWarning`, HTTP 200, **no effect** | SQM (`SqmAPI` / `EeroClient` `set_sqm_enabled`, `configure_sqm`) | Live, scheduled for removal in v6.0.0 |
+| 🚫 `DevicesAPI.set_device_priority` / `EeroClient.set_device_priority` | deprecated (no upstream endpoint) | `DeprecationWarning`, HTTP 200, **no effect** | SQM (`SqmAPI` / `EeroClient` `set_sqm_enabled`, `configure_sqm`) | Live, still present as of v6.2.0 — removal date unannounced despite the deprecation message |
 | 🚫 `ActivityAPI.*` / `EeroClient.get_activity*` | deprecated v6.0.0 | `DeprecationWarning`, then `EeroAPIException` (HTTP 404) | `InsightsAPI.get_insights` / `DataUsageAPI.get_data_usage` | Live, scheduled for removal in v6.0.0 |
 | ❌ `eero.models` | removed v2.0.0 | `ImportError` | Raw `dict` access on `{"meta": ..., "data": ...}` | Removed |
 | ❌ `EeroAPI.set_preferred_network` / `.preferred_network_id` | removed v5.0.0 (deprecated v4.7.0) | `AttributeError` | `EeroClient.set_preferred_network` / `.preferred_network_id`, or explicit `network_id=` | Removed |

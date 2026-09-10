@@ -69,7 +69,7 @@ Every `EeroAPI` / `EeroClient` method returns:
 }
 ```
 
-`data` is a **list** for `get_devices()` but an **object with a nested `networks` container** for `get_networks()` — always inspect the actual response for the endpoint you're calling rather than assuming a shape.
+`data` is a **list** for `get_devices()` but an **object** for `get_networks()` — and the shape of the networks container itself varies. Never assume a shape; see [The networks shape, specifically](#the-networks-shape-specifically).
 
 ---
 
@@ -77,10 +77,8 @@ Every `EeroAPI` / `EeroClient` method returns:
 
 ```python
 response = await client.get_networks()
-data = response.get("data", {})
-networks = data.get("networks", {}).get("data", [])
 
-for network in networks:
+for network in as_list(response, "networks"):   # helper defined below
     print(network.get("name"), network.get("status"))
 ```
 
@@ -98,6 +96,60 @@ Use `.get(...)` with defaults throughout — a field's absence is not an error c
 
 ---
 
+## The networks shape, specifically
+
+`get_networks()` is the one response worth calling out, because its `data` has been observed in
+three different shapes:
+
+| Shape | Where it comes from |
+|---|---|
+| `data["networks"]` is a **list** | What the SDK's own auto-discovery assumes, and what the `/account` fallback in `EeroClient.get_networks()` constructs |
+| `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Observed in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
+| `data` is a **bare list** | Observed on some accounts |
+
+> ⚠️ **Warning:** The SDK's internal auto-discovery does `networks = data.get("networks") or
+> data.get("data") or []` and then indexes `networks[0]`. It assumes `data["networks"]` is a
+> **list**. If your account returns the nested `{"count": N, "data": [...]}` container, that
+> indexing raises `KeyError: 0` — auto-discovery does not probe for this shape. If you hit this,
+> pass `network_id=` explicitly instead of relying on auto-discovery; see
+> [Network Targeting](Network-Targeting).
+
+In your own code, use the `as_list()` helper below — it handles all three shapes correctly for
+reading responses, even though the SDK's internal auto-discovery does not:
+
+```python
+from typing import Any
+
+
+def as_list(response: dict[str, Any], key: str | None = None) -> list[dict[str, Any]]:
+    """Pull a list of resources out of an Eero response envelope."""
+    data = response.get("data") or {}
+
+    if isinstance(data, list):
+        return data
+
+    items = data.get(key) if key else None
+    if items is None:
+        items = data.get("data") or []
+
+    # Some containers nest one level deeper: {"count": N, "data": [...]}
+    if isinstance(items, dict):
+        items = items.get("data") or []
+
+    return items if isinstance(items, list) else []
+```
+
+```python
+networks = as_list(await client.get_networks(), "networks")
+devices = as_list(await client.get_devices())
+eeros = as_list(await client.get_eeros(), "eeros")
+```
+
+> 💡 **Tip:** Wrap this once in your own codebase rather than repeating the `.get()` chain at
+> every call site. When the upstream shape shifts, you fix one function.
+
+---
+
 ## Before/After: Pre-v2.0 vs. v2.0+
 
 | Pre-v2.0 (Pydantic) | v2.0+ (raw dict) |
@@ -107,7 +159,7 @@ Use `.get(...)` with defaults throughout — a field's absence is not an error c
 | `network.public_ip` | `network.get("wan_ip")` |
 | `device.nickname` | `device.get("nickname")` |
 | `device.connected` (bool) | `device.get("connected")` (raw JSON bool) |
-| `for network in await client.get_networks()` | `for network in (await client.get_networks())["data"]["networks"]["data"]` |
+| `for network in await client.get_networks()` | `for network in as_list(await client.get_networks(), "networks")` |
 
 ---
 

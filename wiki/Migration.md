@@ -16,7 +16,7 @@ and no status normalization.
 | `from eero.models import Network` | *(module does not exist — delete the import)* |
 | `network.name` | `response["data"]["name"]` |
 | `network.public_ip` | `response["data"]["wan_ip"]` |
-| `for network in await client.get_networks():` | `for network in (await client.get_networks())["data"]["networks"]:` |
+| `for network in await client.get_networks():` | `data = response.get("data") or {}` / `networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])` — see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically) |
 
 ```python
 # Before
@@ -26,9 +26,15 @@ for network in networks:
 
 # After
 response = await client.get_networks()
-for network in response["data"]["networks"]:
+data = response.get("data") or {}
+networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])
+for network in networks:
     print(network["name"], network["status"])
 ```
+
+> See [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically) — the
+> `data["networks"]` value is not guaranteed to be a list, so use the shape-tolerant
+> extraction above instead of indexing `["data"]["networks"]` directly.
 
 > **Note**: `EeroNetworkStatus` and `EeroDeviceStatus` still exist in `eero.const`, but they are
 > no longer exported from top-level `eero` (`__all__`) and the SDK no longer normalizes any
@@ -175,11 +181,11 @@ await client.get_insights(
 )
 ```
 
-`get_insights` required parameters (verified in `src/eero/api/insights.py`):
+`InsightsAPI.get_insights` required parameters (verified in `src/eero/api/insights.py`):
 
 | Parameter | Required | Notes |
 |---|---|---|
-| `network_id` | yes (positional) | |
+| `network_id` | yes (positional) | `EeroClient.get_insights` differs here: `network_id` defaults to `None` and is resolved like other `EeroClient` methods |
 | `start` | yes (keyword-only) | ISO 8601 timestamp |
 | `end` | yes (keyword-only) | ISO 8601 timestamp |
 | `insight_type` | yes (keyword-only) | e.g. `"adblock"`, `"blocked"`, `"inspected"` |

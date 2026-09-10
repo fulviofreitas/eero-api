@@ -48,11 +48,20 @@ await client.login("you@example.com")
 await client.verify("123456")
 ```
 
-Raises `EeroAuthenticationException` — with the message `"Verification code incorrect"` specifically when the API returns HTTP 401 — or `EeroAuthenticationException("No session token available. Login first.")` if you call `verify()` before `login()`.
+Raises `EeroAuthenticationException("No session token available. Login first.")` if you call `verify()` before `login()`.
+
+> ⚠️ **Warning:** `verify()`'s own `except EeroAPIException` branch that special-cases HTTP 401 with
+> the message `"Verification code incorrect"` is unreachable — a 401 response is raised by
+> `BaseAPI` as `EeroAuthenticationException`, which does **not** subclass `EeroAPIException`, so
+> that `except` clause never catches it. The message you actually get for a wrong code is the
+> generic `EeroAuthenticationException("Authentication failed: <body>")` from `BaseAPI`. This looks
+> like an SDK bug, not a design choice — don't write error-handling code that matches on the
+> `"Verification code incorrect"` string; catch `EeroAuthenticationException` and inspect `<body>`
+> if you need the detail.
 
 ### `resend_verification_code()`
 
-Available on `AuthAPI` (not exposed on `EeroClient`/`EeroAPI` — call it via `client._api.auth.resend_verification_code()` if you need it, though this reaches into a private attribute). Re-triggers the code send using the pending `session_id` from `login()`. Returns `False` on API failure instead of raising; raises `EeroAuthenticationException` if no login is in progress, `EeroNetworkException` on a transport error.
+Available on `AuthAPI` (not exposed on `EeroClient`/`EeroAPI` — call it via `client._api.auth.resend_verification_code()` if you need it, though this reaches into a private attribute that is not covered by semver). Re-triggers the code send using the pending `session_id` from `login()`. Returns `False` on API failure instead of raising; raises `EeroAuthenticationException` if no login is in progress, `EeroNetworkException` on a transport error.
 
 ---
 
@@ -62,11 +71,25 @@ A verified session is valid for **~30 days**. The exact field tracked in `AuthCr
 
 ### `refresh_session()`
 
-`AuthAPI.refresh_session()` uses the stored `refresh_token` to mint a new session without a fresh OTP. It tries each URL in `REFRESH_ENDPOINTS` (`/login/refresh`, then `/account/refresh`) in order; a `404` from one just moves to the next, any other API error (401, 403, 5xx) is terminal and clears all local credentials immediately. Raises `EeroAuthenticationException("No refresh token available")` if there's no refresh token to use.
+`AuthAPI.refresh_session()` uses the stored `refresh_token` to mint a new session without a fresh OTP. It tries each URL in `REFRESH_ENDPOINTS` (`/login/refresh`, then `/account/refresh`) in order; a `404` from one just moves to the next. Raises `EeroAuthenticationException("No refresh token available")` if there's no refresh token to use.
+
+> ⚠️ **Warning:** A `401` or `429` from a refresh endpoint does **not** cause `refresh_session()` to
+> return `False` or clear local credentials — it escapes uncaught, as `EeroAuthenticationException`
+> (401) or `EeroRateLimitException` (429). Callers must be prepared to catch these exceptions from
+> `refresh_session()`, not just check a boolean return value. This looks like an SDK bug rather than
+> intended behavior.
 
 ### `ensure_authenticated()`
 
-Checks `is_authenticated`, and if the stored `session_expiry` has passed **and** a `refresh_token` is present, calls `refresh_session()` for you. Returns `True`/`False` — it never raises for the "not logged in" case, it just returns `False`.
+Checks `is_authenticated`; if `True`, returns `True` immediately. Returns `True`/`False` — it never raises for the "not logged in" case, it just returns `False`.
+
+> ⚠️ **Warning:** The expiry-driven refresh branch (checking `session_expiry` and calling
+> `refresh_session()` if it has passed) is dead code. `is_authenticated` is already `False` once
+> the session has expired, so `ensure_authenticated()` returns `False` before it ever reaches the
+> refresh call. This looks like an SDK bug, not a design choice. In practice, the only refresh path
+> that actually runs is the server-driven `error.session.refresh` 401 retry inside `BaseAPI`
+> (see [Transparent Refresh-and-Retry](#-transparent-refresh-and-retry)) — calling
+> `ensure_authenticated()` directly will not refresh an already-expired session for you.
 
 ### `get_auth_token()`
 
@@ -150,9 +173,10 @@ If your Eero account was created via "Sign in with Amazon," this SDK's email/pho
 
 | Scenario | Exception |
 |---|---|
-| `verify()` called with a wrong code (API returns 401) | `EeroAuthenticationException` (`"Verification code incorrect"`) |
+| `verify()` called with a wrong code (API returns 401) | `EeroAuthenticationException` (`"Authentication failed: <body>"` — see warning above, not `"Verification code incorrect"`) |
 | `verify()` / `resend_verification_code()` called before `login()` | `EeroAuthenticationException` (`"No session token available. Login first."`) |
 | `refresh_session()` with no stored refresh token | `EeroAuthenticationException` (`"No refresh token available"`) |
+| `refresh_session()` hitting a 401/429 from the refresh endpoint | `EeroAuthenticationException` / `EeroRateLimitException` (uncaught — see warning above) |
 | `set_session_token()` with an empty/non-string token | `EeroValidationException` |
 | Any request hitting a fully expired session with no usable refresh | `EeroAuthenticationException` |
 | Transport-level failure during login/verify/refresh | `EeroNetworkException` |

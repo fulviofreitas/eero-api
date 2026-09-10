@@ -64,7 +64,7 @@ async with EeroClient() as client:
         await client.verify(code)
 ```
 
-> 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`logout()` directly — there's no need (and no supported way) to reach into `client._api`. Use the public methods only.
+> 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`logout()` directly — use these public methods instead of reaching into `client._api` for auth. `client._api.<domain>` is private (not covered by semver) but it IS the documented escape hatch for domain methods that have no `EeroClient` wrapper — see [API Reference](API-Reference).
 
 ### Check Authentication Status
 
@@ -87,10 +87,13 @@ async with EeroClient() as client:
 ```python
 async with EeroClient() as client:
     response = await client.get_networks()
-    networks = response.get("data", {}).get("networks", [])
+    data = response.get("data") or {}
+    networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])
     if not networks:
         print("No networks found - check your Eero account")
 ```
+
+> **Note**: For a reusable shape-tolerant helper, see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically).
 
 > **Note**: If the `/networks` endpoint returns empty, `EeroClient.get_networks()` automatically falls back to extracting networks from the `/account` endpoint (see `src/eero/client.py`). If you're still seeing an empty list after that fallback, verify the account actually has networks associated with it.
 
@@ -131,7 +134,7 @@ pip install -e .
 
 ### `ImportError: cannot import name 'EeroAuthenticationError'`
 
-Exception names all end in `Exception`, not `Error` — there is no `EeroAuthenticationError`, only `EeroAuthenticationException`. See [Migration](Migration) for the full pre/post-v2.0 mapping.
+Exception names all end in `Exception`, not `Error` — there is no `EeroAuthenticationError`, only `EeroAuthenticationException`. These classes have never been named `*Error` in any release, so this is a typo rather than a rename to chase; earlier versions of this wiki documented the wrong names. See [Error Handling](Error-Handling) for the full hierarchy.
 
 ### `ModuleNotFoundError: No module named 'eero.models'`
 
@@ -173,7 +176,7 @@ The Eero Cloud API allows roughly 100 requests/minute. If you're polling frequen
 
 ### Device or Network Writes Appear to Succeed but Have No Effect
 
-Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for certain device-related writes — `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
+Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for three device writes — `set_device_nickname`, `pause_device`, and `set_device_priority` — where `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). `block_device` is unaffected — it writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
 
 ### `set_device_priority` Does Nothing
 

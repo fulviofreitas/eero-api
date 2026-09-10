@@ -17,7 +17,7 @@ from eero import EeroClient
 client = EeroClient(cache_timeout=120)  # cache entries valid for 120 seconds
 ```
 
-> **Note**: `cache_timeout` only affects the SDK's own in-memory cache. It has no relationship to server-side caching or the `CACHE_TIMEOUT` constant in `src/eero/const.py`, which is just the default value (`60`) used when you don't pass one.
+> **Note**: `cache_timeout` only affects the SDK's own in-memory cache. It has no relationship to server-side caching. The `CACHE_TIMEOUT` constant in `src/eero/const.py` is unused — it's never imported anywhere in `src/`. The real default (`60`) is hardcoded directly on `EeroClient.__init__` (`cache_timeout: int = 60`).
 
 ---
 

@@ -89,15 +89,17 @@ async def main():
 
         # All methods return a raw {"meta": ..., "data": ...} envelope
         response = await client.get_networks()
-        networks = response.get("data", {}).get("networks", [])
 
+        data = response.get("data") or {}
+        networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])
         for network in networks:
-            print(f"📶 {network['name']}: {network.get('status')}")
+            print(f"📶 {network.get('name')}: {network.get('status')}")
 
 asyncio.run(main())
 ```
 
-> **Note**: See [Raw Response Format](Raw-Response-Format) for why there's no `network.name` attribute access.
+> **Note**: See [Raw Response Format](Raw-Response-Format) for why there's no `network.name` attribute access — `get_networks()` can nest the network list more than one way.
+> **Note**: For a reusable shape-tolerant helper, see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically).
 
 ---
 
@@ -120,7 +122,7 @@ This project is a modern revamp of the original [eero-client](https://github.com
 **What's new:**
 - Full async/await with `aiohttp`
 - Raw JSON passthrough — no Pydantic models, no data transformation
-- 27 domain-specific APIs covering the full Eero Cloud API surface
+- 26 domain-specific APIs + AuthAPI (27 API classes total) covering the full Eero Cloud API surface
 - Secure credential storage — OS keyring, with an owner-only (`0600`) file fallback
 
 ---

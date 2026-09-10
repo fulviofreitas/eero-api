@@ -21,18 +21,51 @@ When `network_id` is omitted (or `None`), `EeroClient._ensure_network_id` resolv
 
 1. **Explicit argument** — if `network_id` was passed and is truthy, use it.
 2. **Preferred network** — fall back to `self._preferred_network_id` (set via `set_preferred_network()`, or auto-populated as a side effect of `get_networks()` — see below).
-3. **Auto-discovery** — if neither is set and auto-discovery is allowed for that call, fetch `get_networks()`, pull the first entry from `data["networks"]` (or `data["data"]`, or a bare list `data`), and extract its ID (`id` field, or the trailing segment of `url`).
+3. **Auto-discovery** — only for the 19 methods listed below, and only if neither of the above is set: fetch `get_networks()`, pull the first entry from `data["networks"]` (or `data["data"]`, or a bare list `data`), and extract its ID (`id` field, or the trailing segment of `url`).
 4. **Failure** — if none of the above yields an ID, raises `EeroException("No network ID provided and no preferred network set")`.
 
 ```python
 network_id = network_id or self._preferred_network_id
 if network_id:
     return network_id
-# ...auto-discover via get_networks()...
+# ...auto-discover via get_networks() — only for the 19 methods below...
 raise EeroException("No network ID provided and no preferred network set")
 ```
 
-> **Note**: Not every method allows auto-discovery. Mutating calls like `set_network_name`, `set_led`, `set_wpa3`, `set_upnp`, `set_ipv6` call `_ensure_network_id(network_id, auto_discover=False)` — they require an explicit `network_id` or a previously-set preferred network; they will not silently discover one.
+> ⚠️ **Warning: Auto-discovery is the exception, not the rule.** `_ensure_network_id` is called
+> 80 times across `EeroClient`; 60 of those calls pass `auto_discover=False`. Only the **19**
+> methods below will fetch `get_networks()` to find a network on your behalf. Every other method
+> — including many read-only getters — requires an explicit `network_id=` or an already-set
+> preferred network, and raises `EeroException("No network ID provided and no preferred network
+> set")` otherwise.
+
+### Methods that auto-discover (19 total)
+
+| | |
+|---|---|
+| `block_device` | `create_profile` |
+| `delete_profile` | `get_device` |
+| `get_devices` | `get_eero` |
+| `get_eeros` | `get_network` |
+| `get_profile` | `get_profile_devices` |
+| `get_profiles` | `pause_device` |
+| `pause_profile` | `reboot_eero` |
+| `rename_profile` | `run_speed_test` |
+| `set_device_nickname` | `set_guest_network` |
+| `set_profile_devices` | |
+
+Everything else — including common reads like `get_diagnostics`, `get_settings`, `get_insights`,
+`get_routing`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`,
+`get_data_usage`, `get_password`, `get_updates`, `get_premium_status`, `get_security_settings`,
+`get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_network`,
+`get_backup_status`, `get_profile_schedule`, `get_blocked_applications`, `get_device_priority`,
+`get_ac_compat`, `get_ouicheck`, `get_support`, `get_thread`, `get_burst_reporters`, every
+`get_activity*` method, `run_diagnostics`, and every setter other than `set_device_nickname` /
+`set_guest_network` — requires an explicit `network_id=` or a preferred network already set.
+
+> 💡 **Tip:** The practical fix is cheap: call `get_networks()` once, early, in your session. As a
+> side effect it populates `_preferred_network_id` (see below), and every one of the other 60
+> methods will then resolve without you passing `network_id=` on every call.
 
 ---
 
@@ -119,13 +152,16 @@ from eero import EeroClient, id_from_url
 
 async with EeroClient() as client:
     response = await client.get_networks()
-    networks = response.get("data", {}).get("networks", {}).get("data", [])
+    data = response.get("data") or {}
+    networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])
     network_ids = [id_from_url(n["url"]) for n in networks]
 
     for network_id in network_ids:
         eeros = await client.get_eeros(network_id=network_id)
         print(network_id, eeros.get("data"))
 ```
+
+> **Note**: For a reusable shape-tolerant helper, see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically).
 
 Never call `set_preferred_network()` in code paths that fan out across multiple networks in the same session — it's global, in-memory, mutable state shared by every subsequent call that omits `network_id`.
 

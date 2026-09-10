@@ -106,7 +106,16 @@ Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringSt
 | `save()` | Try `primary.save()`. | If `primary.save()` raises, the exception is caught, logged at `DEBUG`, and `fallback.save()` is attempted. If **both** raise, the fallback's exception is logged at `ERROR` and swallowed — `save()` never raises to the caller. |
 | `clear()` | Calls `primary.clear()` **and** `fallback.clear()` unconditionally (both always run; no early return). | Not explicitly guarded — an exception from either would propagate, since `clear()` has no try/except here (unlike `load`/`save`). |
 
-Because `KeyringStorage.save()` itself swallows its own exceptions (see above) and simply no-ops, `ChainedStorage.save()`'s fallback path only actually triggers if `primary.save()` raises — which for the built-in `KeyringStorage` implementation practically never happens (it catches everything internally). In practice, this means the file fallback is written to on every save when keyring succeeds only via a **read-side** migration in `load()`, not automatically mirrored on every `save()`.
+> ⚠️ **Warning: The `save()` fallback path is dead code.** `KeyringStorage.save()` catches its
+> own exceptions internally and returns normally instead of raising (see above). That means
+> `ChainedStorage.save()`'s `except` branch — the one that would call `fallback.save()` — never
+> fires in practice; a keyring failure on save is invisible, and the file is **never written** as
+> part of `save()`. The only path that ever populates the file backend is the **read-side**
+> migration in `load()` (a successful `fallback.load()` gets copied back into `primary`) — but
+> that only helps if the file already has credentials in it from some other source. Do not rely on
+> `ChainedStorage` (i.e. `use_keyring=True` with a `cookie_file` set) for headless/CI/container
+> persistence — use `use_keyring=False, cookie_file=...` (plain `FileStorage`) instead, which
+> writes on every `save()`.
 
 ---
 
@@ -128,7 +137,7 @@ Holds one `AuthCredentials` instance as a plain attribute. `load()`/`save()`/`cl
 | Deployment scenario | Recommended construction | Why |
 |---|---|---|
 | 🖥️ Desktop (macOS/Windows/Linux w/ desktop env) | `EeroClient()` (defaults) | `KeyringStorage` alone — OS-encrypted, no file to protect |
-| 🐧 Headless Linux (no Secret Service daemon) | `EeroClient(cookie_file="/path/to/creds.json")` | Keyring calls will fail silently at `DEBUG`; `ChainedStorage` falls through to `FileStorage` |
+| 🐧 Headless Linux (no Secret Service daemon) | `EeroClient(use_keyring=False, cookie_file="/path/to/creds.json")` | Keyring calls fail silently at `DEBUG` and `ChainedStorage.save()`'s file fallback never fires (see warning above) — skip keyring entirely and go straight to `FileStorage` |
 | 🐳 Docker container | `EeroClient(use_keyring=False, cookie_file="/data/eero-cookies.json")` | No keyring daemon available inside most containers; skip straight to `FileStorage` and mount `/data` as a volume for persistence across restarts |
 | 🤖 CI pipeline | `EeroClient(use_keyring=False, cookie_file=<workspace path>)` + `set_session_token()` from a CI secret | No interactive OTP possible; seed the token directly each run (see [Authentication](Authentication#-non-interactive--ci)) |
 | ☁️ Serverless / ephemeral (Lambda-style, no writable disk) | `EeroClient(use_keyring=False)` | Falls through to `MemoryStorage` deliberately — nothing to persist between invocations anyway; re-seed via `set_session_token()` on every cold start |
@@ -153,7 +162,7 @@ There is no monkey-patch-free extension point beyond that — don't assume one e
 | Rotate to a new externally-issued token | `await client.set_session_token(new_token)` |
 | Drop the active session but keep other stored state, no server round-trip | `await client.clear_session_token()` |
 | Log out and tell the server too | `await client.logout()` |
-| Wipe everything, including deleting the keyring entry / cookie file outright | `await client._api.auth.clear_auth_data()` (reaches into the private `AuthAPI`; not exposed on `EeroClient`/`EeroAPI`) |
+| Wipe everything, including deleting the keyring entry / cookie file outright | `await client._api.auth.clear_auth_data()` (reaches into the private `AuthAPI`; not exposed on `EeroClient`/`EeroAPI`; not covered by semver) |
 
 All four invalidate `EeroClient`'s in-memory response cache as a side effect where the operation is exposed on `EeroClient` (`set_session_token`, `clear_session_token`, `logout`), so a rotated or cleared session never serves stale cached data.
 

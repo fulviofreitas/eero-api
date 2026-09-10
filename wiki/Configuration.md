@@ -46,7 +46,7 @@ client = EeroClient(
 | Argument | Type | Default | Purpose |
 |---|---|---|---|
 | `session` | `Optional[ClientSession]` | `None` | Reuse an existing aiohttp session; otherwise one is created and owned by the client for the lifetime of the `async with` block |
-| `cookie_file` | `Optional[str]` | `None` | Explicit path to a JSON credential file (see [File Storage](#-file-storage)) |
+| `cookie_file` | `Optional[str]` | `None` | Explicit path to a JSON credential file (see [File storage](#file-storage)) |
 | `use_keyring` | `bool` | `True` | Whether to try the OS keyring for credential storage |
 | `cache_timeout` | `int` | `60` | TTL in seconds for the client's in-memory response cache (`account`, `networks`, `network`, `eeros`, `devices`, `profiles`) |
 
@@ -60,12 +60,14 @@ Storage backend selection is handled by `create_storage()` in `eero.api.auth_sto
 
 | `use_keyring` | `cookie_file` | Backend selected |
 |---|---|---|
-| `True` | set | `ChainedStorage` — tries `KeyringStorage` first, falls back to `FileStorage(cookie_file)` on save/load failure |
+| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; falls back to `FileStorage(cookie_file)` on **load** failure only |
 | `True` | `None` (default) | `KeyringStorage` only |
 | `False` | set | `FileStorage(cookie_file)` only |
 | `False` | `None` | `MemoryStorage` |
 
 > ⚠️ **Warning:** `EeroClient(use_keyring=False)` with no `cookie_file` silently resolves to `MemoryStorage`. Credentials live only in the process's memory and vanish the moment the process exits — there is no error, warning, or log line to tell you this happened. If you want persistence without the OS keyring, you **must** pass `cookie_file` explicitly.
+
+> ⚠️ **Warning:** The `save()` side of `ChainedStorage`'s file fallback is dead code. `KeyringStorage.save()` swallows its own exceptions and returns normally, so `ChainedStorage.save()`'s except-and-fall-back-to-file branch never fires in practice — the file is never written by `save()`. For headless/container/CI persistence, use `use_keyring=False, cookie_file=...` (plain `FileStorage`), not `use_keyring=True` with a `cookie_file` set. See [Credential Storage](Credential-Storage) for the full mechanics.
 
 ### Keyring backends
 
@@ -84,7 +86,7 @@ SERVICE_NAME = "eero-api"
 ACCOUNT_NAME = "auth-tokens"
 ```
 
-If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception and log at `DEBUG` — the failure is non-fatal, but if you're relying on `ChainedStorage`, the file fallback only kicks in because you explicitly passed `cookie_file`.
+If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception internally and log at `DEBUG` — the failure is non-fatal, but because `save()` never re-raises, `ChainedStorage`'s file fallback is never triggered on save (see warning above). Don't rely on `ChainedStorage` for headless persistence — use `use_keyring=False, cookie_file=...` instead.
 
 ### File storage
 

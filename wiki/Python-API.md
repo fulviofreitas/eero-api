@@ -24,14 +24,18 @@ async def main():
             await client.login("you@example.com")
             await client.verify(input("Verification code: "))
 
-        networks = await client.get_networks()
-        for network in networks["data"]["networks"]:
-            print(f"📶 {network['name']}: {network['status']}")
+        response = await client.get_networks()
+        data = response.get("data") or {}
+        networks = data if isinstance(data, list) else (data.get("networks") or data.get("data") or [])
+        for network in networks:
+            print(f"📶 {network.get('name')}: {network.get('status')}")
 
 asyncio.run(main())
 ```
 
 > **Note**: `is_authenticated` is a property, not a method — no `()`.
+
+> **Note**: For a reusable shape-tolerant helper, see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically) — `get_networks()` can return the network list under more than one shape.
 
 ---
 
@@ -80,7 +84,7 @@ There are no Pydantic models and `eero.models` does not exist. Always index into
 
 ## Network Targeting
 
-`network_id` is an **optional trailing keyword argument** on nearly every `EeroClient` method. When omitted, the client auto-discovers your first network (or reuses a preferred network set via `set_preferred_network`). See [Network Targeting](Network-Targeting) for the full resolution order and how to pin a specific network.
+`network_id` is an **optional trailing keyword argument** on nearly every `EeroClient` method. When omitted, only 19 methods auto-discover your first network — every other method requires a preferred network already set (via `set_preferred_network()`, or as a side effect of calling `get_networks()` once) and raises `EeroException` otherwise. See [Network Targeting](Network-Targeting) for the full list and resolution order.
 
 ```python
 await client.get_eeros()                       # auto-discovered network
@@ -167,7 +171,10 @@ await client.run_diagnostics(network_id=None)
 
 ---
 
-## DHCP Reservations (v6.1.0)
+## DHCP Reservations (write support added v6.1.0)
+
+`get_reservations` predates v6.1.0; `create_reservation`, `update_reservation`, and
+`delete_reservation` were added in v6.1.0.
 
 ```python
 reservations = await client.get_reservations(network_id=None)
@@ -178,7 +185,9 @@ await client.delete_reservation(reservation_id, network_id=None)
 
 ---
 
-## Port Forwards (v6.2.0)
+## Port Forwards (write support added v6.2.0)
+
+`get_forwards` predates v6.2.0; `create_forward` and `delete_forward` were added in v6.2.0.
 
 ```python
 forwards = await client.get_forwards(network_id=None)
@@ -276,6 +285,34 @@ usage = await client.get_data_usage(network_id=None, payload={"resource": "netwo
 reporters = await client.get_burst_reporters(network_id=None)
 ```
 
+### `get_insights`
+
+```python
+async def get_insights(
+    self,
+    network_id: Optional[str] = None,
+    *,
+    start: str,
+    end: str,
+    insight_type: str,
+    cadence: str = "daily",
+) -> Dict[str, Any]: ...
+```
+
+`start`, `end`, and `insight_type` are required keyword-only arguments; `cadence` defaults to
+`"daily"`. Unlike most `EeroClient` methods, `network_id` does **not** auto-discover — pass it
+explicitly or set a preferred network first (see [Network Targeting](Network-Targeting)).
+
+```python
+insights = await client.get_insights(
+    network_id=None,
+    start="2026-07-01T00:00:00Z",
+    end="2026-07-21T00:00:00Z",
+    insight_type="blocked",
+    cadence="daily",
+)
+```
+
 ---
 
 ## Blacklist
@@ -302,7 +339,7 @@ await client.set_device_priority(device_id, prioritized=True, duration_minutes=3
 
 ## Error Handling
 
-All exceptions derive from `EeroException` and end in `...Exception` (not `...Error`): `EeroAuthenticationException`, `EeroAPIException`, `EeroRateLimitException`, `EeroNetworkException`, `EeroTimeoutException`, `EeroNotFoundException`, `EeroValidationException`, `EeroPremiumRequiredException`, `EeroFeatureUnavailableException`.
+All exceptions derive from `EeroException` and end in `...Exception` (not `...Error`): `EeroAuthenticationException`, `EeroAPIException`, `EeroRateLimitException`, `EeroNetworkException`, `EeroTimeoutException`, `EeroValidationException`, and `from eero.exceptions import EeroNotFoundException, EeroPremiumRequiredException, EeroFeatureUnavailableException`.
 
 ```python
 from eero import EeroAuthenticationException, EeroException
@@ -314,6 +351,8 @@ except EeroAuthenticationException:
 except EeroException as e:
     print(f"Request failed: {e}")
 ```
+
+> **Note**: `EeroNotFoundException`, `EeroPremiumRequiredException`, and `EeroFeatureUnavailableException` are **not** in `eero.__all__` — `from eero import EeroNotFoundException` raises `ImportError`. Import them from `eero.exceptions` instead. They are defined but never raised anywhere in `src/`. See [Error Handling](Error-Handling).
 
 Full hierarchy and per-exception guidance: [Error Handling](Error-Handling).
 

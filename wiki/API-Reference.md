@@ -11,7 +11,7 @@ The SDK is a layered stack:
 ```
 EeroClient   → high-level facade: caching, network_id resolution, one method per operation
     ↓
-EeroAPI      → composition root: aggregates 27 domain APIs as attributes (client._api.<domain>)
+EeroAPI      → composition root: aggregates 26 domain APIs + AuthAPI (27 API classes total) as attributes (client._api.<domain>)
     ↓
 Domain APIs  → one class per Eero Cloud resource (NetworksAPI, DevicesAPI, ProfilesAPI, ...)
     ↓
@@ -42,7 +42,9 @@ def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[
 ```
 
 All `network_id` parameters below are trailing optional kwargs — when omitted, `EeroClient`
-resolves the network via `preferred_network_id` (if set) or by fetching the account's networks.
+resolves the network via `preferred_network_id` (if set); only 19 methods will additionally
+auto-discover by fetching the account's networks. Every other method raises `EeroException` if
+neither is available. See [Network Targeting](Network-Targeting) for the exact list.
 
 ### Session & Account
 
@@ -182,18 +184,18 @@ resolves the network via `preferred_network_id` (if set) or by fetching the acco
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| `get_reservations` | `async def get_reservations(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.1.0 |
-| `create_reservation` | `async def create_reservation(self, reservation_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `update_reservation` | `async def update_reservation(self, reservation_id: str, reservation_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `delete_reservation` | `async def delete_reservation(self, reservation_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `get_reservations` | `async def get_reservations(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Predates v6.1.0 |
+| `create_reservation` | `async def create_reservation(self, reservation_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.1.0 |
+| `update_reservation` | `async def update_reservation(self, reservation_id: str, reservation_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.1.0 |
+| `delete_reservation` | `async def delete_reservation(self, reservation_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.1.0 |
 
 ### Forwards
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| `get_forwards` | `async def get_forwards(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.2.0 |
-| `create_forward` | `async def create_forward(self, forward_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `delete_forward` | `async def delete_forward(self, forward_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `get_forwards` | `async def get_forwards(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Predates v6.2.0 |
+| `create_forward` | `async def create_forward(self, forward_data: Dict[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.2.0 |
+| `delete_forward` | `async def delete_forward(self, forward_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Added v6.2.0 |
 
 ### LEDs & Nightlight
 
@@ -266,6 +268,10 @@ resolves the network via `preferred_network_id` (if set) or by fetching the acco
 Reach every domain API through `client._api.<attr>` (on `EeroClient`) or directly on an
 `EeroAPI` instance (`api.<attr>`). The attribute name is identical to the module name for
 every domain in this SDK — there are no naming divergences.
+
+> **Note**: `client._api` is a private attribute and is not covered by semver — it can change
+> without a major-version bump. It is, however, the documented escape hatch for calling domain
+> methods that have no `EeroClient` wrapper.
 
 All domain classes except `AuthAPI` extend `AuthenticatedAPI(auth_api: AuthAPI)` and take a
 single `auth_api` constructor argument. `AuthAPI` itself extends `BaseAPI` and owns the
@@ -380,7 +386,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `get_devices` | `async def get_devices(self, network_id: str) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_device` | `async def get_device(self, network_id: str, device_id: str) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_device_nickname` | `async def set_device_nickname(self, network_id: str, device_id: str, nickname: str) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.3` endpoint |
-| `block_device` | `async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.3` endpoint |
+| `block_device` | `async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109) — not `/2.3` |
 | `pause_device` | `async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.3` endpoint |
 | `set_device_priority` | `async def set_device_priority(self, network_id: str, device_id: str, prioritized: bool, duration_minutes: Optional[int]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Confirmed no-op (DeprecationWarning, returns 200, no server-side effect) — use SQM instead |
 
@@ -587,9 +593,9 @@ Kept for backward compatibility only.
 | `EeroNetworkException` | `EeroException` | Low-level connection/transport failures |
 | `EeroAPIException` | `EeroException` | Generic HTTP error mapping (`status_code`, `message`); `is_auth_error()` checks `status_code == 401` |
 | `EeroTimeoutException` | `EeroException` | Request exceeded the client timeout |
-| `EeroNotFoundException` | `EeroException` | `__init__(self, resource_type: str, resource_id: str)` — resource lookup miss |
-| `EeroPremiumRequiredException` | `EeroException` | `__init__(self, feature: str='This feature')` — Eero Plus/Secure gate |
-| `EeroFeatureUnavailableException` | `EeroException` | `__init__(self, feature: str, reason: str='not supported on this device')` |
+| `EeroNotFoundException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
+| `EeroPremiumRequiredException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
+| `EeroFeatureUnavailableException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
 | `EeroValidationException` | `EeroException` | `__init__(self, field: str, message: str)` — client-side input validation failure |
 
 Full hierarchy, matching, and handling patterns: [Error Handling](Error-Handling).
@@ -620,11 +626,19 @@ __all__ = [
 ]
 ```
 
-> ⚠️ **Warning:** `EeroNotFoundException`, `EeroPremiumRequiredException`,
-> `EeroFeatureUnavailableException`, and `EeroValidationException`'s siblings are importable
-> from `eero.exceptions` but only `EeroValidationException` (and the six listed above) are
-> re-exported at the package root. Import the others explicitly:
-> `from eero.exceptions import EeroNotFoundException`.
+> ⚠️ **Warning:** Only the exceptions in `__all__` above are importable from the package root
+> (`from eero import ...`) — everything else in `src/eero/exceptions.py` must be imported from
+> `eero.exceptions` directly.
+
+| Root-importable (`from eero import ...`) | `eero.exceptions`-only (`from eero.exceptions import ...`) |
+|---|---|
+| `EeroException` | `EeroNotFoundException` |
+| `EeroAPIException` | `EeroPremiumRequiredException` |
+| `EeroAuthenticationException` | `EeroFeatureUnavailableException` |
+| `EeroNetworkException` | |
+| `EeroRateLimitException` | |
+| `EeroTimeoutException` | |
+| `EeroValidationException` | |
 
 > ⚠️ **Warning:** `EeroDeviceType`, `EeroNetworkStatus`, and `EeroDeviceStatus` (defined in
 > `src/eero/const.py`) are **NOT** re-exported from the package root. `eero/__init__.py` does
@@ -649,17 +663,19 @@ Public, useful constants from `src/eero/const.py` (import via `from eero.const i
 | `ACCOUNT_REFRESH_ENDPOINT` | `f"{API_ENDPOINT}/account/refresh"` | Fallback refresh path |
 | `REFRESH_ENDPOINTS` | `(LOGIN_REFRESH_ENDPOINT, ACCOUNT_REFRESH_ENDPOINT)` | Tried in order |
 | `DEFAULT_HEADERS` | `{"User-Agent": "eero/3.0 (iPhone; iOS 17.0)", "Content-Type": "application/json"}` | Mobile UA reduces rate-limiting risk |
-| `CACHE_TIMEOUT` | `60` | Default `EeroClient` cache TTL, in seconds |
+| `CACHE_TIMEOUT` | `60` | Unused — not imported anywhere in `src/`. `EeroClient` hardcodes `cache_timeout: int = 60` instead |
 | `MAX_RESPONSE_BYTES` | `10 * 1024 * 1024` (10 MiB) | Guards against unbounded response bodies |
 | `MAX_ERROR_BODY_CHARS` | `512` | Caps how much of a hostile/oversized body is embedded in error messages and logs |
 | `SESSION_TOKEN_KEY` | `"session_token"` | Keyring/file storage key |
 | `REFRESH_TOKEN_KEY` | `"refresh_token"` | Keyring/file storage key |
 
-> ⚠️ **Warning:** The `/2.2` vs `/2.3` split matters for device mutations. `DevicesAPI`
-> methods that pause, block, rename, or set priority on a device are silently no-ops on `/2.2`
-> — the backend returns 200 OK but the change never persists server-side. `DevicesAPI` routes
-> these specific writes to `DEVICE_UPDATE_ENDPOINT` (`/2.3`) instead of `API_ENDPOINT` (`/2.2`).
-> Reads and every other domain continue to use `/2.2`. See issue #102.
+> ⚠️ **Warning:** The `/2.2` vs `/2.3` split matters for device mutations, but only for three
+> methods: `set_device_nickname`, `pause_device`, and `set_device_priority`. These route through
+> `DevicesAPI._update_device()` to `DEVICE_UPDATE_ENDPOINT` (`/2.3`) because the mutation is
+> silently dropped on `/2.2` — the backend returns 200 OK but the change never persists
+> server-side. See issue #102. `block_device` is NOT one of these — it writes via `/2.2`
+> `POST`/`DELETE /networks/{id}/blacklist` (issue #109). Reads and every other domain continue
+> to use `API_ENDPOINT` (`/2.2`).
 
 `EeroDeviceType`, `EeroNetworkStatus`, and `EeroDeviceStatus` are `str, Enum` classes also
 defined in `const.py` — see [Module-level exports](#module-level-exports) for their

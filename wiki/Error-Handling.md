@@ -104,7 +104,7 @@ except EeroException as err:
 > | `EeroTimeoutError` | `EeroTimeoutException` |
 > | `EeroForbiddenException` / `EeroForbiddenError` | *(doesn't exist — see [403](#http-status--exception-mapping))* |
 >
-> If you're upgrading from a pre-v2.0 release and your `except` clauses reference model classes or old names, see [Migration](Migration).
+> These `*Error` names have never existed in any release — earlier versions of this wiki documented them incorrectly, so code copied from it will fail at import. If you're upgrading from a pre-v2.0 release and your `except` clauses reference the deleted model classes, see [Migration](Migration).
 
 ---
 
