@@ -1,10 +1,18 @@
 # 🐍 Python API
 
-Programmatic access to your Eero network using the async Python client.
+The `EeroClient` facade — installation, lifecycle, and every topic area of the SDK.
 
 ---
 
-## Quick Start
+## Installation
+
+```bash
+pip install eero-api
+# or
+uv add eero-api
+```
+
+## Quickstart
 
 ```python
 import asyncio
@@ -12,128 +20,126 @@ from eero import EeroClient
 
 async def main():
     async with EeroClient() as client:
-        # Check authentication
         if not client.is_authenticated:
-            await client.login("your-email@example.com")
-            code = input("Enter verification code: ")
-            await client.verify(code)
-        
-        # List networks
+            await client.login("you@example.com")
+            await client.verify(input("Verification code: "))
+
         networks = await client.get_networks()
-        for network in networks:
-            print(f"📶 {network.name}: {network.status}")
-        
-        # List connected devices
-        devices = await client.get_devices()
-        for device in devices:
-            print(f"💻 {device.display_name}: {device.ip}")
+        for network in networks["data"]["networks"]:
+            print(f"📶 {network['name']}: {network['status']}")
 
 asyncio.run(main())
 ```
 
+> **Note**: `is_authenticated` is a property, not a method — no `()`.
+
 ---
 
-## Client Initialization
+## Client Lifecycle
 
-### Basic Usage
+`EeroClient` is only usable as an async context manager. There is no `connect()` / `close()` pair.
 
 ```python
+async with EeroClient() as client:
+    ...  # session is opened on __aenter__ and torn down on __aexit__
+```
+
+### Constructor
+
+| Argument | Type | Default | Purpose |
+|----------|------|---------|---------|
+| `session` | `Optional[aiohttp.ClientSession]` | `None` | Bring your own `aiohttp` session instead of letting the client create one |
+| `cookie_file` | `Optional[str]` | `None` | Path used by the file-based credential storage fallback |
+| `use_keyring` | `bool` | `True` | Store the session token in the OS keyring; falls back to the JSON cookie file when unavailable |
+| `cache_timeout` | `int` | `60` | TTL in seconds for the client's in-memory response cache |
+
+```python
+import aiohttp
 from eero import EeroClient
 
-# Using context manager (recommended)
-async with EeroClient() as client:
-    # Client is automatically cleaned up
-    pass
-
-# Manual lifecycle management
-client = EeroClient()
-await client.connect()
-# ... do work ...
-await client.close()
+async with aiohttp.ClientSession() as session:
+    async with EeroClient(session=session, use_keyring=False, cache_timeout=120) as client:
+        ...
 ```
 
-### Configuration Options
-
-```python
-client = EeroClient(
-    session_token="optional-token",  # Pre-existing session token
-    use_keyring=True,                # Use system keyring for credentials
-    config_path="~/.config/eero",    # Custom config directory
-    timeout=30,                      # Request timeout in seconds
-)
-```
+> ⚠️ **Warning:** There is no `session_token`, `config_path`, or `timeout` constructor argument, and no environment variables are read. If you already have a session token, use `await client.set_session_token(token)` after entering the context manager.
 
 ---
 
-## Authentication
+## Raw Response Envelope
 
-### Login Flow
-
-```python
-async with EeroClient() as client:
-    # Step 1: Initiate login
-    await client.login("your-email@example.com")
-    # or
-    await client.login("+1234567890")  # Phone number
-    
-    # Step 2: Verify with code sent to email/phone
-    code = input("Enter verification code: ")
-    await client.verify(code)
-    
-    # Now authenticated - token is stored automatically
-```
-
-### Check Authentication Status
+Every method — on `EeroClient` and on the lower-level `EeroAPI` — returns the raw, unmodified JSON body from the Eero Cloud API:
 
 ```python
-if client.is_authenticated:
-    print("Ready to make API calls")
-else:
-    print("Need to login")
+{"meta": {...}, "data": {...}}
 ```
 
-### Logout
-
-```python
-await client.logout()
-```
+There are no Pydantic models and `eero.models` does not exist. Always index into `resp["data"]`, never attribute-access. See [Raw Response Format](Raw-Response-Format) for the full shape and gotchas (list-vs-dict `data`, missing keys, etc.).
 
 ---
 
-## Networks
+## Network Targeting
 
-### List Networks
+`network_id` is an **optional trailing keyword argument** on nearly every `EeroClient` method. When omitted, the client auto-discovers your first network (or reuses a preferred network set via `set_preferred_network`). See [Network Targeting](Network-Targeting) for the full resolution order and how to pin a specific network.
 
 ```python
+await client.get_eeros()                       # auto-discovered network
+await client.get_eeros(network_id="123456")     # explicit network
+```
+
+> **Note**: Since v5.0.0, `set_preferred_network()` / `preferred_network_id` live on `EeroClient` only. The identically-named symbols were removed from `EeroAPI` — they never wired through to any domain API.
+
+---
+
+## Account & Networks
+
+```python
+account = await client.get_account()
 networks = await client.get_networks()
-for network in networks:
-    print(f"Name: {network.name}")
-    print(f"Status: {network.status}")
-    print(f"ID: {network.id}")
+network = await client.get_network(network_id=None, refresh_cache=False)
+await client.set_network_name(name="Home", network_id=None)
+premium = await client.get_premium_status(network_id=None)
 ```
 
-### Get Network Details
+---
+
+## Eeros (Mesh Nodes)
 
 ```python
-network = await client.get_network(network_id)
-print(f"SSID: {network.ssid}")
-print(f"Password: {network.password}")
-print(f"Guest enabled: {network.guest_network_enabled}")
+eeros = await client.get_eeros(network_id=None, refresh_cache=False)
+eero = await client.get_eero(eero_id, network_id=None, refresh_cache=False)
+await client.reboot_eero(eero_id, network_id=None)
 ```
 
-### Update Network Settings
+---
+
+## Devices
 
 ```python
-# Rename network
-await client.rename_network(network_id, "New Network Name")
+devices = await client.get_devices(network_id=None, refresh_cache=False)
+device = await client.get_device(device_id, network_id=None, refresh_cache=False)
+await client.set_device_nickname(device_id, "Living Room TV", network_id=None)
+await client.block_device(device_id, blocked=True, network_id=None)
+await client.pause_device(device_id, paused=True, network_id=None)
+```
 
-# Update DNS
-await client.set_dns_mode(network_id, "cloudflare")
+---
 
-# Enable/disable features
-await client.set_upnp(network_id, enabled=False)
-await client.set_wpa3(network_id, enabled=True)
-await client.set_ipv6(network_id, enabled=True)
+## Profiles
+
+```python
+profiles = await client.get_profiles(network_id=None, refresh_cache=False)
+profile = await client.get_profile(profile_id, network_id=None, refresh_cache=False)
+await client.pause_profile(profile_id, paused=True, network_id=None)
+await client.create_profile("Kids", network_id=None)
+await client.rename_profile(profile_id, "Teens", network_id=None)
+await client.delete_profile(profile_id, network_id=None)
+
+devices = await client.get_profile_devices(profile_id, network_id=None)
+await client.set_profile_devices(profile_id, device_urls=["/2.2/networks/123/devices/abc"], network_id=None)
+
+await client.get_blocked_applications(profile_id, network_id=None)
+await client.set_blocked_applications(profile_id, applications=["TikTok"], network_id=None)
 ```
 
 ---
@@ -141,286 +147,219 @@ await client.set_ipv6(network_id, enabled=True)
 ## Guest Network
 
 ```python
-# Enable guest network
 await client.set_guest_network(
-    network_id,
     enabled=True,
     name="Guest WiFi",
-    password="welcome123"
+    password="welcome123",
+    network_id=None,
 )
-
-# Disable guest network
-await client.set_guest_network(network_id, enabled=False)
-
-# Get guest network status
-guest = await client.get_guest_network(network_id)
-print(f"Enabled: {guest.enabled}")
-print(f"Name: {guest.name}")
 ```
 
 ---
 
-## Eero Devices (Mesh Nodes)
-
-### List Eeros
+## Speed Test & Diagnostics
 
 ```python
-eeros = await client.get_eeros(network_id)
-for eero in eeros:
-    print(f"Name: {eero.location}")
-    print(f"Model: {eero.model}")
-    print(f"Status: {eero.status}")
-    print(f"Connected clients: {eero.connected_clients_count}")
+results = await client.run_speed_test(network_id=None)
+diagnostics = await client.get_diagnostics(network_id=None)
+await client.run_diagnostics(network_id=None)
 ```
 
-### Reboot an Eero
+---
+
+## DHCP Reservations (v6.1.0)
 
 ```python
-await client.reboot_eero(network_id, eero_id)
+reservations = await client.get_reservations(network_id=None)
+await client.create_reservation(reservation_data={"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.4.50"}, network_id=None)
+await client.update_reservation(reservation_id, reservation_data={"ip": "192.168.4.51"}, network_id=None)
+await client.delete_reservation(reservation_id, network_id=None)
 ```
 
-### LED Settings
+---
+
+## Port Forwards (v6.2.0)
 
 ```python
-# Turn LED on/off
-await client.set_eero_led(network_id, eero_id, enabled=True)
-
-# Set brightness (0-100)
-await client.set_eero_led_brightness(network_id, eero_id, brightness=50)
+forwards = await client.get_forwards(network_id=None)
+await client.create_forward(forward_data={"internal_ip": "192.168.4.10", "internal_port": 8080, "external_port": 8080, "protocol": "tcp"}, network_id=None)
+await client.delete_forward(forward_id, network_id=None)
 ```
 
-### Nightlight (Beacon only)
+---
+
+## DNS
 
 ```python
+dns = await client.get_dns_settings(network_id=None)
+await client.set_dns_caching(enabled=True, network_id=None)
+await client.set_custom_dns(dns_servers=["1.1.1.1", "1.0.0.1"], network_id=None)
+await client.set_dns_mode("custom", custom_servers=["1.1.1.1"], network_id=None)
+```
+
+---
+
+## SQM / QoS
+
+```python
+sqm = await client.get_sqm_settings(network_id=None)
+await client.set_sqm_enabled(enabled=True, network_id=None)
+await client.configure_sqm(enabled=True, upload_mbps=20, download_mbps=200, network_id=None)
+```
+
+---
+
+## Security
+
+```python
+security = await client.get_security_settings(network_id=None)
+await client.set_wpa3(enabled=True, network_id=None)
+await client.set_band_steering(enabled=True, network_id=None)
+await client.set_upnp(enabled=False, network_id=None)
+await client.set_ipv6(enabled=True, network_id=None)
+await client.set_thread_enabled(enabled=True, network_id=None)
+await client.configure_security(wpa3=True, band_steering=True, upnp=False, ipv6=True, thread=True, network_id=None)
+```
+
+> **Note**: The `EeroClient` method is `set_thread_enabled` (the underlying `SecurityAPI` method is `set_thread`).
+
+---
+
+## Backup Network
+
+```python
+backup = await client.get_backup_network(network_id=None)
+status = await client.get_backup_status(network_id=None)
+await client.set_backup_network(enabled=True, network_id=None)
+await client.configure_backup_network(enabled=True, phone_number="+15551234567", network_id=None)
+```
+
+---
+
+## LEDs & Nightlight
+
+```python
+led = await client.get_led_status(eero_id, network_id=None)
+await client.set_led(eero_id, enabled=False, network_id=None)
+await client.set_led_brightness(eero_id, brightness=50, network_id=None)
+
+nightlight = await client.get_nightlight(eero_id, network_id=None)
 await client.set_nightlight(
-    network_id,
     eero_id,
     enabled=True,
     brightness=30,
-    schedule={
-        "on": "22:00",
-        "off": "06:00"
-    }
+    schedule_enabled=True,
+    schedule_on="22:00",
+    schedule_off="06:00",
+    network_id=None,
 )
 ```
 
 ---
 
-## Connected Clients (Devices)
-
-### List All Clients
+## Schedules & Bedtime
 
 ```python
-devices = await client.get_devices(network_id)
-for device in devices:
-    print(f"Name: {device.display_name}")
-    print(f"IP: {device.ip}")
-    print(f"MAC: {device.mac}")
-    print(f"Connected: {device.connected}")
-    print(f"Connection type: {device.connection_type}")
-```
-
-### Get Client Details
-
-```python
-device = await client.get_device(network_id, device_id)
-```
-
-### Rename a Client
-
-```python
-await client.set_device_nickname(network_id, device_id, "Living Room TV")
-```
-
-### Block/Unblock a Client
-
-```python
-# Block device (removes from network completely)
-await client.block_device(device_id, blocked=True)
-
-# Unblock device
-await client.block_device(device_id, blocked=False)
-```
-
-### Pause/Unpause a Client
-
-Pausing a device temporarily suspends internet access while keeping it connected to the network.
-
-```python
-# Pause internet access for a device
-await client.pause_device(device_id, paused=True)
-
-# Resume internet access
-await client.pause_device(device_id, paused=False)
-
-# Get all paused devices
-paused_devices = await client.get_paused_devices()
-for device in paused_devices:
-    print(f"Paused: {device['nickname'] or device['hostname']}")
-```
-
-> **Note**: Pausing is different from blocking:
-> - **Paused**: Device stays connected to WiFi but has no internet access
-> - **Blocked**: Device is completely removed from the network
-
-### Bandwidth Priority
-
-```python
-# Enable priority for 30 minutes
-await client.set_device_priority(
-    network_id,
-    device_id,
-    enabled=True,
-    duration_minutes=30
-)
-
-# Disable priority
-await client.set_device_priority(network_id, device_id, enabled=False)
+schedule = await client.get_profile_schedule(profile_id, network_id=None)
+await client.set_profile_schedule(profile_id, time_blocks=[{"day": "mon", "start": "22:00", "end": "07:00"}], network_id=None)
+await client.clear_profile_schedule(profile_id, network_id=None)
+await client.enable_bedtime(profile_id, start_time="21:00", end_time="07:00", days=["mon", "tue"], network_id=None)
 ```
 
 ---
 
-## Profiles
-
-### List Profiles
+## Stats & Usage
 
 ```python
-profiles = await client.get_profiles(network_id)
-for profile in profiles:
-    print(f"Name: {profile.name}")
-    print(f"Paused: {profile.paused}")
-    print(f"Devices: {len(profile.devices)}")
-```
-
-### Pause/Unpause Profile
-
-```python
-# Pause internet access for all devices in profile
-await client.pause_profile(profile_id, paused=True)
-
-# Resume internet access
-await client.pause_profile(profile_id, paused=False)
-```
-
-### Manage Profile Devices
-
-Assign or remove devices from a profile for easier management.
-
-```python
-# Get devices currently assigned to a profile
-devices = await client.get_profile_devices(profile_id)
-for device in devices:
-    print(f"Device URL: {device['url']}")
-
-# Add a device to a profile
-await client.add_device_to_profile(profile_id, device_id)
-
-# Remove a device from a profile
-await client.remove_device_from_profile(profile_id, device_id)
-
-# Set all devices for a profile (replaces existing assignments)
-device_urls = [
-    "/2.2/networks/{network_id}/devices/device1",
-    "/2.2/networks/{network_id}/devices/device2",
-]
-await client.set_profile_devices(profile_id, device_urls)
-```
-
-### Block Applications (Eero Plus)
-
-```python
-# Block apps
-await client.block_apps(network_id, profile_id, ["TikTok", "YouTube"])
-
-# Unblock apps
-await client.unblock_apps(network_id, profile_id, ["YouTube"])
+transfer = await client.get_transfer_stats(network_id=None, device_id=None)
+usage = await client.get_data_usage(network_id=None, payload={"resource": "network"}, resource=None)
+reporters = await client.get_burst_reporters(network_id=None)
 ```
 
 ---
 
-## Speed Tests
+## Blacklist
 
 ```python
-# Run a new speed test
-results = await client.run_speed_test(network_id)
-print(f"Download: {results['down']} Mbps")
-print(f"Upload: {results['up']} Mbps")
-
-# Get last speed test results
-last_test = await client.get_speed_test(network_id)
+blacklist = await client.get_blacklist(network_id=None)
 ```
+
+> **Note**: `EeroClient` only exposes `get_blacklist`. Adding/removing MACs is available on the lower-level `EeroAPI.blacklist` domain (`add_to_blacklist`, `remove_from_blacklist`) — see [API Reference](API-Reference).
 
 ---
 
-## Diagnostics
+## Deprecated
+
+> ⚠️ **Warning:** `set_device_priority` is a confirmed **no-op**. It emits a `DeprecationWarning`, the underlying request returns 200, but nothing changes on the eero. Use [SQM/QoS](#sqm--qos) (`configure_sqm`) for bandwidth control instead.
 
 ```python
-# Run diagnostics
-diagnostics = await client.run_diagnostics(network_id)
-
-# Get network health status
-health = await client.get_network_health(network_id)
+await client.set_device_priority(device_id, prioritized=True, duration_minutes=30, network_id=None)  # no-op
 ```
+
+> ⚠️ **Warning:** Every `ActivityAPI` method (`get_activity`, `get_activity_clients`, `get_activity_for_device`, `get_activity_history`, `get_activity_categories`) — and the matching `EeroClient` passthroughs — is deprecated as of v6.0.0. The upstream Eero endpoints now return 404. Migrate to `get_insights(...)` for category/adblock data.
 
 ---
 
 ## Error Handling
 
+All exceptions derive from `EeroException` and end in `...Exception` (not `...Error`): `EeroAuthenticationException`, `EeroAPIException`, `EeroRateLimitException`, `EeroNetworkException`, `EeroTimeoutException`, `EeroNotFoundException`, `EeroValidationException`, `EeroPremiumRequiredException`, `EeroFeatureUnavailableException`.
+
 ```python
-from eero.exceptions import (
-    EeroAuthenticationError,
-    EeroNotFoundError,
-    EeroForbiddenError,
-    EeroTimeoutError,
-    EeroAPIError,
-)
+from eero import EeroAuthenticationException, EeroException
 
 try:
-    await client.get_network("invalid-id")
-except EeroNotFoundError:
-    print("Network not found")
-except EeroAuthenticationError:
-    print("Need to re-authenticate")
-except EeroForbiddenError:
-    print("Insufficient permissions")
-except EeroTimeoutError:
-    print("Request timed out")
-except EeroAPIError as e:
-    print(f"API error: {e.message}")
+    await client.get_network(network_id="invalid-id")
+except EeroAuthenticationException:
+    print("Session expired — log in again")
+except EeroException as e:
+    print(f"Request failed: {e}")
+```
+
+Full hierarchy and per-exception guidance: [Error Handling](Error-Handling).
+
+---
+
+## Caching
+
+`EeroClient` keeps a `cache_timeout`-second in-memory cache (default 60s) for read methods that accept `refresh_cache`. Pass `refresh_cache=True` to bypass it for a single call, or call `client.clear_cache()` to drop everything.
+
+```python
+await client.get_networks(refresh_cache=True)
+client.clear_cache()
+```
+
+Details on which methods are cached and rate-limit behavior: [Caching and Rate Limits](Caching-and-Rate-Limits).
+
+---
+
+## Utilities
+
+`id_from_url` is exported from the top-level `eero` package and extracts the trailing ID segment from an API URL fragment or bare ID:
+
+```python
+from eero import id_from_url
+
+id_from_url("/2.2/networks/123456/profiles/p_abc")  # -> "p_abc"
+id_from_url("123456")                                # -> "123456"
 ```
 
 ---
 
-## Advanced: Custom Session
+## The Lower-Level `EeroAPI`
 
-```python
-import aiohttp
-
-# Use a custom aiohttp session
-async with aiohttp.ClientSession() as session:
-    client = EeroClient(session=session)
-    await client.connect()
-    # ...
-```
-
----
-
-## Type Hints
-
-The client uses Pydantic models for full type safety:
-
-```python
-from eero.models import Network, Device, Profile, Eero
-
-async def process_network(network: Network) -> None:
-    print(network.name)  # IDE autocomplete works!
-```
+`EeroClient` is a facade over `EeroAPI`, a composition-based aggregator exposing the same domain APIs directly (`api.devices`, `api.profiles`, `api.security`, etc.) without caching or auto-discovery. Use it when you need domain-level control; pass `network_id` explicitly to every call. Full method inventory: [API Reference](API-Reference).
 
 ---
 
 ## 🔗 Related Pages
 
-- [CLI Reference](CLI-Reference) — Command-line interface
-- [Usage Examples](Usage-Examples) — CLI examples
-- [Configuration](Configuration) — Authentication storage
-
+- [Home](Home) — Wiki overview and quick links
+- [Configuration](Configuration) — Auth storage & settings
+- [Authentication](Authentication) — Login/verify flow and session persistence
+- [Raw Response Format](Raw-Response-Format) — Envelope shape and extraction patterns
+- [Error Handling](Error-Handling) — Full exception hierarchy and handling patterns
+- [Caching and Rate Limits](Caching-and-Rate-Limits) — Cache TTLs and rate-limit behavior
+- [Network Targeting](Network-Targeting) — How `network_id` resolution works
+- [API Reference](API-Reference) — Full per-domain method inventory
+- [Examples](Examples) — End-to-end runnable scripts
+- [Troubleshooting](Troubleshooting) — Common issues & fixes

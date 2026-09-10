@@ -2,17 +2,54 @@
 
 Welcome! Everything you need to master the Eero API Python client.
 
+---
+
 ## 📚 Guides
+
+### Getting Started
 
 | Page | What you'll learn |
 |------|-------------------|
 | **[📖 Python API](Python-API)** | Full API reference & examples |
-| **[⚙️ Configuration](Configuration)** | Auth storage & settings |
+| **[⚙️ Configuration](Configuration)** | Client setup & options |
+| **[🔑 Authentication](Authentication)** | Login, OTP verification, session lifecycle |
+| **[🔐 Credential Storage](Credential-Storage)** | Keyring, file, and memory storage backends |
+
+### Core Concepts
+
+| Page | What you'll learn |
+|------|-------------------|
+| **[📄 Raw Response Format](Raw-Response-Format)** | The `{"meta": ..., "data": ...}` envelope |
+| **[🎯 Network Targeting](Network-Targeting)** | Passing `network_id` correctly |
+| **[🚨 Error Handling](Error-Handling)** | The `EeroException` hierarchy |
+| **[⚡ Caching and Rate Limits](Caching-and-Rate-Limits)** | TTL cache & the ~100 req/min ceiling |
+
+### Reference
+
+| Page | What you'll learn |
+|------|-------------------|
+| **[📚 API Reference](API-Reference)** | Every domain API and method signature |
+| **[🔀 Migration](Migration)** | Upgrading from pre-v2.0 (Pydantic) releases |
+| **[⚠️ Deprecations](Deprecations)** | No-op and removed surface, and what replaces it |
+| **[💡 Examples](Examples)** | End-to-end runnable scripts |
+
+### Project
+
+| Page | What you'll learn |
+|------|-------------------|
+| **[🛡️ Logging and Security](Logging-and-Security)** | `SecureLoggerAdapter`, redaction, safe debug logging |
+| **[🔗 Ecosystem](Ecosystem)** | CLI, dashboard, and exporter projects built on this SDK |
+| **[🤝 Contributing](Contributing)** | Dev setup, tests, style |
 | **[🔧 Troubleshooting](Troubleshooting)** | Common issues & fixes |
 
 ---
 
 ## 🚀 Quick Start
+
+### Requirements
+
+- Python 3.12+
+- An Eero account that signs in with an email address or phone number, verified by a one-time code (see [Troubleshooting](Troubleshooting#amazon-login-accounts) if you use Amazon login)
 
 ### Install
 
@@ -21,6 +58,8 @@ pip install eero-api
 # or
 uv add eero-api
 ```
+
+> 📦 Latest release: see the [PyPI project page](https://pypi.org/project/eero-api/) for the current version.
 
 <details>
 <summary>📦 Install from source</summary>
@@ -47,12 +86,18 @@ async def main():
         if not client.is_authenticated:
             await client.login("you@example.com")
             await client.verify(input("Code: "))
-        
-        for network in await client.get_networks():
-            print(f"📶 {network.name}: {network.status}")
+
+        # All methods return a raw {"meta": ..., "data": ...} envelope
+        response = await client.get_networks()
+        networks = response.get("data", {}).get("networks", [])
+
+        for network in networks:
+            print(f"📶 {network['name']}: {network.get('status')}")
 
 asyncio.run(main())
 ```
+
+> **Note**: See [Raw Response Format](Raw-Response-Format) for why there's no `network.name` attribute access.
 
 ---
 
@@ -74,9 +119,9 @@ This project is a modern revamp of the original [eero-client](https://github.com
 
 **What's new:**
 - Full async/await with `aiohttp`
-- Pydantic models for type safety
-- Secure keyring integration
-- Comprehensive Python API
+- Raw JSON passthrough — no Pydantic models, no data transformation
+- 27 domain-specific APIs covering the full Eero Cloud API surface
+- Secure credential storage — OS keyring, with an owner-only (`0600`) file fallback
 
 ---
 
@@ -92,4 +137,3 @@ This project is a modern revamp of the original [eero-client](https://github.com
 
 - Use the sidebar to navigate between pages
 - Code blocks have a copy button
-- Each page has a table of contents
