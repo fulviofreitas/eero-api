@@ -211,9 +211,17 @@ Two likely causes:
 - **IPv6 is stored fully expanded.** `2606:4700:4700::1111` reads back as `2606:4700:4700:0:0:0:0:1111`. Compare via `ipaddress.IPv6Address(a) == ipaddress.IPv6Address(b)`, never string equality.
 - **You're reading `dns.custom.ips` while the mode is `automatic`.** Those two are independent: the API retains your servers when custom DNS is switched off. Check `dns.mode` to know what is actually in use, and `dns.parent.ips` for the ISP resolvers being used instead.
 
-### `clear_custom_dns` didn't seem to switch anything
+### I cleared custom DNS and my servers are gone from the app
 
-Worth knowing: the nested server writes were live-verified, but **no probe isolated a `mode` change**, so writing `dns.mode` / `ipv6.name_servers.mode` rests on inference from the read shape. If `clear_custom_dns` appears not to take effect, read back `dns.mode` and report it on [#123](https://github.com/fulviofreitas/eero-api/issues/123) — switching the mode in the eero app is a known-good fallback.
+They aren't — they're retained, and the app shows them again once custom DNS is switched back on. `clear_custom_dns` flips `dns.mode` to `automatic`; it never sends an empty server list, so `dns.custom.ips` keeps its contents.
+
+To switch back on without retyping anything:
+
+```python
+await client.set_dns_mode("custom")   # re-enables the stored servers
+```
+
+Both behaviours were live-verified on 2026-09-12 against API 2.2.
 
 ### `EeroValidationException` on a DNS call that used to work
 

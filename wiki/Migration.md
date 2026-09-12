@@ -269,7 +269,14 @@ await client.set_custom_dns([
 await client.set_custom_dns_ipv4(["8.8.8.8", "8.8.4.4"])
 await client.set_custom_dns_ipv6(["2001:4860:4860::8888"])
 await client.clear_custom_dns(family="ipv6")
+
+# Re-enable the stored servers without resupplying them.
+await client.set_dns_mode("custom")
 ```
+
+`set_dns_mode("custom")` with no `custom_servers` used to be a usage error. It now re-enables
+whatever the network already stores — the inverse of `clear_custom_dns`, and the same thing
+the app's radio does.
 
 `clear_custom_dns`, `set_custom_dns_ipv4`, `set_custom_dns_ipv6` and `set_ipv6_dns` are now on
 `EeroClient`, so `client._api.dns` is no longer needed for them.

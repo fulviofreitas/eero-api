@@ -344,19 +344,12 @@ class DnsAPI(AuthenticatedAPI):
 
         This is non-destructive: the API retains the configured servers rather
         than discarding them, mirroring the eero app's "ISP DNS (Default)"
-        option. Server-side retention is confirmed — a network switched to
-        automatic in the app still reports its servers in ``dns.custom.ips``.
+        option. Live-verified on 2026-09-12 — a mode-only write to `automatic`
+        left ``dns.custom.ips`` intact, and `set_dns_mode("custom")` with no
+        servers brought them straight back.
 
-        Two caveats worth knowing:
-
-        - **Writing ``mode`` is not yet live-verified.** The nested server
-          writes were confirmed against API 2.2 on 2026-09-12, but no probe
-          isolated a mode change, so this method rests on inference from the
-          read shape. Verify with a read-back rather than assuming it applied.
-        - **Re-enabling retained servers requires supplying them again.** The
-          API appears to accept a mode-only write, but the SDK does not expose
-          one, precisely because it is unverified. Pass the addresses to
-          `set_custom_dns` to switch back.
+        To re-enable the stored servers, call `set_dns_mode` with
+        ``mode="custom"`` and no ``custom_servers``.
 
         Args:
             network_id: ID of the network
@@ -393,6 +386,12 @@ class DnsAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Set DNS mode for the network - returns raw Eero API response.
 
+        Omitting ``custom_servers`` with ``mode="custom"`` re-enables the servers
+        already stored on the network, without resupplying them. This is the
+        inverse of `clear_custom_dns` and mirrors toggling the eero app's radio
+        back to "Custom DNS": the API retains the server lists across a switch to
+        automatic, so the mode flip alone is enough to bring them back.
+
         Named provider presets are deliberately not offered here. The API serves
         its own provider catalogue at ``data.dns.default_test_servers`` (read it
         via `get_dns_settings`), with IPv4 and IPv6 addresses per provider. A
@@ -403,16 +402,16 @@ class DnsAPI(AuthenticatedAPI):
         Args:
             network_id: ID of the network
             mode: "auto"/"automatic" or "custom"
-            custom_servers: DNS servers, required when mode is "custom". May mix
-                IPv4 and IPv6 literals.
+            custom_servers: DNS servers to set. May mix IPv4 and IPv6 literals.
+                Omit to re-enable the servers already stored on the network.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
             EeroAuthenticationException: If not authenticated
-            EeroValidationException: If the mode is unrecognised, or mode is
-                "custom" without servers, or a server entry is invalid
+            EeroValidationException: If the mode is unrecognised or a server
+                entry is invalid
             EeroAPIException: If the API returns an error
         """
         if not isinstance(mode, str):
@@ -424,9 +423,17 @@ class DnsAPI(AuthenticatedAPI):
             return await self.clear_custom_dns(network_id)
 
         if normalised_mode == DNS_MODE_CUSTOM:
-            if not custom_servers:
-                raise EeroValidationException("custom_servers", "required when mode is 'custom'")
-            return await self.set_custom_dns(network_id, custom_servers)
+            if custom_servers:
+                return await self.set_custom_dns(network_id, custom_servers)
+
+            _LOGGER.debug("Re-enabling stored custom DNS for network %s (mode only)", network_id)
+            return await self._put_settings(
+                network_id,
+                {
+                    "dns": {"mode": DNS_MODE_CUSTOM},
+                    "ipv6": {"name_servers": {"mode": DNS_MODE_CUSTOM}},
+                },
+            )
 
         raise EeroValidationException(
             "mode",

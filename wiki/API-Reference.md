@@ -174,8 +174,10 @@ Three things to know:
 - **IPv6 addresses are stored fully expanded.** A server written as `2606:4700:4700::1111`
   reads back as `2606:4700:4700:0:0:0:0:1111`. Compare with `ipaddress.IPv6Address`, never
   string equality.
-- **Clearing is non-destructive.** `clear_custom_dns()` switches the mode to `automatic` and
-  leaves the stored servers in place, exactly like the app's "ISP DNS (Default)" option.
+- **Clearing is non-destructive and reversible.** `clear_custom_dns()` switches the mode to
+  `automatic` and leaves the stored servers in place, exactly like the app's "ISP DNS
+  (Default)" option. `set_dns_mode("custom")` with no `custom_servers` switches back and
+  re-enables them — no need to resupply the addresses.
 
 At most **2 servers per address family** are accepted; exceeding that raises
 `EeroValidationException`. This matches the app's slots and is a deliberate client-side

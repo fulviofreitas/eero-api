@@ -529,21 +529,26 @@ prove a write took effect.
 
 ### Switch one family back to the ISP resolvers
 
-Clearing is non-destructive on the **server** side — the API keeps the stored servers rather
-than erasing them, so they still appear in `dns.custom.ips` while the mode is `automatic`.
-
-Switching back through this SDK still requires supplying the addresses, though. The API
-appears to accept a mode-only write that would re-enable the retained servers, but that has
-not been live-verified, so no method exposes it.
+Clearing is non-destructive — the API keeps the stored servers rather than erasing them, so
+they still appear in `dns.custom.ips` while the mode is `automatic`. Switching back is a mode
+flip; you do not need to resupply the addresses.
 
 ```python
 async with EeroClient() as client:
     # ...resolve network_id as above...
-    await client.clear_custom_dns(family="ipv6", network_id=network_id)  # IPv4 untouched
-    await client.set_custom_dns_ipv6(
-        ["2001:4860:4860::8888"], network_id=network_id
-    )  # re-enabling means passing addresses again
+
+    # Off — falls back to the ISP resolvers. IPv4 untouched.
+    await client.clear_custom_dns(family="ipv6", network_id=network_id)
+
+    # On again, reusing whatever the network already stores.
+    await client.set_dns_mode("custom", network_id=network_id)
+
+    # Pass addresses only when you want to change them.
+    await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=network_id)
 ```
+
+This makes a "pause custom DNS" toggle straightforward — clear to fall back, `set_dns_mode`
+to restore, with no need to stash the addresses client-side.
 
 ---
 

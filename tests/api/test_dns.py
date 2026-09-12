@@ -434,13 +434,43 @@ class TestSetDnsMode:
         assert sent_payload(mock_session) == ipv4_payload(["9.9.9.9"])
 
     @pytest.mark.asyncio
-    async def test_custom_mode_without_servers_raises(self, dns_api, mock_session):
-        """Test missing servers is distinct from an invalid mode."""
-        with pytest.raises(EeroValidationException) as exc_info:
-            await dns_api.set_dns_mode("net123", "custom")
+    async def test_custom_mode_without_servers_reenables_stored(self, dns_api, mock_session):
+        """Test omitting servers re-enables what the network already stores.
 
-        assert exc_info.value.field == "custom_servers"
-        mock_session.request.assert_not_called()
+        Live-verified: a mode-only write to "custom" restores the retained
+        servers, so requiring the caller to resupply them would be busywork.
+        """
+        await dns_api.set_dns_mode("net123", "custom")
+
+        payload = sent_payload(mock_session)
+        assert payload["dns"] == {"mode": DNS_MODE_CUSTOM}
+        assert payload["ipv6"]["name_servers"] == {"mode": DNS_MODE_CUSTOM}
+
+    @pytest.mark.asyncio
+    async def test_reenable_sends_no_server_list(self, dns_api, mock_session):
+        """Test the re-enable carries no `custom` key.
+
+        Sending an empty list would erase the stored servers — the opposite of
+        the intent.
+        """
+        await dns_api.set_dns_mode("net123", "custom")
+
+        payload = sent_payload(mock_session)
+        assert "custom" not in payload["dns"]
+        assert "custom" not in payload["ipv6"]["name_servers"]
+
+    @pytest.mark.asyncio
+    async def test_clear_then_reenable_round_trip(self, dns_api, mock_session):
+        """Test clear and re-enable are exact inverses at the payload level."""
+        await dns_api.clear_custom_dns("net123")
+        cleared = sent_payload(mock_session)
+
+        await dns_api.set_dns_mode("net123", "custom")
+        restored = sent_payload(mock_session)
+
+        assert cleared["dns"]["mode"] == DNS_MODE_AUTOMATIC
+        assert restored["dns"]["mode"] == DNS_MODE_CUSTOM
+        assert cleared.keys() == restored.keys()
 
     @pytest.mark.asyncio
     async def test_invalid_mode_raises(self, dns_api, mock_session):

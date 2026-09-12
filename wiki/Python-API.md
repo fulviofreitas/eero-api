@@ -218,11 +218,12 @@ await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=None)
 
 await client.set_dns_mode("custom", custom_servers=["1.1.1.1"], network_id=None)
 
-# Back to the ISP's resolvers. Non-destructive server-side: the API keeps your
-# servers rather than erasing them. Re-enabling through this SDK still means
-# passing the addresses again — there is no mode-only custom write.
+# Back to the ISP's resolvers. Non-destructive: the API keeps your servers.
 await client.clear_custom_dns(family="ipv6", network_id=None)  # one family
 await client.clear_custom_dns(network_id=None)                 # both
+
+# Re-enable the stored servers without resupplying them.
+await client.set_dns_mode("custom", network_id=None)
 ```
 
 Reading the result:
