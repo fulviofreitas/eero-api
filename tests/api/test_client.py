@@ -13,7 +13,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from eero.client import EeroClient
-from eero.exceptions import EeroAuthenticationException, EeroException
+from eero.exceptions import (
+    EeroAuthenticationException,
+    EeroException,
+    EeroValidationException,
+)
 
 
 class TestEeroClientInit:
@@ -473,3 +477,194 @@ class TestEeroClientForwardWrites:
 
         with pytest.raises(EeroAuthenticationException):
             await client.delete_forward("forward_1", network_id="network_123")
+
+
+# ========================== DNS facade ==========================
+
+
+class TestEeroClientDns:
+    """Tests for the EeroClient DNS wrappers.
+
+    These cover the facade itself rather than DnsAPI: argument order across the
+    delegation boundary, and cache invalidation after a write. A DnsAPI-level
+    test cannot catch a dropped or transposed argument here (issue #123).
+    """
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed DNS API."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        for name in (
+            "get_dns_settings",
+            "set_dns_caching",
+            "set_custom_dns",
+            "set_custom_dns_ipv4",
+            "set_custom_dns_ipv6",
+            "clear_custom_dns",
+            "set_dns_mode",
+            "set_ipv6_dns",
+        ):
+            setattr(client._api.dns, name, AsyncMock(return_value={"meta": {"code": 200}}))
+        return client
+
+    @pytest.mark.asyncio
+    async def test_set_custom_dns_delegates_network_id_first(self, client):
+        """Test network_id leads and the server list follows, not the reverse."""
+        await client.set_custom_dns(["1.1.1.1", "1.0.0.1"])
+
+        client._api.dns.set_custom_dns.assert_called_once_with(
+            "network_123", ["1.1.1.1", "1.0.0.1"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_custom_dns_ipv4_delegates(self, client):
+        """Test the IPv4 wrapper reaches the IPv4 method with the right order."""
+        await client.set_custom_dns_ipv4(["8.8.8.8"])
+
+        client._api.dns.set_custom_dns_ipv4.assert_called_once_with("network_123", ["8.8.8.8"])
+
+    @pytest.mark.asyncio
+    async def test_set_custom_dns_ipv6_delegates(self, client):
+        """Test the IPv6 wrapper reaches the IPv6 method, not the IPv4 one."""
+        await client.set_custom_dns_ipv6(["2606:4700:4700::1111"])
+
+        client._api.dns.set_custom_dns_ipv6.assert_called_once_with(
+            "network_123", ["2606:4700:4700::1111"]
+        )
+        client._api.dns.set_custom_dns_ipv4.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_custom_dns_forwards_family(self, client):
+        """Test the family argument survives the delegation."""
+        await client.clear_custom_dns(family="ipv6")
+
+        client._api.dns.clear_custom_dns.assert_called_once_with("network_123", "ipv6")
+
+    @pytest.mark.asyncio
+    async def test_clear_custom_dns_defaults_to_both_families(self, client):
+        """Test omitting family clears both."""
+        await client.clear_custom_dns()
+
+        client._api.dns.clear_custom_dns.assert_called_once_with("network_123", None)
+
+    @pytest.mark.asyncio
+    async def test_set_dns_caching_delegates(self, client):
+        """Test the enabled flag is not transposed with network_id."""
+        await client.set_dns_caching(True)
+
+        client._api.dns.set_dns_caching.assert_called_once_with("network_123", True)
+
+    @pytest.mark.asyncio
+    async def test_set_dns_mode_delegates(self, client):
+        """Test mode and servers arrive in the documented order."""
+        await client.set_dns_mode("custom", ["9.9.9.9"])
+
+        client._api.dns.set_dns_mode.assert_called_once_with("network_123", "custom", ["9.9.9.9"])
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_dns_delegates(self, client):
+        """Test the ipv6_upstream toggle reaches DnsAPI."""
+        await client.set_ipv6_dns(True)
+
+        client._api.dns.set_ipv6_dns.assert_called_once_with("network_123", True)
+
+    @pytest.mark.asyncio
+    async def test_explicit_network_id_overrides_preferred(self, client):
+        """Test an explicit network_id wins over the preferred network."""
+        await client.set_custom_dns(["1.1.1.1"], network_id="network_999")
+
+        client._api.dns.set_custom_dns.assert_called_once_with("network_999", ["1.1.1.1"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda c: c.set_custom_dns(["1.1.1.1"]),
+            lambda c: c.set_custom_dns_ipv4(["1.1.1.1"]),
+            lambda c: c.set_custom_dns_ipv6(["2606:4700:4700::1111"]),
+            lambda c: c.clear_custom_dns(),
+            lambda c: c.set_dns_caching(True),
+            lambda c: c.set_dns_mode("auto"),
+            lambda c: c.set_ipv6_dns(True),
+        ],
+    )
+    async def test_writes_invalidate_the_network_cache(self, client, call):
+        """Test every DNS write evicts the cached network snapshot.
+
+        DNS settings live inside the network resource, so a stale snapshot would
+        report pre-write state for up to the cache TTL.
+        """
+        client._cache["network"]["network_123"] = {
+            "data": {"dns": {"mode": "custom"}},
+            "timestamp": time.monotonic(),
+        }
+
+        await call(client)
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_write_leaves_other_networks_cached(self, client):
+        """Test invalidation is scoped to the network being written."""
+        for net in ("network_123", "network_456"):
+            client._cache["network"][net] = {"data": {}, "timestamp": time.monotonic()}
+
+        await client.set_custom_dns(["1.1.1.1"])
+
+        assert "network_123" not in client._cache["network"]
+        assert "network_456" in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_invalidation_is_safe_when_nothing_cached(self, client):
+        """Test writing with a cold cache does not raise."""
+        client._cache["network"].pop("network_123", None)
+
+        await client.set_custom_dns(["1.1.1.1"])
+
+        client._api.dns.set_custom_dns.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reads_do_not_invalidate_the_cache(self, client):
+        """Test get_dns_settings leaves the cached snapshot alone."""
+        client._cache["network"]["network_123"] = {"data": {}, "timestamp": time.monotonic()}
+
+        await client.get_dns_settings()
+
+        assert "network_123" in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_requires_network_id(self, mock_session):
+        """Test a DNS write with no network available raises rather than guessing."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.set_custom_dns(["1.1.1.1"])
+
+    @pytest.mark.asyncio
+    async def test_propagates_validation_error(self, client):
+        """Test validation errors from DnsAPI are not swallowed by the facade."""
+        client._api.dns.set_custom_dns = AsyncMock(
+            side_effect=EeroValidationException("dns_servers", "bad")
+        )
+
+        with pytest.raises(EeroValidationException):
+            await client.set_custom_dns(["nope"])
+
+    @pytest.mark.asyncio
+    async def test_failed_write_does_not_invalidate_cache(self, client):
+        """Test a raising write leaves the cache intact.
+
+        Evicting on failure would force a needless refetch of state that never
+        changed.
+        """
+        client._cache["network"]["network_123"] = {"data": {}, "timestamp": time.monotonic()}
+        client._api.dns.set_custom_dns = AsyncMock(
+            side_effect=EeroValidationException("dns_servers", "bad")
+        )
+
+        with pytest.raises(EeroValidationException):
+            await client.set_custom_dns(["nope"])
+
+        assert "network_123" in client._cache["network"]

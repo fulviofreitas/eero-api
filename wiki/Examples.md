@@ -464,8 +464,21 @@ primary/secondary — then verify the write actually landed.
 import asyncio
 import ipaddress
 
-from eero import EeroClient
+from eero import EeroClient, id_from_url
 from eero.exceptions import EeroValidationException
+
+
+def as_list(response: dict, key: str | None = None) -> list:
+    """See Raw Response Format — the networks list has several shapes."""
+    data = response.get("data") or {}
+    if isinstance(data, list):
+        return data
+    items = data.get(key) if key else None
+    if items is None:
+        items = data.get("data") or []
+    if isinstance(items, dict):
+        items = items.get("data") or []
+    return items if isinstance(items, list) else []
 
 
 def same_address(a: str, b: str) -> bool:
@@ -484,14 +497,19 @@ async def main() -> None:
     ]
 
     async with EeroClient() as client:
+        # DNS methods use auto_discover=False, so resolve the network first and
+        # pass network_id= explicitly — a bare call raises EeroException.
+        networks = as_list(await client.get_networks(), "networks")
+        network_id = id_from_url(networks[0]["url"])
+
         try:
-            await client.set_custom_dns(wanted)
+            await client.set_custom_dns(wanted, network_id=network_id)
         except EeroValidationException as exc:
             print(f"Rejected before sending: {exc}")
             return
 
         # get_dns_settings is never cached, so this read is always fresh.
-        data = (await client.get_dns_settings())["data"]
+        data = (await client.get_dns_settings(network_id=network_id))["data"]
         live = data["dns"]["custom"]["ips"] + data["ipv6"]["name_servers"]["custom"]
 
         for address in wanted:
@@ -511,13 +529,20 @@ prove a write took effect.
 
 ### Switch one family back to the ISP resolvers
 
-Clearing is non-destructive — the API keeps the stored servers, so switching back to custom
-mode later restores them without retyping.
+Clearing is non-destructive on the **server** side — the API keeps the stored servers rather
+than erasing them, so they still appear in `dns.custom.ips` while the mode is `automatic`.
+
+Switching back through this SDK still requires supplying the addresses, though. The API
+appears to accept a mode-only write that would re-enable the retained servers, but that has
+not been live-verified, so no method exposes it.
 
 ```python
 async with EeroClient() as client:
-    await client.clear_custom_dns(family="ipv6")   # IPv4 untouched
-    await client.set_custom_dns_ipv6(["2001:4860:4860::8888"])  # and back again
+    # ...resolve network_id as above...
+    await client.clear_custom_dns(family="ipv6", network_id=network_id)  # IPv4 untouched
+    await client.set_custom_dns_ipv6(
+        ["2001:4860:4860::8888"], network_id=network_id
+    )  # re-enabling means passing addresses again
 ```
 
 ---

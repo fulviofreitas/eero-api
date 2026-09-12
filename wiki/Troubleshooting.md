@@ -188,7 +188,7 @@ Some write endpoints return `200 OK` but don't persist the change server-side. T
 
 ### I set custom DNS and nothing changed
 
-**On eero-api < 7.0.0 this is expected — the DNS write methods did nothing.** `set_custom_dns`, `set_dns_mode`, `clear_custom_dns` and `set_dns_caching` sent a `custom_dns` field that does not exist in the API. The backend accepted it with `200 OK` and discarded it (issue #123). Upgrade to v7.0.0 or later.
+**On eero-api < 7.0.0 this is expected — the DNS write methods did nothing.** `set_custom_dns`, `set_dns_mode` and `clear_custom_dns` sent a `custom_dns` field; `set_dns_caching` sent a separate `dns_caching` field. Neither field exists in the API, and the backend accepts unrecognised keys with `200 OK` and discards them (issue #123). Upgrade to v7.0.0 or later.
 
 On v7.0.0+, verify the write landed by reading it back — `get_dns_settings` is never cached, so a read immediately after a write is always fresh:
 
@@ -210,6 +210,10 @@ Two likely causes:
 
 - **IPv6 is stored fully expanded.** `2606:4700:4700::1111` reads back as `2606:4700:4700:0:0:0:0:1111`. Compare via `ipaddress.IPv6Address(a) == ipaddress.IPv6Address(b)`, never string equality.
 - **You're reading `dns.custom.ips` while the mode is `automatic`.** Those two are independent: the API retains your servers when custom DNS is switched off. Check `dns.mode` to know what is actually in use, and `dns.parent.ips` for the ISP resolvers being used instead.
+
+### `clear_custom_dns` didn't seem to switch anything
+
+Worth knowing: the nested server writes were live-verified, but **no probe isolated a `mode` change**, so writing `dns.mode` / `ipv6.name_servers.mode` rests on inference from the read shape. If `clear_custom_dns` appears not to take effect, read back `dns.mode` and report it on [#123](https://github.com/fulviofreitas/eero-api/issues/123) — switching the mode in the eero app is a known-good fallback.
 
 ### `EeroValidationException` on a DNS call that used to work
 

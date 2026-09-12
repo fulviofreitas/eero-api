@@ -115,6 +115,8 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `set_upnp` | `set_upnp(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_wpa3` | `set_wpa3(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_ipv6` | `set_ipv6(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
+| `set_dns_caching` | `set_dns_caching(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
+| `set_ipv6_dns` | `set_ipv6_dns(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_dns_mode` | `set_dns_mode(mode, custom_servers=None, network_id=None)` | ID lands in `mode` — **caught**: raises `EeroValidationException` |
 | `set_custom_dns` | `set_custom_dns(dns_servers, network_id=None)` | ID lands in `dns_servers` — **caught**: raises `EeroValidationException` |
 | `clear_custom_dns` | `clear_custom_dns(family=None, network_id=None)` | ID lands in `family` — **caught**: raises `EeroValidationException` |
@@ -125,9 +127,9 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `get_device` | `get_device(device_id, network_id=None, refresh_cache=False)` | ID lands in `device_id` |
 | `set_device_nickname` | `set_device_nickname(device_id, nickname, network_id=None)` | ID lands in `device_id` |
 
-For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
+For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network` / `set_dns_caching` / `set_ipv6_dns`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
 
-The DNS methods are the exception: since they validate their input, a misplaced network ID raises `EeroValidationException` before any request is made rather than being written to the network. That is a nice side effect of validation, not a reason to rely on it — the other methods still fail silently.
+Only three methods catch this: `set_dns_mode`, `set_custom_dns` and `clear_custom_dns` validate their first argument, so a misplaced network ID raises `EeroValidationException` before any request is made. **Do not generalise that to "DNS methods are safe"** — `set_dns_caching` and `set_ipv6_dns` take a plain `bool` and validate nothing, so they fail silently exactly like the other boolean setters. The protection is a side effect of those three happening to validate, not a property of the DNS surface.
 
 ---
 

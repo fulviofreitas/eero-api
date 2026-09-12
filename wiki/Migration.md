@@ -222,12 +222,16 @@ release from v4.1.3 through v6.2.0:
 upgrading it will alter real network configuration. **Review those call sites before you
 upgrade**, particularly anything that runs unattended.
 
-### Three behaviour changes beyond "it works now"
+### Four behaviour changes beyond "it works now"
 
-| Before (v6.x) | After (v7.0.0) |
+Everything in the "Before" column describes what the SDK *attempted*. Because the field it
+wrote did not exist, none of it reached your network — the calls were no-ops. **Your stored
+configuration was never altered by this SDK.**
+
+| Before (v6.x) — intended, but a no-op | After (v7.0.0) |
 |---|---|
-| `set_custom_dns([a, b, c])` silently dropped everything past the second entry | Raises `EeroValidationException`; the cap is now **2 per address family** |
-| `set_dns_mode("auto")` sent an empty server list, discarding your servers | Switches the mode selector to `automatic` and **retains** the stored servers |
+| `set_custom_dns([a, b, c])` silently dropped everything past the second entry before sending | Raises `EeroValidationException`; the cap is now **2 per address family** |
+| `set_dns_mode("auto")` built an empty server list, which *would* have erased your servers had the write worked | Switches the mode selector to `automatic` and **retains** the stored servers |
 | An unrecognised mode returned a locally fabricated `{"meta": {"code": 400}}` | Raises `EeroValidationException` |
 | `set_dns_mode("cloudflare"/"google"/"opendns")` resolved a hardcoded server list | Removed — read the API's own catalogue instead (below) |
 

@@ -232,10 +232,11 @@ class DnsAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Set custom DNS servers from a mixed list - returns raw Eero API response.
 
-        The list may contain IPv4 and/or IPv6 literals; they are partitioned by
-        family and written to their respective fields, and both families are
-        switched to custom mode. A family not represented in the list is left
-        untouched — use `clear_custom_dns` to turn one off.
+        The list may contain IPv4 and/or IPv6 literals. They are partitioned by
+        family, and each family that is represented is written to its own field
+        and switched to custom mode. **A family not represented in the list is
+        left untouched** — an IPv4-only list does not alter IPv6, and vice versa.
+        Use `clear_custom_dns` to switch a family back to automatic.
 
         To address a single family explicitly, prefer `set_custom_dns_ipv4` or
         `set_custom_dns_ipv6`.
@@ -341,9 +342,21 @@ class DnsAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Switch DNS back to automatic - returns raw Eero API response.
 
-        This is non-destructive: the API retains the configured servers, so a
-        later switch back to custom mode restores them. It mirrors the eero
-        app's "ISP DNS (Default)" option.
+        This is non-destructive: the API retains the configured servers rather
+        than discarding them, mirroring the eero app's "ISP DNS (Default)"
+        option. Server-side retention is confirmed — a network switched to
+        automatic in the app still reports its servers in ``dns.custom.ips``.
+
+        Two caveats worth knowing:
+
+        - **Writing ``mode`` is not yet live-verified.** The nested server
+          writes were confirmed against API 2.2 on 2026-09-12, but no probe
+          isolated a mode change, so this method rests on inference from the
+          read shape. Verify with a read-back rather than assuming it applied.
+        - **Re-enabling retained servers requires supplying them again.** The
+          API appears to accept a mode-only write, but the SDK does not expose
+          one, precisely because it is unverified. Pass the addresses to
+          `set_custom_dns` to switch back.
 
         Args:
             network_id: ID of the network
