@@ -5,7 +5,7 @@ Tests cover:
 - Setting DNS caching via the nested `dns.caching` field
 - Custom DNS servers per address family, and mixed-family input
 - Per-family and whole-network clearing (mode -> automatic)
-- DNS mode presets and mode validation
+- DNS mode switching and mode validation
 - IP-literal and address-family validation, and the per-family cap
 
 Wire format under test (live-verified 2026-09-12, API 2.2 — see issue #123):
@@ -397,24 +397,20 @@ class TestSetDnsMode:
     """Tests for set_dns_mode."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "preset,expected_ipv4",
-        [
-            ("cloudflare", ["1.1.1.1", "1.0.0.1"]),
-            ("google", ["8.8.8.8", "8.8.4.4"]),
-            ("opendns", ["208.67.222.222", "208.67.220.220"]),
-        ],
-    )
-    async def test_presets_configure_both_families(
-        self, dns_api, mock_session, preset, expected_ipv4
-    ):
-        """Test presets set IPv4 and IPv6 servers and switch to custom mode."""
-        await dns_api.set_dns_mode("net123", preset)
+    @pytest.mark.parametrize("preset", ["cloudflare", "google", "opendns", "quad9"])
+    async def test_provider_names_are_not_modes(self, dns_api, mock_session, preset):
+        """Test provider names are rejected rather than resolved by the SDK.
 
-        payload = sent_payload(mock_session)
-        assert payload["dns"]["custom"]["ips"] == expected_ipv4
-        assert payload["dns"]["mode"] == DNS_MODE_CUSTOM
-        assert len(payload["ipv6"]["name_servers"]["custom"]) == 2
+        The API serves its own provider catalogue at dns.default_test_servers.
+        Hardcoding a copy here would duplicate server-owned data and go stale —
+        an earlier draft did exactly that and already omitted Quad9, which the
+        API offers. Consumers read the catalogue and pass the addresses.
+        """
+        with pytest.raises(EeroValidationException) as exc_info:
+            await dns_api.set_dns_mode("net123", preset)
+
+        assert "default_test_servers" in str(exc_info.value)
+        mock_session.request.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mode", ["auto", "automatic", "AUTO"])
@@ -462,7 +458,7 @@ class TestSetDnsMode:
     @pytest.mark.asyncio
     async def test_targets_settings_endpoint(self, dns_api, mock_session):
         """Test the write goes to the settings sub-resource."""
-        await dns_api.set_dns_mode("net123", "google")
+        await dns_api.set_dns_mode("net123", "custom", ["9.9.9.9"])
 
         assert "networks/net123/settings" in sent_url(mock_session)
 

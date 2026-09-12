@@ -215,7 +215,7 @@ release from v4.1.3 through v6.2.0:
 
 - `set_custom_dns`
 - `clear_custom_dns`
-- `set_dns_mode` (all modes, including every preset)
+- `set_dns_mode` (every mode)
 - `set_dns_caching`
 
 **The practical consequence**: if your code calls any of them, it has been a no-op. After
@@ -229,9 +229,25 @@ upgrade**, particularly anything that runs unattended.
 | `set_custom_dns([a, b, c])` silently dropped everything past the second entry | Raises `EeroValidationException`; the cap is now **2 per address family** |
 | `set_dns_mode("auto")` sent an empty server list, discarding your servers | Switches the mode selector to `automatic` and **retains** the stored servers |
 | An unrecognised mode returned a locally fabricated `{"meta": {"code": 400}}` | Raises `EeroValidationException` |
+| `set_dns_mode("cloudflare"/"google"/"opendns")` resolved a hardcoded server list | Removed — read the API's own catalogue instead (below) |
 
 Malformed IP literals, addresses of the wrong family, and zone-scoped addresses are now also
 rejected locally, before any request.
+
+### Provider presets are gone — use the API's catalogue
+
+`set_dns_mode` no longer accepts `"cloudflare"`, `"google"` or `"opendns"`. Those resolved a
+server list hardcoded in the SDK, duplicating data the API already serves — and the copy was
+incomplete, omitting Quad9. Read the authoritative list instead:
+
+```python
+data = (await client.get_dns_settings())["data"]
+chosen = next(p for p in data["dns"]["default_test_servers"] if p["name"] == "Cloudflare")
+await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
+```
+
+Each entry has `name`, `ipv4` and `ipv6`. This is the SDK's raw-JSON contract applied
+consistently: values come from the API or from you, never invented in between.
 
 ### New capability
 
@@ -283,6 +299,8 @@ Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back
       `set_dns_caching` — they now take effect.
 - [ ] Wrap DNS writes in `except EeroValidationException` if you pass user-supplied input.
 - [ ] Replace any call passing more than 2 servers for one family.
+- [ ] Replace `set_dns_mode("cloudflare"/"google"/"opendns")` with addresses read from
+      `dns.default_test_servers`.
 - [ ] Replace reads of `custom_dns` / `dns_caching` / `dns_servers` with the real paths above.
 - [ ] Replace `set_ipv6_dns` with `set_custom_dns_ipv6` if you wanted IPv6 DNS servers.
 - [ ] Drop any `client._api.dns` reach-through for `clear_custom_dns` / `set_ipv6_dns`.

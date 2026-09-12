@@ -49,22 +49,6 @@ MAX_DNS_SERVERS_PER_FAMILY = 2
 DNS_MODE_CUSTOM = "custom"
 DNS_MODE_AUTOMATIC = "automatic"
 
-#: Preset resolver pairs, keyed by the mode name callers pass to `set_dns_mode`.
-DNS_PRESETS: Dict[str, Dict[str, List[str]]] = {
-    "cloudflare": {
-        "ipv4": ["1.1.1.1", "1.0.0.1"],
-        "ipv6": ["2606:4700:4700::1111", "2606:4700:4700::1001"],
-    },
-    "google": {
-        "ipv4": ["8.8.8.8", "8.8.4.4"],
-        "ipv6": ["2001:4860:4860::8888", "2001:4860:4860::8844"],
-    },
-    "opendns": {
-        "ipv4": ["208.67.222.222", "208.67.220.220"],
-        "ipv6": ["2620:119:35::35", "2620:119:53::53"],
-    },
-}
-
 
 def _validate_servers(servers: List[str], family: int, field: str) -> List[str]:
     """Validate and normalise a list of DNS server literals for one family.
@@ -173,16 +157,16 @@ class DnsAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def _auth_token(self) -> str:
-        """Return the current auth token or raise if unauthenticated."""
+    async def _put_settings(self, network_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """PUT a settings payload for a network.
+
+        Every DNS write goes through here, so the endpoint and the auth guard
+        live in one place.
+        """
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
-        return auth_token
 
-    async def _put_settings(self, network_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """PUT a settings payload for a network."""
-        auth_token = await self._auth_token()
         return await self.put(
             f"networks/{network_id}/settings",
             auth_token=auth_token,
@@ -213,7 +197,10 @@ class DnsAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        auth_token = await self._auth_token()
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
         _LOGGER.debug("Getting DNS settings for network %s", network_id)
         return await self.get(f"networks/{network_id}", auth_token=auth_token)
 
@@ -393,11 +380,16 @@ class DnsAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Set DNS mode for the network - returns raw Eero API response.
 
+        Named provider presets are deliberately not offered here. The API serves
+        its own provider catalogue at ``data.dns.default_test_servers`` (read it
+        via `get_dns_settings`), with IPv4 and IPv6 addresses per provider. A
+        hardcoded copy in the SDK would duplicate server-owned data and go stale.
+        Build a preset picker from that catalogue and pass the addresses as
+        ``custom_servers``.
+
         Args:
             network_id: ID of the network
-            mode: One of "auto"/"automatic", "custom", or a preset name
-                ("cloudflare", "google", "opendns"). Presets configure both
-                address families.
+            mode: "auto"/"automatic" or "custom"
             custom_servers: DNS servers, required when mode is "custom". May mix
                 IPv4 and IPv6 literals.
 
@@ -418,11 +410,6 @@ class DnsAPI(AuthenticatedAPI):
         if normalised_mode in ("auto", DNS_MODE_AUTOMATIC):
             return await self.clear_custom_dns(network_id)
 
-        if normalised_mode in DNS_PRESETS:
-            preset = DNS_PRESETS[normalised_mode]
-            _LOGGER.debug("Applying DNS preset %s for network %s", normalised_mode, network_id)
-            return await self.set_custom_dns(network_id, preset["ipv4"] + preset["ipv6"])
-
         if normalised_mode == DNS_MODE_CUSTOM:
             if not custom_servers:
                 raise EeroValidationException("custom_servers", "required when mode is 'custom'")
@@ -430,8 +417,9 @@ class DnsAPI(AuthenticatedAPI):
 
         raise EeroValidationException(
             "mode",
-            f"{mode!r} is not a valid DNS mode; expected 'auto', 'custom', "
-            f"or one of {sorted(DNS_PRESETS)}",
+            f"{mode!r} is not a valid DNS mode; expected 'auto' or 'custom'. "
+            "Provider presets are available from the API at "
+            "data.dns.default_test_servers — pass those addresses as custom_servers",
         )
 
     async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]:

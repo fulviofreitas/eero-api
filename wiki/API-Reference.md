@@ -181,6 +181,10 @@ At most **2 servers per address family** are accepted; exceeding that raises
 `EeroValidationException`. This matches the app's slots and is a deliberate client-side
 limit — the API itself accepts more, but behaviour beyond four servers is unverified.
 
+`data.dns.default_test_servers` carries the API's own provider catalogue (Cloudflare, Google,
+OpenDNS, Quad9), each with `name`, `ipv4` and `ipv6`. The SDK offers no hardcoded presets —
+build a picker from that list so it stays current and complete.
+
 ### SQM / QoS
 
 | Method | Signature | Returns | Notes |

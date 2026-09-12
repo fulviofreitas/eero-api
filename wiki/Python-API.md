@@ -216,8 +216,6 @@ await client.set_custom_dns(
 await client.set_custom_dns_ipv4(["8.8.8.8", "8.8.4.4"], network_id=None)
 await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=None)
 
-# Presets configure both families.
-await client.set_dns_mode("cloudflare", network_id=None)
 await client.set_dns_mode("custom", custom_servers=["1.1.1.1"], network_id=None)
 
 # Back to the ISP's resolvers. Non-destructive: your servers are retained,
@@ -241,6 +239,25 @@ data["ipv6"]["name_servers"]["custom"]  # IPv6 servers, fully expanded
 
 At most 2 servers per family; more raises `EeroValidationException`, as does a malformed
 address or one of the wrong family.
+
+### Provider presets
+
+The SDK deliberately has no built-in provider list. The API serves its own catalogue, which
+is authoritative and stays current — build a picker from it rather than hardcoding addresses:
+
+```python
+data = (await client.get_dns_settings())["data"]
+
+for provider in data["dns"]["default_test_servers"]:
+    print(provider["name"], provider["ipv4"], provider["ipv6"])
+    # Cloudflare ['1.1.1.1', '1.0.0.1'] ['2606:4700:4700::1111', ...]
+    # Google     ['8.8.8.8', '8.8.4.4'] ['2001:4860:4860::8888', ...]
+    # OpenDNS    [...]                  [...]
+    # Quad9      [...]                  [...]
+
+chosen = data["dns"]["default_test_servers"][0]
+await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
+```
 
 > **⚠️** `set_ipv6_dns()` is **not** for IPv6 DNS servers — it toggles `ipv6_upstream`,
 > the IPv6 connectivity setting. Use `set_custom_dns_ipv6()` instead.
