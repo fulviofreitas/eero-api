@@ -42,7 +42,7 @@ Exception
 | `EeroNotFoundException` | **Never raised by this SDK** — see the warning below | `resource_type`, `resource_id` |
 | `EeroPremiumRequiredException` | **Never raised by this SDK** — defined for forward compatibility | `feature` |
 | `EeroFeatureUnavailableException` | **Never raised by this SDK** — defined for forward compatibility | `feature`, `reason` |
-| `EeroValidationException` | Local input validation only — e.g. `id_from_url()` given an empty/non-string ID, or `set_session_token()` / `AuthAPI.set_session_token()` given an empty/non-string token | `field`, `message` |
+| `EeroValidationException` | Local input validation only — raised before any network call. Sites: `id_from_url()` given an empty/non-string ID; `set_session_token()` / `AuthAPI.set_session_token()` given an empty/non-string token; the DNS write methods given a malformed IP literal, an address of the wrong family, a zone-scoped address, more than 2 servers for one family, an unrecognised DNS mode, or `mode="custom"` without servers | `field`, `message` |
 
 > ⚠️ **Warning:** `EeroNotFoundException`, `EeroPremiumRequiredException`, and `EeroFeatureUnavailableException` exist in `eero.exceptions` but are **dead code from the SDK's own perspective** — nothing in `src/eero/` currently raises them. A 404 from the Eero Cloud API is surfaced as `EeroAPIException` with `status_code == 404`, not `EeroNotFoundException`. Don't write an `except EeroNotFoundException:` block expecting it to ever fire against this SDK version — check `EeroAPIException.status_code == 404` instead.
 

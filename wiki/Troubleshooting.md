@@ -184,6 +184,39 @@ Some write endpoints return `200 OK` but don't persist the change server-side. T
 
 ---
 
+## DNS Issues
+
+### I set custom DNS and nothing changed
+
+**On eero-api < 7.0.0 this is expected — the DNS write methods did nothing.** `set_custom_dns`, `set_dns_mode`, `clear_custom_dns` and `set_dns_caching` sent a `custom_dns` field that does not exist in the API. The backend accepted it with `200 OK` and discarded it (issue #123). Upgrade to v7.0.0 or later.
+
+On v7.0.0+, verify the write landed by reading it back — `get_dns_settings` is never cached, so a read immediately after a write is always fresh:
+
+```python
+await client.set_custom_dns(["9.9.9.9"])
+data = (await client.get_dns_settings())["data"]
+print(data["dns"]["mode"], data["dns"]["custom"]["ips"])
+```
+
+### I set IPv6 DNS servers with `set_ipv6_dns` and nothing happened
+
+`set_ipv6_dns` does not set DNS servers. It toggles `ipv6_upstream`, the network-level IPv6 connectivity setting, and always has — the name is misleading (issue #125). Use `set_custom_dns_ipv6()`.
+
+IPv6 DNS works independently of `ipv6_upstream`: the IPv6 servers can be configured and active while `ipv6_upstream` is `false`.
+
+### The servers I read back don't match what I wrote
+
+Two likely causes:
+
+- **IPv6 is stored fully expanded.** `2606:4700:4700::1111` reads back as `2606:4700:4700:0:0:0:0:1111`. Compare via `ipaddress.IPv6Address(a) == ipaddress.IPv6Address(b)`, never string equality.
+- **You're reading `dns.custom.ips` while the mode is `automatic`.** Those two are independent: the API retains your servers when custom DNS is switched off. Check `dns.mode` to know what is actually in use, and `dns.parent.ips` for the ISP resolvers being used instead.
+
+### `EeroValidationException` on a DNS call that used to work
+
+Expected on v7.0.0+. Over-limit input (more than 2 servers per address family) used to be silently truncated and now raises. Malformed literals and family mismatches are also rejected locally now. See [Migration](Migration#v6x--v700).
+
+---
+
 ## Debug Mode
 
 For detailed logging when troubleshooting issues, enable Python's standard logging — but be aware of what that exposes.

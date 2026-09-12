@@ -455,6 +455,73 @@ asyncio.run(main())
 
 ---
 
+## Dual-Stack Custom DNS
+
+Configure all four slots the eero app exposes — IPv4 primary/secondary and IPv6
+primary/secondary — then verify the write actually landed.
+
+```python
+import asyncio
+import ipaddress
+
+from eero import EeroClient
+from eero.exceptions import EeroValidationException
+
+
+def same_address(a: str, b: str) -> bool:
+    """Compare IP literals by value.
+
+    The API stores IPv6 fully expanded, so "2606:4700:4700::1111" reads back as
+    "2606:4700:4700:0:0:0:0:1111". String comparison would report a false mismatch.
+    """
+    return ipaddress.ip_address(a) == ipaddress.ip_address(b)
+
+
+async def main() -> None:
+    wanted = [
+        "1.1.1.1", "1.0.0.1",
+        "2606:4700:4700::1111", "2606:4700:4700::1001",
+    ]
+
+    async with EeroClient() as client:
+        try:
+            await client.set_custom_dns(wanted)
+        except EeroValidationException as exc:
+            print(f"Rejected before sending: {exc}")
+            return
+
+        # get_dns_settings is never cached, so this read is always fresh.
+        data = (await client.get_dns_settings())["data"]
+        live = data["dns"]["custom"]["ips"] + data["ipv6"]["name_servers"]["custom"]
+
+        for address in wanted:
+            ok = any(same_address(address, seen) for seen in live)
+            print(f"{'OK ' if ok else 'MISSING'}  {address}")
+
+        print(f"IPv4 mode: {data['dns']['mode']}")
+        print(f"IPv6 mode: {data['ipv6']['name_servers']['mode']}")
+
+
+asyncio.run(main())
+```
+
+Reading back and comparing is worth the few extra lines: the eero API accepts unrecognised
+fields with `200 OK` and silently discards them, so a success response on its own does not
+prove a write took effect.
+
+### Switch one family back to the ISP resolvers
+
+Clearing is non-destructive — the API keeps the stored servers, so switching back to custom
+mode later restores them without retyping.
+
+```python
+async with EeroClient() as client:
+    await client.clear_custom_dns(family="ipv6")   # IPv4 untouched
+    await client.set_custom_dns_ipv6(["2001:4860:4860::8888"])  # and back again
+```
+
+---
+
 ## Working With Multiple Networks
 
 Iterate every network on the account, passing `network_id=` explicitly rather than relying on auto-discovery or the preferred-network default.

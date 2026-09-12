@@ -115,7 +115,9 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `set_upnp` | `set_upnp(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_wpa3` | `set_wpa3(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_ipv6` | `set_ipv6(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
-| `set_dns_mode` | `set_dns_mode(mode, custom_servers=None, network_id=None)` | ID lands in `mode`, sent as an invalid DNS mode string |
+| `set_dns_mode` | `set_dns_mode(mode, custom_servers=None, network_id=None)` | ID lands in `mode` — **caught**: raises `EeroValidationException` |
+| `set_custom_dns` | `set_custom_dns(dns_servers, network_id=None)` | ID lands in `dns_servers` — **caught**: raises `EeroValidationException` |
+| `clear_custom_dns` | `clear_custom_dns(family=None, network_id=None)` | ID lands in `family` — **caught**: raises `EeroValidationException` |
 | `set_guest_network` | `set_guest_network(enabled, name=None, password=None, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_network_name` | `set_network_name(name, network_id=None)` | ID overwrites the network's *name*, not its target |
 | `reboot_eero` | `reboot_eero(eero_id, network_id=None)` | ID lands in `eero_id` — reboots (or 404s on) the wrong device |
@@ -123,7 +125,9 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `get_device` | `get_device(device_id, network_id=None, refresh_cache=False)` | ID lands in `device_id` |
 | `set_device_nickname` | `set_device_nickname(device_id, nickname, network_id=None)` | ID lands in `device_id` |
 
-For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network` / `set_dns_mode`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
+For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
+
+The DNS methods are the exception: since they validate their input, a misplaced network ID raises `EeroValidationException` before any request is made rather than being written to the network. That is a nice side effect of validation, not a reason to rely on it — the other methods still fail silently.
 
 ---
 

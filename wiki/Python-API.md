@@ -202,9 +202,48 @@ await client.delete_forward(forward_id, network_id=None)
 ```python
 dns = await client.get_dns_settings(network_id=None)
 await client.set_dns_caching(enabled=True, network_id=None)
-await client.set_custom_dns(dns_servers=["1.1.1.1", "1.0.0.1"], network_id=None)
+
+# All four slots at once — the list is split by address family.
+await client.set_custom_dns(
+    dns_servers=[
+        "1.1.1.1", "1.0.0.1",                          # IPv4 primary / secondary
+        "2606:4700:4700::1111", "2606:4700:4700::1001",  # IPv6 primary / secondary
+    ],
+    network_id=None,
+)
+
+# Or one family at a time; the other is left untouched.
+await client.set_custom_dns_ipv4(["8.8.8.8", "8.8.4.4"], network_id=None)
+await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=None)
+
+# Presets configure both families.
+await client.set_dns_mode("cloudflare", network_id=None)
 await client.set_dns_mode("custom", custom_servers=["1.1.1.1"], network_id=None)
+
+# Back to the ISP's resolvers. Non-destructive: your servers are retained,
+# so switching back to custom mode restores them.
+await client.clear_custom_dns(family="ipv6", network_id=None)  # one family
+await client.clear_custom_dns(network_id=None)                 # both
 ```
+
+Reading the result:
+
+```python
+data = (await client.get_dns_settings())["data"]
+
+data["dns"]["mode"]                     # "custom" | "automatic"
+data["dns"]["custom"]["ips"]            # IPv4 servers
+data["dns"]["parent"]["ips"]            # the ISP's resolvers
+data["dns"]["caching"]                  # bool
+data["ipv6"]["name_servers"]["mode"]    # "custom" | "automatic"
+data["ipv6"]["name_servers"]["custom"]  # IPv6 servers, fully expanded
+```
+
+At most 2 servers per family; more raises `EeroValidationException`, as does a malformed
+address or one of the wrong family.
+
+> **⚠️** `set_ipv6_dns()` is **not** for IPv6 DNS servers — it toggles `ipv6_upstream`,
+> the IPv6 connectivity setting. Use `set_custom_dns_ipv6()` instead.
 
 ---
 
