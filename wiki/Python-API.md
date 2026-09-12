@@ -199,12 +199,74 @@ await client.delete_forward(forward_id, network_id=None)
 
 ## DNS
 
+> **⚠️ Every DNS write reboots the whole mesh** — all eeros restart and clients lose
+> connectivity. Read first and skip the write when nothing has changed; see
+> [Troubleshooting](Troubleshooting#my-whole-network-went-down-after-changing-dns).
+
 ```python
 dns = await client.get_dns_settings(network_id=None)
 await client.set_dns_caching(enabled=True, network_id=None)
-await client.set_custom_dns(dns_servers=["1.1.1.1", "1.0.0.1"], network_id=None)
+
+# All four slots at once — the list is split by address family.
+await client.set_custom_dns(
+    dns_servers=[
+        "1.1.1.1", "1.0.0.1",                          # IPv4 primary / secondary
+        "2606:4700:4700::1111", "2606:4700:4700::1001",  # IPv6 primary / secondary
+    ],
+    network_id=None,
+)
+
+# Or one family at a time; the other is left untouched.
+await client.set_custom_dns_ipv4(["8.8.8.8", "8.8.4.4"], network_id=None)
+await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=None)
+
 await client.set_dns_mode("custom", custom_servers=["1.1.1.1"], network_id=None)
+
+# Back to the ISP's resolvers. Non-destructive: the API keeps your servers.
+await client.clear_custom_dns(family="ipv6", network_id=None)  # one family
+await client.clear_custom_dns(network_id=None)                 # both
+
+# Re-enable the stored servers without resupplying them.
+await client.set_dns_mode("custom", network_id=None)
 ```
+
+Reading the result:
+
+```python
+data = (await client.get_dns_settings())["data"]
+
+data["dns"]["mode"]                     # "custom" | "automatic"
+data["dns"]["custom"]["ips"]            # IPv4 servers
+data["dns"]["parent"]["ips"]            # the ISP's resolvers
+data["dns"]["caching"]                  # bool
+data["ipv6"]["name_servers"]["mode"]    # "custom" | "automatic"
+data["ipv6"]["name_servers"]["custom"]  # IPv6 servers, fully expanded
+```
+
+At most 2 servers per family; more raises `EeroValidationException`, as does a malformed
+address or one of the wrong family.
+
+### Provider presets
+
+The SDK deliberately has no built-in provider list. The API serves its own catalogue, which
+is authoritative and stays current — build a picker from it rather than hardcoding addresses:
+
+```python
+data = (await client.get_dns_settings())["data"]
+
+for provider in data["dns"]["default_test_servers"]:
+    print(provider["name"], provider["ipv4"], provider["ipv6"])
+    # Cloudflare ['1.1.1.1', '1.0.0.1'] ['2606:4700:4700::1111', ...]
+    # Google     ['8.8.8.8', '8.8.4.4'] ['2001:4860:4860::8888', ...]
+    # OpenDNS    [...]                  [...]
+    # Quad9      [...]                  [...]
+
+chosen = data["dns"]["default_test_servers"][0]
+await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
+```
+
+> **⚠️** `set_ipv6_dns()` is **not** for IPv6 DNS servers — it toggles `ipv6_upstream`,
+> the IPv6 connectivity setting. Use `set_custom_dns_ipv6()` instead.
 
 ---
 

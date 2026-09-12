@@ -142,11 +142,67 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 |--------|-----------|---------|-------|
 | `get_dns_settings` | `async def get_dns_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_dns_caching` | `async def set_dns_caching(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_custom_dns` | `async def set_custom_dns(self, dns_servers: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `set_custom_dns` | `async def set_custom_dns(self, dns_servers: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Mixed IPv4/IPv6 list, split by family |
+| `set_custom_dns_ipv4` | `async def set_custom_dns_ipv4(self, dns_servers: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv6 untouched |
+| `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, dns_servers: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv4 untouched |
+| `clear_custom_dns` | `async def clear_custom_dns(self, family: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Switches to automatic; **retains** stored servers |
 | `set_dns_mode` | `async def set_dns_mode(self, mode: str, custom_servers: Optional[List[str]]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `set_ipv6_dns` | `async def set_ipv6_dns(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ IPv6 **upstream** toggle, not DNS — see below |
 
-> **Note**: `EeroClient` has no wrapper for `DnsAPI.clear_custom_dns()` or `DnsAPI.set_ipv6_dns()`
-> — call them via `client._api.dns` directly.
+> **⚠️ `set_ipv6_dns` does not set IPv6 DNS servers.** It writes `ipv6_upstream`, the
+> network-level IPv6 connectivity toggle. Use `set_custom_dns_ipv6()` for IPv6 DNS servers —
+> they work independently of `ipv6_upstream`. See [#125](https://github.com/fulviofreitas/eero-api/issues/125).
+
+> ### ⚠️ A DNS change reboots the whole mesh
+>
+> Every eero restarts and all clients lose Wi-Fi and internet while they do. Observed
+> 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting
+> within a 17-second window. The eero app behaves the same way when applying a DNS change.
+>
+> For anything automated:
+>
+> - **Write conditionally.** Read `get_dns_settings()` first and skip the write if the
+>   configuration already matches. A reconciliation loop that writes unconditionally will
+>   reboot the network every run.
+> - **Never retry in a tight loop.** A burst of writes appears to queue a burst of reboots.
+> - **A 200 is not an all-clear.** The response returns immediately; the reboot lands minutes
+>   later.
+>
+> This applies to every write method below — including `set_dns_caching`.
+
+### The DNS data model
+
+Each address family has its own independent mode selector and server list, mirroring the
+four slots in the eero app (IPv4 primary/secondary, IPv6 primary/secondary):
+
+| Path | Meaning |
+|------|---------|
+| `data.dns.mode` | `"custom"` or `"automatic"` — the IPv4 selector |
+| `data.dns.custom.ips` | Configured IPv4 servers, **retained** when mode is `automatic` |
+| `data.dns.parent.ips` | The ISP-provided upstream resolvers |
+| `data.dns.caching` | DNS caching on/off |
+| `data.ipv6.name_servers.mode` | `"custom"` or `"automatic"` — the IPv6 selector |
+| `data.ipv6.name_servers.custom` | Configured IPv6 servers |
+
+Three things to know:
+
+- **The shapes are asymmetric.** The IPv4 list nests under `custom.ips`; the IPv6 list sits
+  directly under `custom`.
+- **IPv6 addresses are stored fully expanded.** A server written as `2606:4700:4700::1111`
+  reads back as `2606:4700:4700:0:0:0:0:1111`. Compare with `ipaddress.IPv6Address`, never
+  string equality.
+- **Clearing is non-destructive and reversible.** `clear_custom_dns()` switches the mode to
+  `automatic` and leaves the stored servers in place, exactly like the app's "ISP DNS
+  (Default)" option. `set_dns_mode("custom")` with no `custom_servers` switches back and
+  re-enables them — no need to resupply the addresses.
+
+At most **2 servers per address family** are accepted; exceeding that raises
+`EeroValidationException`. This matches the app's slots and is a deliberate client-side
+limit — the API itself accepts more, but behaviour beyond four servers is unverified.
+
+`data.dns.default_test_servers` carries the API's own provider catalogue (Cloudflare, Google,
+OpenDNS, Quad9), each with `name`, `ipv4` and `ipv6`. The SDK offers no hardcoded presets —
+build a picker from that list so it stays current and complete.
 
 ### SQM / QoS
 
@@ -439,10 +495,12 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | Constructor | `def __init__(self, auth_api: AuthAPI) -> None` | `DnsAPI` | |
 | `get_dns_settings` | `async def get_dns_settings(self, network_id: str) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_dns_caching` | `async def set_dns_caching(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_custom_dns` | `async def set_custom_dns(self, network_id: str, dns_servers: List[str]) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `clear_custom_dns` | `async def clear_custom_dns(self, network_id: str) -> Dict[str, Any]` | `Dict[str, Any]` | No `EeroClient` wrapper |
+| `set_custom_dns` | `async def set_custom_dns(self, network_id: str, dns_servers: List[str]) -> Dict[str, Any]` | `Dict[str, Any]` | Mixed IPv4/IPv6 list, split by family |
+| `set_custom_dns_ipv4` | `async def set_custom_dns_ipv4(self, network_id: str, dns_servers: List[str]) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv6 untouched |
+| `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, network_id: str, dns_servers: List[str]) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv4 untouched |
+| `clear_custom_dns` | `async def clear_custom_dns(self, network_id: str, family: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `family="ipv4"`/`"ipv6"`, or both |
 | `set_dns_mode` | `async def set_dns_mode(self, network_id: str, mode: str, custom_servers: Optional[List[str]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_ipv6_dns` | `async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | No `EeroClient` wrapper |
+| `set_ipv6_dns` | `async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ `ipv6_upstream` toggle, not DNS |
 
 </details>
 

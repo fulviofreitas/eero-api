@@ -455,6 +455,119 @@ asyncio.run(main())
 
 ---
 
+## Dual-Stack Custom DNS
+
+Configure all four slots the eero app exposes — IPv4 primary/secondary and IPv6
+primary/secondary — then verify the write actually landed.
+
+> **⚠️ A DNS write reboots every eero on the network.** This example compares before writing
+> and skips the write when the configuration already matches, which is what you want in
+> anything scheduled — otherwise each run reboots the network.
+
+```python
+import asyncio
+import ipaddress
+
+from eero import EeroClient, id_from_url
+from eero.exceptions import EeroValidationException
+
+
+def as_list(response: dict, key: str | None = None) -> list:
+    """See Raw Response Format — the networks list has several shapes."""
+    data = response.get("data") or {}
+    if isinstance(data, list):
+        return data
+    items = data.get(key) if key else None
+    if items is None:
+        items = data.get("data") or []
+    if isinstance(items, dict):
+        items = items.get("data") or []
+    return items if isinstance(items, list) else []
+
+
+def same_address(a: str, b: str) -> bool:
+    """Compare IP literals by value.
+
+    The API stores IPv6 fully expanded, so "2606:4700:4700::1111" reads back as
+    "2606:4700:4700:0:0:0:0:1111". String comparison would report a false mismatch.
+    """
+    return ipaddress.ip_address(a) == ipaddress.ip_address(b)
+
+
+async def main() -> None:
+    wanted = [
+        "1.1.1.1", "1.0.0.1",
+        "2606:4700:4700::1111", "2606:4700:4700::1001",
+    ]
+
+    async with EeroClient() as client:
+        # DNS methods use auto_discover=False, so resolve the network first and
+        # pass network_id= explicitly — a bare call raises EeroException.
+        networks = as_list(await client.get_networks(), "networks")
+        network_id = id_from_url(networks[0]["url"])
+
+        # Compare before writing — a DNS write reboots the whole mesh, so an
+        # unconditional write in a scheduled job means a reboot every run.
+        data = (await client.get_dns_settings(network_id=network_id))["data"]
+        current = data["dns"]["custom"]["ips"] + data["ipv6"]["name_servers"]["custom"]
+
+        already_set = len(current) == len(wanted) and all(
+            any(same_address(a, b) for b in current) for a in wanted
+        )
+        if already_set:
+            print("Already configured — skipping the write.")
+            return
+
+        try:
+            await client.set_custom_dns(wanted, network_id=network_id)
+        except EeroValidationException as exc:
+            print(f"Rejected before sending: {exc}")
+            return
+
+        # get_dns_settings is never cached, so this read is always fresh.
+        data = (await client.get_dns_settings(network_id=network_id))["data"]
+        live = data["dns"]["custom"]["ips"] + data["ipv6"]["name_servers"]["custom"]
+
+        for address in wanted:
+            ok = any(same_address(address, seen) for seen in live)
+            print(f"{'OK ' if ok else 'MISSING'}  {address}")
+
+        print(f"IPv4 mode: {data['dns']['mode']}")
+        print(f"IPv6 mode: {data['ipv6']['name_servers']['mode']}")
+
+
+asyncio.run(main())
+```
+
+Reading back and comparing is worth the few extra lines: the eero API accepts unrecognised
+fields with `200 OK` and silently discards them, so a success response on its own does not
+prove a write took effect.
+
+### Switch one family back to the ISP resolvers
+
+Clearing is non-destructive — the API keeps the stored servers rather than erasing them, so
+they still appear in `dns.custom.ips` while the mode is `automatic`. Switching back is a mode
+flip; you do not need to resupply the addresses.
+
+```python
+async with EeroClient() as client:
+    # ...resolve network_id as above...
+
+    # Off — falls back to the ISP resolvers. IPv4 untouched.
+    await client.clear_custom_dns(family="ipv6", network_id=network_id)
+
+    # On again, reusing whatever the network already stores.
+    await client.set_dns_mode("custom", network_id=network_id)
+
+    # Pass addresses only when you want to change them.
+    await client.set_custom_dns_ipv6(["2001:4860:4860::8888"], network_id=network_id)
+```
+
+This makes a "pause custom DNS" toggle straightforward — clear to fall back, `set_dns_mode`
+to restore, with no need to stash the addresses client-side.
+
+---
+
 ## Working With Multiple Networks
 
 Iterate every network on the account, passing `network_id=` explicitly rather than relying on auto-discovery or the preferred-network default.

@@ -184,6 +184,72 @@ Some write endpoints return `200 OK` but don't persist the change server-side. T
 
 ---
 
+## DNS Issues
+
+### My whole network went down after changing DNS
+
+Expected. **A DNS change reboots every eero on the network.** Wi-Fi and internet drop for all clients until the mesh comes back.
+
+Observed on 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting within a 17-second window. The eero app does the same thing when you apply a DNS change.
+
+Two practical consequences:
+
+- **Don't write unless something actually changed.** Read first, compare, skip the write if it already matches. Otherwise a scheduled job reboots the network on every run.
+
+  ```python
+  data = (await client.get_dns_settings())["data"]
+  current = data["dns"]["custom"]["ips"]
+  if sorted(current) != sorted(wanted):
+      await client.set_custom_dns(wanted)
+  ```
+
+- **Don't retry in a loop.** A burst of writes appears to queue a burst of reboots. A probe session that issued ~10 writes in a few minutes left a network unreachable until it was reset from the app — the repeated reboots never let it converge.
+
+The API returns `200` immediately and the reboot follows minutes later, so a successful call is not an all-clear. You can confirm afterwards by reading `last_reboot` / `uptime.since_last_reboot_s` from `get_eeros()`.
+
+### I set custom DNS and nothing changed
+
+**On eero-api < 7.0.0 this is expected — the DNS write methods did nothing.** `set_custom_dns`, `set_dns_mode` and `clear_custom_dns` sent a `custom_dns` field; `set_dns_caching` sent a separate `dns_caching` field. Neither field exists in the API, and the backend accepts unrecognised keys with `200 OK` and discards them (issue #123). Upgrade to v7.0.0 or later.
+
+On v7.0.0+, verify the write landed by reading it back — `get_dns_settings` is never cached, so a read immediately after a write is always fresh:
+
+```python
+await client.set_custom_dns(["9.9.9.9"])
+data = (await client.get_dns_settings())["data"]
+print(data["dns"]["mode"], data["dns"]["custom"]["ips"])
+```
+
+### I set IPv6 DNS servers with `set_ipv6_dns` and nothing happened
+
+`set_ipv6_dns` does not set DNS servers. It toggles `ipv6_upstream`, the network-level IPv6 connectivity setting, and always has — the name is misleading (issue #125). Use `set_custom_dns_ipv6()`.
+
+IPv6 DNS works independently of `ipv6_upstream`: the IPv6 servers can be configured and active while `ipv6_upstream` is `false`.
+
+### The servers I read back don't match what I wrote
+
+Two likely causes:
+
+- **IPv6 is stored fully expanded.** `2606:4700:4700::1111` reads back as `2606:4700:4700:0:0:0:0:1111`. Compare via `ipaddress.IPv6Address(a) == ipaddress.IPv6Address(b)`, never string equality.
+- **You're reading `dns.custom.ips` while the mode is `automatic`.** Those two are independent: the API retains your servers when custom DNS is switched off. Check `dns.mode` to know what is actually in use, and `dns.parent.ips` for the ISP resolvers being used instead.
+
+### I cleared custom DNS and my servers are gone from the app
+
+They aren't — they're retained, and the app shows them again once custom DNS is switched back on. `clear_custom_dns` flips `dns.mode` to `automatic`; it never sends an empty server list, so `dns.custom.ips` keeps its contents.
+
+To switch back on without retyping anything:
+
+```python
+await client.set_dns_mode("custom")   # re-enables the stored servers
+```
+
+Both behaviours were live-verified on 2026-09-12 against API 2.2.
+
+### `EeroValidationException` on a DNS call that used to work
+
+Expected on v7.0.0+. Over-limit input (more than 2 servers per address family) used to be silently truncated and now raises. Malformed literals and family mismatches are also rejected locally now. See [Migration](Migration#v6x--v700).
+
+---
+
 ## Debug Mode
 
 For detailed logging when troubleshooting issues, enable Python's standard logging — but be aware of what that exposes.

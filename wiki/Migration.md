@@ -202,9 +202,125 @@ Checklist:
 
 ---
 
+## v6.x → v7.0.0
+
+**Read this one even if you think you don't use DNS.**
+
+**What broke**: the DNS write methods did nothing at all before this release, and now they work.
+
+`DnsAPI` was sending a `custom_dns` field (and `dns_caching`) that does not exist in the Eero
+Cloud API. The backend accepts unrecognised keys with HTTP 200 and silently discards them, so
+these four methods returned a success response while changing nothing on the network — in every
+release from v4.1.3 through v6.2.0:
+
+- `set_custom_dns`
+- `clear_custom_dns`
+- `set_dns_mode` (every mode)
+- `set_dns_caching`
+
+**The practical consequence**: if your code calls any of them, it has been a no-op. After
+upgrading it will alter real network configuration. **Review those call sites before you
+upgrade**, particularly anything that runs unattended.
+
+### Four behaviour changes beyond "it works now"
+
+Everything in the "Before" column describes what the SDK *attempted*. Because the field it
+wrote did not exist, none of it reached your network — the calls were no-ops. **Your stored
+configuration was never altered by this SDK.**
+
+| Before (v6.x) — intended, but a no-op | After (v7.0.0) |
+|---|---|
+| `set_custom_dns([a, b, c])` silently dropped everything past the second entry before sending | Raises `EeroValidationException`; the cap is now **2 per address family** |
+| `set_dns_mode("auto")` built an empty server list, which *would* have erased your servers had the write worked | Switches the mode selector to `automatic` and **retains** the stored servers |
+| An unrecognised mode returned a locally fabricated `{"meta": {"code": 400}}` | Raises `EeroValidationException` |
+| `set_dns_mode("cloudflare"/"google"/"opendns")` resolved a hardcoded server list | Removed — read the API's own catalogue instead (below) |
+
+Malformed IP literals, addresses of the wrong family, and zone-scoped addresses are now also
+rejected locally, before any request.
+
+### Provider presets are gone — use the API's catalogue
+
+`set_dns_mode` no longer accepts `"cloudflare"`, `"google"` or `"opendns"`. Those resolved a
+server list hardcoded in the SDK, duplicating data the API already serves — and the copy was
+incomplete, omitting Quad9. Read the authoritative list instead:
+
+```python
+data = (await client.get_dns_settings())["data"]
+chosen = next(p for p in data["dns"]["default_test_servers"] if p["name"] == "Cloudflare")
+await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
+```
+
+Each entry has `name`, `ipv4` and `ipv6`. This is the SDK's raw-JSON contract applied
+consistently: values come from the API or from you, never invented in between.
+
+### New capability
+
+IPv6 DNS servers are now supported. Each address family has an independent mode selector and
+server list, matching the four slots in the eero app:
+
+```python
+# All four slots — the list is split by family.
+await client.set_custom_dns([
+    "1.1.1.1", "1.0.0.1",
+    "2606:4700:4700::1111", "2606:4700:4700::1001",
+])
+
+# Or one family at a time, leaving the other alone.
+await client.set_custom_dns_ipv4(["8.8.8.8", "8.8.4.4"])
+await client.set_custom_dns_ipv6(["2001:4860:4860::8888"])
+await client.clear_custom_dns(family="ipv6")
+
+# Re-enable the stored servers without resupplying them.
+await client.set_dns_mode("custom")
+```
+
+`set_dns_mode("custom")` with no `custom_servers` used to be a usage error. It now re-enables
+whatever the network already stores — the inverse of `clear_custom_dns`, and the same thing
+the app's radio does.
+
+`clear_custom_dns`, `set_custom_dns_ipv4`, `set_custom_dns_ipv6` and `set_ipv6_dns` are now on
+`EeroClient`, so `client._api.dns` is no longer needed for them.
+
+> **⚠️** `set_ipv6_dns()` does not set IPv6 DNS servers — it toggles `ipv6_upstream`, the IPv6
+> connectivity setting, and always has. Use `set_custom_dns_ipv6()` instead. See
+> [#125](https://github.com/fulviofreitas/eero-api/issues/125).
+
+### Reading DNS settings
+
+`get_dns_settings` never changed, but if you were reading the fields the old docstring named,
+they do not exist. The real paths:
+
+```python
+data = (await client.get_dns_settings())["data"]
+
+data["dns"]["mode"]                     # "custom" | "automatic"
+data["dns"]["custom"]["ips"]            # IPv4 servers
+data["dns"]["caching"]                  # bool
+data["ipv6"]["name_servers"]["mode"]    # "custom" | "automatic"
+data["ipv6"]["name_servers"]["custom"]  # IPv6 servers, fully expanded
+```
+
+Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back expanded —
+`2606:4700:4700::1111` becomes `2606:4700:4700:0:0:0:0:1111`. Compare with
+`ipaddress.IPv6Address`, not string equality.
+
+### Checklist
+
+- [ ] Audit every call to `set_custom_dns`, `set_dns_mode`, `clear_custom_dns` and
+      `set_dns_caching` — they now take effect.
+- [ ] Wrap DNS writes in `except EeroValidationException` if you pass user-supplied input.
+- [ ] Replace any call passing more than 2 servers for one family.
+- [ ] Replace `set_dns_mode("cloudflare"/"google"/"opendns")` with addresses read from
+      `dns.default_test_servers`.
+- [ ] Replace reads of `custom_dns` / `dns_caching` / `dns_servers` with the real paths above.
+- [ ] Replace `set_ipv6_dns` with `set_custom_dns_ipv6` if you wanted IPv6 DNS servers.
+- [ ] Drop any `client._api.dns` reach-through for `clear_custom_dns` / `set_ipv6_dns`.
+
+---
+
 ## Upgrading safely
 
-- **Pin your version** (`eero-api==6.2.0` or a narrow range) rather than `eero-api>=...` — this
+- **Pin your version** (`eero-api==7.0.0` or a narrow range) rather than `eero-api>=...` — this
   is a fast-moving SDK tracking an undocumented, reverse-engineered API, and breaking changes
   ship as major versions on purpose.
 - **Read `CHANGELOG.md`** for every major version between your current pin and your target —
@@ -221,6 +337,9 @@ Checklist:
   - `set_preferred_network(` / `preferred_network_id` on an `EeroAPI` instance — removed in
     v5.0.0, see above.
   - `get_insights(` calls missing `start=`/`end=`/`insight_type=` — required since v6.0.0.
+  - `set_custom_dns(` / `set_dns_mode(` / `clear_custom_dns(` / `set_dns_caching(` — these were
+    no-ops before v7.0.0 and now take effect. Also grep for `custom_dns`, `dns_caching` and
+    `dns_servers` as *response* keys: none of them exist in the API.
 
 ---
 
