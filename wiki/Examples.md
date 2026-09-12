@@ -460,6 +460,10 @@ asyncio.run(main())
 Configure all four slots the eero app exposes — IPv4 primary/secondary and IPv6
 primary/secondary — then verify the write actually landed.
 
+> **⚠️ A DNS write reboots every eero on the network.** This example compares before writing
+> and skips the write when the configuration already matches, which is what you want in
+> anything scheduled — otherwise each run reboots the network.
+
 ```python
 import asyncio
 import ipaddress
@@ -501,6 +505,18 @@ async def main() -> None:
         # pass network_id= explicitly — a bare call raises EeroException.
         networks = as_list(await client.get_networks(), "networks")
         network_id = id_from_url(networks[0]["url"])
+
+        # Compare before writing — a DNS write reboots the whole mesh, so an
+        # unconditional write in a scheduled job means a reboot every run.
+        data = (await client.get_dns_settings(network_id=network_id))["data"]
+        current = data["dns"]["custom"]["ips"] + data["ipv6"]["name_servers"]["custom"]
+
+        already_set = len(current) == len(wanted) and all(
+            any(same_address(a, b) for b in current) for a in wanted
+        )
+        if already_set:
+            print("Already configured — skipping the write.")
+            return
 
         try:
             await client.set_custom_dns(wanted, network_id=network_id)

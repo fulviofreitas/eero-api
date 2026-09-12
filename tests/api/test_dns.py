@@ -17,6 +17,7 @@ The shapes are asymmetric on purpose; the helpers below are the single place
 that knowledge lives, so a confirmed upstream change means editing one function.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -548,6 +549,67 @@ class TestServerValidation:
         with pytest.raises(EeroValidationException):
             await dns_api.set_custom_dns("net123", ["fe80::1%eth0"])
 
+        mock_session.request.assert_not_called()
+
+
+# ========================== Reboot warning ==========================
+
+
+class TestRebootWarning:
+    """Tests for the network-reboot warning on DNS writes.
+
+    A DNS change restarts every eero on the network. Operators automating this
+    need that in their logs, so the warning is pinned by tests rather than left
+    as a convention someone can quietly drop.
+    """
+
+    @pytest.mark.asyncio
+    async def test_write_warns_about_reboot(self, dns_api, mock_session, caplog):
+        """Test a DNS write logs a WARNING naming the consequence."""
+        with caplog.at_level(logging.WARNING, logger="eero.api.dns"):
+            await dns_api.set_custom_dns("net123", ["1.1.1.1"])
+
+        assert any(
+            record.levelno == logging.WARNING and "reboot" in record.getMessage().lower()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda api: api.set_custom_dns("net123", ["1.1.1.1"]),
+            lambda api: api.set_custom_dns_ipv4("net123", ["1.1.1.1"]),
+            lambda api: api.set_custom_dns_ipv6("net123", ["2606:4700:4700::1111"]),
+            lambda api: api.clear_custom_dns("net123"),
+            lambda api: api.set_dns_caching("net123", True),
+            lambda api: api.set_dns_mode("net123", "auto"),
+            lambda api: api.set_ipv6_dns("net123", True),
+        ],
+    )
+    async def test_every_write_path_warns(self, dns_api, mock_session, caplog, call):
+        """Test no write path reaches the network without warning first."""
+        with caplog.at_level(logging.WARNING, logger="eero.api.dns"):
+            await call(dns_api)
+
+        assert any("reboot" in r.getMessage().lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_reads_do_not_warn(self, dns_api, mock_session, caplog):
+        """Test reads stay quiet — only writes are disruptive."""
+        with caplog.at_level(logging.WARNING, logger="eero.api.dns"):
+            await dns_api.get_dns_settings("net123")
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    async def test_rejected_input_does_not_warn(self, dns_api, mock_session, caplog):
+        """Test input rejected before sending does not claim a reboot happened."""
+        with caplog.at_level(logging.WARNING, logger="eero.api.dns"):
+            with pytest.raises(EeroValidationException):
+                await dns_api.set_custom_dns("net123", ["not-an-ip"])
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
         mock_session.request.assert_not_called()
 
 

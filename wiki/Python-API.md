@@ -199,6 +199,10 @@ await client.delete_forward(forward_id, network_id=None)
 
 ## DNS
 
+> **⚠️ Every DNS write reboots the whole mesh** — all eeros restart and clients lose
+> connectivity. Read first and skip the write when nothing has changed; see
+> [Troubleshooting](Troubleshooting#my-whole-network-went-down-after-changing-dns).
+
 ```python
 dns = await client.get_dns_settings(network_id=None)
 await client.set_dns_caching(enabled=True, network_id=None)

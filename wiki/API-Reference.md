@@ -153,6 +153,23 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 > network-level IPv6 connectivity toggle. Use `set_custom_dns_ipv6()` for IPv6 DNS servers —
 > they work independently of `ipv6_upstream`. See [#125](https://github.com/fulviofreitas/eero-api/issues/125).
 
+> ### ⚠️ A DNS change reboots the whole mesh
+>
+> Every eero restarts and all clients lose Wi-Fi and internet while they do. Observed
+> 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting
+> within a 17-second window. The eero app behaves the same way when applying a DNS change.
+>
+> For anything automated:
+>
+> - **Write conditionally.** Read `get_dns_settings()` first and skip the write if the
+>   configuration already matches. A reconciliation loop that writes unconditionally will
+>   reboot the network every run.
+> - **Never retry in a tight loop.** A burst of writes appears to queue a burst of reboots.
+> - **A 200 is not an all-clear.** The response returns immediately; the reboot lands minutes
+>   later.
+>
+> This applies to every write method below — including `set_dns_caching`.
+
 ### The DNS data model
 
 Each address family has its own independent mode selector and server list, mirroring the

@@ -17,6 +17,26 @@ and their shapes are ASYMMETRIC: the IPv4 list nests under ``custom.ips`` while
 the IPv6 list sits directly under ``custom``. Do not refactor them into a shared
 helper that assumes symmetry.
 
+.. warning::
+    **A DNS change reboots the whole mesh.** Every eero on the network restarts,
+    and Wi-Fi and internet access drop for all clients while they do. Observed
+    2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes
+    rebooting within a 17-second window. The eero app shows the same behaviour
+    when applying a DNS change.
+
+    This makes DNS writes materially more disruptive than most settings in this
+    SDK, and it has three consequences for anything automated:
+
+    - **Make writes conditional.** Read `get_dns_settings` first and skip the
+      write when the configuration already matches. A reconciliation loop that
+      writes unconditionally will reboot the network on every run.
+    - **Never retry in a tight loop.** A burst of writes appears to queue a
+      burst of reboots; a probe session that issued roughly ten writes in a few
+      minutes left a network unreachable until it was reset from the app.
+    - **Expect the response to arrive before the disruption.** The API returns
+      200 immediately; the reboot follows minutes later. A successful call is
+      not an all-clear.
+
 Historical note: releases v4.1.3 through v6.2.0 sent a flat ``custom_dns`` field
 (and ``dns_caching``). Neither field exists in the API. The backend accepts
 unrecognised keys with HTTP 200 and silently discards them, so those writes were
@@ -162,7 +182,16 @@ class DnsAPI(AuthenticatedAPI):
 
         Every DNS write goes through here, so the endpoint and the auth guard
         live in one place.
+
+        Note that every call reaching this method reboots the mesh — see the
+        module docstring. Callers should skip the write when the configuration
+        is already correct rather than writing unconditionally.
         """
+        _LOGGER.warning(
+            "Writing DNS settings for network %s — this reboots every eero on "
+            "the network and interrupts client connectivity",
+            network_id,
+        )
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")

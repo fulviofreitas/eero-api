@@ -186,6 +186,27 @@ Some write endpoints return `200 OK` but don't persist the change server-side. T
 
 ## DNS Issues
 
+### My whole network went down after changing DNS
+
+Expected. **A DNS change reboots every eero on the network.** Wi-Fi and internet drop for all clients until the mesh comes back.
+
+Observed on 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting within a 17-second window. The eero app does the same thing when you apply a DNS change.
+
+Two practical consequences:
+
+- **Don't write unless something actually changed.** Read first, compare, skip the write if it already matches. Otherwise a scheduled job reboots the network on every run.
+
+  ```python
+  data = (await client.get_dns_settings())["data"]
+  current = data["dns"]["custom"]["ips"]
+  if sorted(current) != sorted(wanted):
+      await client.set_custom_dns(wanted)
+  ```
+
+- **Don't retry in a loop.** A burst of writes appears to queue a burst of reboots. A probe session that issued ~10 writes in a few minutes left a network unreachable until it was reset from the app — the repeated reboots never let it converge.
+
+The API returns `200` immediately and the reboot follows minutes later, so a successful call is not an all-clear. You can confirm afterwards by reading `last_reboot` / `uptime.since_last_reboot_s` from `get_eeros()`.
+
 ### I set custom DNS and nothing changed
 
 **On eero-api < 7.0.0 this is expected — the DNS write methods did nothing.** `set_custom_dns`, `set_dns_mode` and `clear_custom_dns` sent a `custom_dns` field; `set_dns_caching` sent a separate `dns_caching` field. Neither field exists in the API, and the backend accepts unrecognised keys with `200 OK` and discards them (issue #123). Upgrade to v7.0.0 or later.
