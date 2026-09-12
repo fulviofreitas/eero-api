@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0](https://github.com/fulviofreitas/eero-api/compare/v6.2.0...v7.0.0) (2026-09-12)
+
+### ⚠ BREAKING CHANGES
+
+* **dns:** DNS write methods now take effect. Callers of set_custom_dns,
+set_dns_mode, clear_custom_dns or set_dns_caching previously received a success
+response while nothing changed on the network; those calls now alter real
+configuration. Review any code that calls them before upgrading.
+* **dns:** set_dns_mode("auto") and clear_custom_dns now switch the mode
+selector to automatic and retain the stored servers, rather than sending an
+empty server list. Passing more than 2 servers for one address family, or a
+value that is not a valid IP literal of the expected family, now raises
+EeroValidationException instead of being silently truncated or forwarded. An
+unrecognised DNS mode raises EeroValidationException instead of returning a
+fabricated {"meta": {"code": 400}} response.
+
+* docs(wiki): correct the DNS surface for the write-path fix
+
+The wiki described a DNS API that never worked. Updates every page that made a
+statement the fix in b7d822b falsifies, and documents the real data model.
+
+API-Reference
+- Remove the "no EeroClient wrapper for clear_custom_dns()/set_ipv6_dns()" note
+  and the matching cells in the DnsAPI table; both wrappers now exist
+- Add set_custom_dns_ipv4, set_custom_dns_ipv6 and the family argument on
+  clear_custom_dns to both the EeroClient and DnsAPI tables
+- Document the data model: per-family mode selectors, the asymmetric shapes
+  (dns.custom.ips vs ipv6.name_servers.custom), fully expanded IPv6 storage,
+  non-destructive clearing, and the 2-per-family cap
+- Warn that set_ipv6_dns is the ipv6_upstream toggle, not IPv6 DNS
+
+Error-Handling
+- The EeroValidationException row enumerated its raise sites exhaustively and
+  was falsified by the new DNS validation; list the DNS sites
+
+Migration
+- New v6.x -> v7.0.0 section leading with the consequence that matters: these
+  methods were no-ops and now take effect, so call sites need review before
+  upgrading. Covers the truncation-to-raise change, auto vs empty-list, the
+  fabricated 400, the new IPv6 support and the real response paths
+- Add a grep bullet and bump the pin example
+
+Python-API, Examples
+- Replace the two-IPv4 snippet with dual-stack usage, per-family writes and
+  non-destructive clearing
+- Add a Dual-Stack Custom DNS example that reads back and compares via
+  ipaddress, since a 200 does not prove a write applied
+
+Troubleshooting
+- New DNS section: writes that did nothing before v7.0.0, set_ipv6_dns not
+  being a DNS method, read-back mismatches from IPv6 expansion or a mode of
+  automatic, and newly raised EeroValidationException
+
+Network-Targeting
+- set_dns_mode no longer "silently" accepts a misplaced network ID; DNS methods
+  now raise before sending. Add set_custom_dns and clear_custom_dns rows
+
+### 🐛 Bug Fixes
+
+* **dns:** write to the real API fields; add IPv6 and mode support ([#124](https://github.com/fulviofreitas/eero-api/issues/124)) ([e54c025](https://github.com/fulviofreitas/eero-api/commit/e54c0257257e820e9964aa66cc66f8f2fa792603)), closes [#123](https://github.com/fulviofreitas/eero-api/issues/123) [#123](https://github.com/fulviofreitas/eero-api/issues/123) [#125](https://github.com/fulviofreitas/eero-api/issues/125)
+
+### 📚 Documentation
+
+* **readme:** add confirmed eero-api dependents to Used By ([a8a895e](https://github.com/fulviofreitas/eero-api/commit/a8a895e1349465012a2f963841a26535433b4e2e))
+* **readme:** list eero-dashboard in Used By section ([98a609f](https://github.com/fulviofreitas/eero-api/commit/98a609feccdcc5dd5951ddf27af44951bc6bebe3))
+* **wiki:** add examples and logging pages, then reconcile the whole set ([05902af](https://github.com/fulviofreitas/eero-api/commit/05902afcac0f7fdb5ff1d852597ea87ba529ec0b))
+* **wiki:** add the reference, migration and navigation pages ([684b6ef](https://github.com/fulviofreitas/eero-api/commit/684b6ef8f6c7a11d7d6825111bd1c32eb1f65947))
+* **wiki:** correct Python API, Configuration, Home and Troubleshooting for v6.2.0 ([11e4ea4](https://github.com/fulviofreitas/eero-api/commit/11e4ea46caf3bb1039732102439f864822eddd32))
+* **wiki:** document the core concepts the SDK had no pages for ([37f2f0b](https://github.com/fulviofreitas/eero-api/commit/37f2f0b9c7cafa38d133dd999035b66b3f6e4bff))
+
 ## [6.2.0](https://github.com/fulviofreitas/eero-api/compare/v6.1.0...v6.2.0) (2026-08-28)
 
 ### ✨ Features
