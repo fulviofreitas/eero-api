@@ -1175,19 +1175,63 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.dns.get_dns_settings(network_id)
 
+    def _invalidate_network_cache(self, network_id: str) -> None:
+        """Drop the cached network snapshot after a write to it.
+
+        DNS settings live inside the network resource, so any DNS write makes a
+        cached snapshot stale. Mirrors `set_network_name` / `set_guest_network`.
+        """
+        if network_id in self._cache.get("network", {}):
+            del self._cache["network"][network_id]
+
     async def set_dns_caching(
         self, enabled: bool, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Set DNS caching - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.dns.set_dns_caching(network_id, enabled)
+        response = await self._api.dns.set_dns_caching(network_id, enabled)
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def set_custom_dns(
         self, dns_servers: List[str], network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Set custom DNS - returns raw Eero API response."""
+        """Set custom DNS from a mixed IPv4/IPv6 list - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.dns.set_custom_dns(network_id, dns_servers)
+        response = await self._api.dns.set_custom_dns(network_id, dns_servers)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_custom_dns_ipv4(
+        self, dns_servers: List[str], network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set IPv4 custom DNS, leaving IPv6 untouched - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns.set_custom_dns_ipv4(network_id, dns_servers)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_custom_dns_ipv6(
+        self, dns_servers: List[str], network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set IPv6 custom DNS, leaving IPv4 untouched - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns.set_custom_dns_ipv6(network_id, dns_servers)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def clear_custom_dns(
+        self, family: Optional[str] = None, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Switch DNS back to automatic - returns raw Eero API response.
+
+        Non-destructive: the API retains the configured servers. Pass
+        family="ipv4" or "ipv6" to clear one family only.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns.clear_custom_dns(network_id, family)
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def set_dns_mode(
         self,
@@ -1197,7 +1241,20 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set DNS mode - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.dns.set_dns_mode(network_id, mode, custom_servers)
+        response = await self._api.dns.set_dns_mode(network_id, mode, custom_servers)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_ipv6_dns(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Enable or disable IPv6 upstream - returns raw Eero API response.
+
+        Warning: despite the name this does not control IPv6 DNS servers — see
+        `DnsAPI.set_ipv6_dns`. Use `set_custom_dns_ipv6` for those.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns.set_ipv6_dns(network_id, enabled)
+        self._invalidate_network_cache(network_id)
+        return response
 
     # ==================== SQM ====================
 
