@@ -140,6 +140,20 @@ class TestDnsAPIGetSettings:
 
         mock_session.request.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_network_id_with_brace_does_not_break_template(self, dns_api, mock_session):
+        """A brace-containing network id must resolve through the shared link
+        helper (`resolve_network_url`) rather than a raw f-string path, so it
+        can never be re-parsed as template text."""
+        mock_session.request.return_value = create_mock_response(json_data=api_success_response({}))
+
+        try:
+            await dns_api.get_dns_settings("net{evil}")
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
 
 # ========================== DNS caching ==========================
 

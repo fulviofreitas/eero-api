@@ -9,10 +9,11 @@ from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ._params import resolve_nested_url
 from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, sub_resource_url
+from .links import sub_resource_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class TransferAPI(AuthenticatedAPI):
                 device_id,
                 network_id,
             )
-            url = resource_url(network_id, f"networks/{{id}}/devices/{device_id}/transfer")
+            url = resolve_nested_url(network_id, device_id, prefix="devices", suffix="/transfer")
         else:
             _LOGGER.debug("Getting transfer stats for network %s", network_id)
             url = sub_resource_url(

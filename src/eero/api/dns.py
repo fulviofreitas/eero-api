@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
+from ._params import resolve_network_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
@@ -249,7 +250,7 @@ class DnsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug("Getting DNS settings for network %s", network_id)
-        return await self.get(f"networks/{network_id}", auth_token=auth_token)
+        return await self.get(resolve_network_url(network_id), auth_token=auth_token)
 
     async def set_dns_caching(
         self,

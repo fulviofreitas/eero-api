@@ -93,6 +93,36 @@ class TestInsightsAPIGetInsights:
         assert result == raw
 
     @pytest.mark.asyncio
+    async def test_get_insights_rejects_cadence_outside_the_api_set(
+        self, insights_api, mock_session
+    ):
+        """Only the API's two cadence buckets are accepted; nothing is sent otherwise."""
+        from eero.exceptions import EeroValidationException
+
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_insights(
+                "network_123",
+                start="2026-07-21T00:00:00Z",
+                end="2026-07-22T00:00:00Z",
+                insight_type="adblock",
+                cadence="weekly",
+            )
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_insights_rejects_invalid_cadence(self, insights_api):
+        """Test get_insights now validates cadence like its siblings."""
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_insights(
+                "network_123",
+                start="2026-07-21T00:00:00Z",
+                end="2026-07-22T00:00:00Z",
+                insight_type="adblock",
+                cadence="monthly",
+            )
+
+    @pytest.mark.asyncio
     async def test_get_insights_requires_keyword_args(self, insights_api):
         """Test start/end/insight_type are keyword-only (positional call raises)."""
         with pytest.raises(TypeError):
@@ -171,6 +201,35 @@ class TestInsightsAPIDevicesInsights:
             "https://api-user.e2ro.com/2.2/networks/network_123/insights/devices/aabbccddeeff"
         )
 
+    @pytest.mark.asyncio
+    async def test_get_device_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template.
+
+        This call used to build `resource_url(mac, f"networks/{network}/...")`
+        -- splicing `network` into the `template` argument, which `resource_url`
+        then formats a second time to substitute `mac`. A network id
+        containing a stray `{...}` group broke that second `.format()` call
+        with a bare `KeyError`.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_device_insights(
+                "network{evil}",
+                "aabbccddeeff",
+                cadence="hourly",
+                insight_type="inspected",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
 
 class TestInsightsAPIProfilesInsights:
     """Tests for get_profiles_insights (collection), get_profile_insights (single),
@@ -219,6 +278,50 @@ class TestInsightsAPIProfilesInsights:
             "https://api-user.e2ro.com/2.2/networks/network_123"
             "/insights/profiles/profile_001/devices"
         )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_profile_insights(
+                "network{evil}",
+                "profile_001",
+                cadence="daily",
+                insight_type="adblock",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_profile_devices_insights(
+                "network{evil}",
+                "profile_001",
+                cadence="daily",
+                insight_type="adblock",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
 
     @pytest.mark.asyncio
     async def test_get_profile_insights_not_authenticated(self, insights_api):

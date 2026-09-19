@@ -261,6 +261,7 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/reboot", link="reboot", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(_LOGGER, f"reboot eero {eero_id}")
         _LOGGER.debug("Rebooting eero %s", eero_id)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING

@@ -160,6 +160,20 @@ class TestNetworksAPIReboot:
         with pytest.raises(EeroAuthenticationException):
             await networks_api.reboot_network("network_123")
 
+    @pytest.mark.asyncio
+    async def test_reboot_network_warns_uncharacterised_write(
+        self, networks_api, mock_session, caplog
+    ):
+        """Test reboot_network logs the uncharacterised-write warning once."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await networks_api.reboot_network("network_123")
+
+        assert any("reboot network network_123" in m for m in caplog.messages)
+
 
 class TestNetworksAPISpeedTest:
     """Tests for speed test functionality."""
@@ -177,6 +191,20 @@ class TestNetworksAPISpeedTest:
         assert call_args.args[0] == "POST"
         assert call_args.args[1].endswith("/2.2/networks/network_123/speedtest")
         assert call_args.kwargs["data"] == '""'
+
+    @pytest.mark.asyncio
+    async def test_run_speed_test_warns_uncharacterised_write(
+        self, networks_api, mock_session, caplog
+    ):
+        """Test run_speed_test logs the uncharacterised-write warning once."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"down": {"value": 500.0}})
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await networks_api.run_speed_test("network_123")
+
+        assert any("run speed test for network network_123" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_get_speed_tests_sends_query_params(self, networks_api, mock_session):

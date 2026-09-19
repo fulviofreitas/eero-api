@@ -264,6 +264,43 @@ class TestDataUsageAPIRequiredCadenceFamily:
             await method("network_123", *args, start=START, end=END, cadence="weekly")
         mock_session.request.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "method_name",
+        ["get_device_usage", "get_eero_usage", "get_profile_usage"],
+    )
+    @pytest.mark.asyncio
+    async def test_nested_id_with_brace_does_not_break_template(
+        self, data_usage_api, mock_session, method_name
+    ):
+        """A brace-containing nested id must never leak into a format template.
+
+        These ids are appended as a literal path segment onto the network's
+        own resolved URL, never spliced into a second `str.format` template,
+        so a brace character cannot trigger a bare `KeyError`.
+        """
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        method = getattr(data_usage_api, method_name)
+
+        try:
+            await method("network_123", "child{evil}", start=START, end=END, cadence="daily")
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in nested id leaked into a template: {exc!r}")
+
+    @pytest.mark.parametrize(
+        "method_name",
+        ["get_device_usage", "get_eero_usage", "get_profile_usage"],
+    )
+    @pytest.mark.asyncio
+    async def test_nested_empty_id_rejected(self, data_usage_api, mock_session, method_name):
+        """Test an empty nested id is rejected before any request is made."""
+        method = getattr(data_usage_api, method_name)
+
+        with pytest.raises(EeroValidationException):
+            await method("network_123", "", start=START, end=END, cadence="daily")
+        mock_session.request.assert_not_called()
+
 
 class TestDataUsageAPIReportSettings:
     """Tests for get_report_settings / set_report_settings."""

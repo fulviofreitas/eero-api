@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
-from ._writes import as_envelope
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import sub_resource_url
@@ -69,6 +69,7 @@ class BurstReportersAPI(AuthenticatedAPI):
             link="burst_reporters",
             parent=as_envelope(parent),
         )
+        warn_uncharacterised_write(_LOGGER, f"create burst reporter for network {network_id}")
         _LOGGER.debug("Creating burst reporter for network %s: %s", network_id, reporter_data)
         return await self.post(
             url,

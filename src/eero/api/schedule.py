@@ -22,10 +22,11 @@ from typing import Any, Dict, List, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, self_url, sub_resource_url
+from .links import resource_url, self_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -103,10 +104,17 @@ class ScheduleAPI(AuthenticatedAPI):
 
         Returns:
             The absolute schedules-collection URL.
+
+        Raises:
+            EeroValidationException: If ``profile`` is not a non-empty
+                string, or ``network``/``profile`` cannot be resolved to a
+                valid URL.
         """
-        return sub_resource_url(
+        return resolve_nested_url(
+            network,
             profile,
-            f"networks/{network}/profiles/{{id}}/schedules",
+            prefix="profiles",
+            suffix="/schedules",
             link="schedules",
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
@@ -253,6 +261,7 @@ class ScheduleAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = _resolve_schedule_url(schedule)
+        warn_uncharacterised_write(_LOGGER, "delete_schedule")
         _LOGGER.debug("Deleting schedule at %s", url)
         return await self.delete(url, auth_token=auth_token)
 

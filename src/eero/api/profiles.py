@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
-from ._writes import as_envelope
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import resource_url, self_url, sub_resource_url
@@ -239,6 +239,7 @@ class ProfilesAPI(AuthenticatedAPI):
             await api.set_profile_devices(network, profile, device_urls)
         """
         devices_payload = [{"url": url} for url in device_urls]
+        warn_uncharacterised_write(_LOGGER, f"set devices for profile {profile}")
         _LOGGER.debug("Setting %d devices for profile %s", len(device_urls), profile)
         return await self._update_profile(
             network, profile, {"devices": devices_payload}, parent=parent
@@ -297,6 +298,7 @@ class ProfilesAPI(AuthenticatedAPI):
         if paused is not None:
             payload["paused"] = paused
 
+        warn_uncharacterised_write(_LOGGER, f"create profile for network {network}")
         _LOGGER.debug("Creating profile '%s' in network %s", name, network)
         return await self.post(url, auth_token=auth_token, json=payload)
 
@@ -347,5 +349,6 @@ class ProfilesAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = self._profile_url(network, profile)
+        warn_uncharacterised_write(_LOGGER, f"delete profile {profile}")
         _LOGGER.debug("Deleting profile %s from network %s", profile, network)
         return await self.delete(url, auth_token=auth_token)

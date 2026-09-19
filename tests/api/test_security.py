@@ -472,3 +472,52 @@ class TestSecurityAPISetProxiedNodes:
 
         with pytest.raises(EeroAuthenticationException):
             await security_api.set_proxied_nodes("network_123", True)
+
+
+# ========================== Settings-write reboot warning ==========================
+
+
+class TestSettingsWriteRebootWarning:
+    """Tests for the uncharacterised-write warning on the settings-class writes.
+
+    These writes PUT the network's ``settings`` sub-resource -- the same
+    endpoint the DNS module's confirmed-reboot write targets -- so each must
+    warn, once per call, that it may reboot every eero on the mesh.
+    """
+
+    @pytest.fixture
+    def security_api(self, mock_session):
+        """Create a SecurityAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return SecurityAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda api: api.set_wpa3("network_123", True),
+            lambda api: api.set_band_steering("network_123", True),
+            lambda api: api.set_upnp("network_123", True),
+            lambda api: api.set_ipv6("network_123", True),
+            lambda api: api.configure_security("network_123", wpa3=True),
+        ],
+    )
+    async def test_settings_write_warns_once_about_reboot(
+        self, security_api, mock_session, caplog, call
+    ):
+        """Test each settings-class write logs exactly one reboot warning."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.security"):
+            await call(security_api)
+
+        reboot_warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "reboot" in r.getMessage().lower()
+        ]
+        assert len(reboot_warnings) == 1

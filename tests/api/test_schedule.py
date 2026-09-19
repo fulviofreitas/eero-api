@@ -70,6 +70,27 @@ class TestScheduleAPIGetSchedules:
         )
 
     @pytest.mark.asyncio
+    async def test_get_schedules_network_id_with_brace_does_not_break_template(
+        self, schedule_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template.
+
+        `_schedules_url` used to splice `network` into an f-string that was
+        then handed to `resource_url` as its `template` argument -- a
+        second `str.format` call over that combined string. A network id
+        containing a stray `{...}` group broke that second call with a bare
+        `KeyError` instead of a clean, caller-facing error.
+        """
+        mock_session.request.return_value = create_mock_response(200, api_success_response([]))
+
+        try:
+            await schedule_api.get_schedules("network{evil}", "profile_001")
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
+    @pytest.mark.asyncio
     async def test_get_schedules_not_authenticated(self, schedule_api):
         schedule_api._auth_api.get_auth_token = AsyncMock(return_value=None)
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
@@ -194,6 +215,26 @@ class TestScheduleAPIDeleteSchedule:
         method, url = mock_session.request.call_args.args[:2]
         assert method == "DELETE"
         assert url.endswith("profiles/profile_001/schedules/s_1")
+
+    @pytest.mark.asyncio
+    async def test_delete_schedule_warns_uncharacterised_write(
+        self, schedule_api, mock_session, caplog
+    ):
+        import logging
+
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.schedule"):
+            await schedule_api.delete_schedule(
+                "/2.2/networks/network_123/profiles/profile_001/schedules/s_1"
+            )
+
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "not been fully characterised" in r.message
+        ]
+        assert len(warnings) == 1
 
 
 class TestScheduleAPIClearProfileSchedule:

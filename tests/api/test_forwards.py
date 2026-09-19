@@ -1,5 +1,6 @@
 """Tests for ForwardsAPI module."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -76,6 +77,20 @@ class TestForwardsAPICreateForward:
         assert "meta" in result
 
     @pytest.mark.asyncio
+    async def test_create_forward_warns_uncharacterised_write(
+        self, forwards_api, mock_session, caplog
+    ):
+        """Test create_forward logs the uncharacterised-write warning once."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.forwards"):
+            await forwards_api.create_forward("network_123", {"port": 80})
+
+        assert any("create forward for network network_123" in m for m in caplog.messages)
+
+    @pytest.mark.asyncio
     async def test_create_forward_not_authenticated(self, forwards_api):
         """Test create_forward raises when not authenticated."""
         forwards_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -104,6 +119,20 @@ class TestForwardsAPIDeleteForward:
         result = await forwards_api.delete_forward("network_123", "forward_id")
 
         assert "meta" in result
+
+    @pytest.mark.asyncio
+    async def test_delete_forward_warns_uncharacterised_write(
+        self, forwards_api, mock_session, caplog
+    ):
+        """Test delete_forward logs the uncharacterised-write warning once."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.forwards"):
+            await forwards_api.delete_forward("network_123", "forward_id")
+
+        assert any("delete forward for network network_123" in m for m in caplog.messages)
 
 
 class TestForwardsAPIUpdateForward:
@@ -151,6 +180,21 @@ class TestForwardsAPIUpdateForward:
 
         _, url = mock_session.request.call_args.args[:2]
         assert url == "https://api-user.e2ro.com/2.2/networks/network_123/forwards/f_1"
+
+    @pytest.mark.asyncio
+    async def test_update_forward_warns_uncharacterised_write(
+        self, forwards_api, mock_session, caplog
+    ):
+        """Test update_forward logs the uncharacterised-write warning once."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.forwards"):
+            await forwards_api.update_forward(
+                "/2.2/networks/network_123/forwards/f_1", {"enabled": False}
+            )
+
+        assert any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_update_forward_bare_id_without_network_raises(self, forwards_api):

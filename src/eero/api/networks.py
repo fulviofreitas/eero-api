@@ -177,6 +177,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/reboot", link="reboot", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(_LOGGER, f"reboot network {network_id}")
         _LOGGER.debug("Rebooting network %s", network_id)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
@@ -210,6 +211,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/speedtest", link="speedtest", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(_LOGGER, f"run speed test for network {network_id}")
         _LOGGER.debug("Running speed test for network %s", network_id)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING

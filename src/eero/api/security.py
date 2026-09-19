@@ -87,6 +87,15 @@ class SecurityAPI(AuthenticatedAPI):
         Note: This may require a network restart to take effect.
         Not all devices support WPA3 - older devices may lose connectivity.
 
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
+
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
             enabled: True to enable WPA3, False to use WPA2
@@ -114,6 +123,11 @@ class SecurityAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(
+            _LOGGER,
+            f"set WPA3 for network {network_id} "
+            "-- may reboot every eero, like the confirmed DNS write path",
+        )
         return await self.put(
             url,
             auth_token=auth_token,
@@ -127,6 +141,15 @@ class SecurityAPI(AuthenticatedAPI):
 
         Band steering automatically moves devices to the optimal
         frequency band (2.4GHz or 5GHz) for better performance.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -155,6 +178,11 @@ class SecurityAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(
+            _LOGGER,
+            f"set band steering for network {network_id} "
+            "-- may reboot every eero, like the confirmed DNS write path",
+        )
         return await self.put(
             url,
             auth_token=auth_token,
@@ -168,6 +196,15 @@ class SecurityAPI(AuthenticatedAPI):
 
         UPnP allows devices to automatically configure port forwarding.
         Disabling can improve security but may break some applications.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -196,6 +233,11 @@ class SecurityAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(
+            _LOGGER,
+            f"set UPnP for network {network_id} "
+            "-- may reboot every eero, like the confirmed DNS write path",
+        )
         return await self.put(
             url,
             auth_token=auth_token,
@@ -206,6 +248,15 @@ class SecurityAPI(AuthenticatedAPI):
         self, network_id: str, enabled: bool, *, parent: Optional[Mapping[str, Any]] = None
     ) -> Dict[str, Any]:
         """Enable or disable IPv6 - returns raw Eero API response.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -234,6 +285,11 @@ class SecurityAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(
+            _LOGGER,
+            f"set IPv6 for network {network_id} "
+            "-- may reboot every eero, like the confirmed DNS write path",
+        )
         return await self.put(
             url,
             auth_token=auth_token,
@@ -254,6 +310,15 @@ class SecurityAPI(AuthenticatedAPI):
         parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Configure multiple security settings at once - returns raw Eero API response.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -299,6 +364,11 @@ class SecurityAPI(AuthenticatedAPI):
 
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
+        )
+        warn_uncharacterised_write(
+            _LOGGER,
+            f"configure security settings for network {network_id} "
+            "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,

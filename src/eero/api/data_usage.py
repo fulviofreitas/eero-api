@@ -16,8 +16,10 @@ from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
 from ._params import CADENCE_VALUES, resolve_network_url, validate_cadence
+from ._writes import warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -27,6 +29,31 @@ DATA_USAGE_CADENCES = CADENCE_VALUES
 
 #: Valid values for the `cadence` field in the data-usage report settings body.
 REPORT_SETTINGS_CADENCES = CADENCE_VALUES
+
+
+def _validate_child_id(value: str) -> str:
+    """Validate a nested-resource id, without building a URL from it.
+
+    This module appends a nested id (a device MAC, eero id, or profile id)
+    as a literal path segment onto the network's own resolved URL in
+    `_get_usage` -- the id is never spliced into a template string handed
+    to a second `str.format` call, so it cannot trigger the bare `KeyError`
+    that pattern causes elsewhere in this SDK. This still routes the value
+    through `eero.api.links.resource_url`'s bare-id branch for the same
+    non-empty-string check applied to every other bare id in the SDK, for
+    consistency; the resolved URL it returns is discarded.
+
+    Args:
+        value: The candidate id.
+
+    Returns:
+        ``value`` unchanged, once validated.
+
+    Raises:
+        EeroValidationException: If ``value`` is not a non-empty string.
+    """
+    resource_url(value, "{id}")
+    return value
 
 
 def _validate_cadence(cadence: Optional[str]) -> str:
@@ -284,7 +311,7 @@ class DataUsageAPI(AuthenticatedAPI):
             EeroAPIException: If the API returns an error.
         """
         return await self._get_usage(
-            f"devices/{device_mac}",
+            f"devices/{_validate_child_id(device_mac)}",
             network_id,
             start=start,
             end=end,
@@ -372,7 +399,7 @@ class DataUsageAPI(AuthenticatedAPI):
             EeroAPIException: If the API returns an error.
         """
         return await self._get_usage(
-            f"eeros/{eero_id}",
+            f"eeros/{_validate_child_id(eero_id)}",
             network_id,
             start=start,
             end=end,
@@ -417,7 +444,7 @@ class DataUsageAPI(AuthenticatedAPI):
             EeroAPIException: If the API returns an error.
         """
         return await self._get_usage(
-            f"profiles/{profile_id}",
+            f"profiles/{_validate_child_id(profile_id)}",
             network_id,
             start=start,
             end=end,
@@ -575,11 +602,8 @@ class DataUsageAPI(AuthenticatedAPI):
         """
         _validate_cadence(cadence)
 
-        _LOGGER.warning(
-            "Writing data usage report settings for network %s — this write's "
-            "side effects have not been characterised against a live network; "
-            "verify with get_report_settings before and after",
-            network_id,
+        warn_uncharacterised_write(
+            _LOGGER, f"set data usage report settings for network {network_id}"
         )
 
         auth_token = await self._auth_api.get_auth_token()

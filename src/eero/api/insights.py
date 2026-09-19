@@ -17,16 +17,17 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
-from ._params import validate_cadence
+from ._params import resolve_nested_url, resolve_network_url, validate_cadence
 from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, sub_resource_url
+from .links import sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
-# Valid values for the `cadence` query parameter on GET /insights.
-INSIGHTS_CADENCES = ("hourly", "daily", "weekly")
+# Valid values for the `cadence` query parameter on GET /insights: the API
+# accepts the same two buckets as every other insights and data-usage read.
+INSIGHTS_CADENCES = ("hourly", "daily")
 
 
 def _insights_params(*, start: str, end: str, cadence: str, insight_type: str) -> Dict[str, str]:
@@ -111,15 +112,18 @@ class InsightsAPI(AuthenticatedAPI):
                 emit additional types (e.g. ``"malware"``, ``"botnet"``) inside
                 the response ``series`` array when ``insight_type="blocked"``.
             cadence: Bucket size for the returned series. One of
-                ``"hourly"``, ``"daily"``, ``"weekly"``. Defaults to
-                ``"daily"``. This is the only parameter with an SDK-supplied
-                default — it controls display bucketing, not data scope.
+                ``"hourly"`` or ``"daily"`` (the API requires it). Defaults
+                to ``"daily"``. This is the only parameter with an
+                SDK-supplied default; it controls display bucketing, not
+                data scope.
 
         Returns:
             Raw API response: ``{"meta": {...}, "data": {...}}``.
 
         Raises:
             EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not one of
+                :data:`INSIGHTS_CADENCES`.
             EeroAPIException: If the API returns an error (400 on invalid
                 params, 403 on insufficient subscription, etc.).
         """
@@ -130,7 +134,7 @@ class InsightsAPI(AuthenticatedAPI):
         params = {
             "start": start,
             "end": end,
-            "cadence": cadence,
+            "cadence": validate_cadence(cadence, allowed=INSIGHTS_CADENCES),
             "insight_type": insight_type,
         }
         _LOGGER.debug(
@@ -141,8 +145,9 @@ class InsightsAPI(AuthenticatedAPI):
             start,
             end,
         )
+        url = resolve_network_url(network_id)
         return await self.get(
-            f"networks/{network_id}/insights",
+            f"{url}/insights",
             auth_token=auth_token,
             params=params,
         )
@@ -222,7 +227,7 @@ class InsightsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(mac, f"networks/{network}/insights/devices/{{id}}")
+        url = resolve_nested_url(network, mac, prefix="insights/devices")
         params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
         _LOGGER.debug("Getting insights for device %s in network %s", mac, network)
         return await self.get(url, auth_token=auth_token, params=params)
@@ -302,7 +307,7 @@ class InsightsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(profile, f"networks/{network}/insights/profiles/{{id}}")
+        url = resolve_nested_url(network, profile, prefix="insights/profiles")
         params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
         _LOGGER.debug("Getting insights for profile %s in network %s", profile, network)
         return await self.get(url, auth_token=auth_token, params=params)
@@ -339,7 +344,7 @@ class InsightsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(profile, f"networks/{network}/insights/profiles/{{id}}/devices")
+        url = resolve_nested_url(network, profile, prefix="insights/profiles", suffix="/devices")
         params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
         _LOGGER.debug("Getting devices insights for profile %s in network %s", profile, network)
         return await self.get(url, auth_token=auth_token, params=params)

@@ -14,7 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
-from ._writes import as_envelope
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import resource_url, self_url, sub_resource_url
@@ -147,6 +147,7 @@ class ReservationsAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
+        warn_uncharacterised_write(_LOGGER, f"create reservation for network {network}")
         _LOGGER.debug("Creating reservation for network %s: %s", network, sorted(reservation_data))
         return await self.post(url, auth_token=auth_token, json=reservation_data)
 
@@ -179,6 +180,7 @@ class ReservationsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = _resolve_reservation_url(reservation, network)
+        warn_uncharacterised_write(_LOGGER, "update_reservation")
         _LOGGER.debug("Updating reservation at %s: %s", url, sorted(data))
         return await self.put(url, auth_token=auth_token, json=data)
 
@@ -215,5 +217,6 @@ class ReservationsAPI(AuthenticatedAPI):
         if delete_forwards is not None:
             params = {"delete_forwards": "true" if delete_forwards else "false"}
 
+        warn_uncharacterised_write(_LOGGER, f"delete reservation for network {network}")
         _LOGGER.debug("Deleting reservation %s for network %s", reservation, network)
         return await self.delete(url, auth_token=auth_token, params=params)
