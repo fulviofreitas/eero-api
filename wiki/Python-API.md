@@ -52,21 +52,33 @@ async with EeroClient() as client:
 
 | Argument | Type | Default | Purpose |
 |----------|------|---------|---------|
-| `session` | `Optional[aiohttp.ClientSession]` | `None` | Bring your own `aiohttp` session instead of letting the client create one |
+| `session` | `Optional[aiohttp.ClientSession]` | `None` | Bring your own `aiohttp` session instead of letting the client create one. The session token is never written to its cookie jar |
 | `cookie_file` | `Optional[str]` | `None` | Path used by the file-based credential storage fallback |
 | `use_keyring` | `bool` | `True` | Store the session token in the OS keyring; falls back to the JSON cookie file when unavailable |
 | `cache_timeout` | `int` | `60` | TTL in seconds for the client's in-memory response cache |
+| `send_legacy_cookie` | `bool` | `True` | Keyword-only. Also send the session token as the per-request `s=<token>` cookie alongside the `X-User-Token` header; `False` sends the header only |
+| `accept_language` | `str` | `"en-US"` | Keyword-only. Value of the `X-Accept-Language` header on every request; printable ASCII only |
+| `get_retries` | `int` | `0` | Keyword-only. Additional attempts for a `GET` that fails with a transport error or `5xx`. Writes are never retried |
 
 ```python
 import aiohttp
 from eero import EeroClient
 
 async with aiohttp.ClientSession() as session:
-    async with EeroClient(session=session, use_keyring=False, cache_timeout=120) as client:
+    async with EeroClient(
+        session=session,
+        use_keyring=False,
+        cache_timeout=120,
+        send_legacy_cookie=False,
+        accept_language="en-GB",
+        get_retries=2,
+    ) as client:
         ...
 ```
 
 > ⚠️ **Warning:** There is no `session_token`, `config_path`, or `timeout` constructor argument, and no environment variables are read. If you already have a session token, use `await client.set_session_token(token)` after entering the context manager.
+
+The session token is sent as the `X-User-Token` header on every request to the API host over `https`, and to no other host; there is no client-side expiry — the server decides when a session is no longer valid, and asks the SDK to refresh it when needed. See [Authentication](Authentication) and [Configuration](Configuration#-request-headers-and-transport).
 
 ---
 
@@ -345,8 +357,46 @@ await client.enable_bedtime(profile_id, start_time="21:00", end_time="07:00", da
 
 ```python
 transfer = await client.get_transfer_stats(network_id=None, device_id=None)
-usage = await client.get_data_usage(network_id=None, payload={"resource": "network"}, resource=None)
+
+# start / end / cadence are keyword-only and required by the API; sent as query parameters.
+usage = await client.get_data_usage(
+    network_id=None,
+    start="2026-07-01T00:00:00Z",
+    end="2026-07-21T00:00:00Z",
+    cadence="daily",          # or "hourly"
+    timezone="UTC",           # optional IANA name
+)
 ```
+
+The rest of the data-usage family is on `EeroClient` too — `network_id` is the usual trailing
+optional keyword (no auto-discovery), and the window arguments are keyword-only. None of these
+reads are cached:
+
+```python
+window = {"start": "2026-07-01T00:00:00Z", "end": "2026-07-21T00:00:00Z"}
+
+await client.get_data_usage_breakdown(**window)
+await client.get_devices_data_usage(**window, profile_id="<profile-id>")
+await client.get_device_data_usage("<device-mac>", **window, cadence="hourly")
+await client.get_eeros_data_usage_summary(**window, cadence="daily")
+await client.get_eero_data_usage("<eero-id>", **window, cadence="daily")
+await client.get_profile_data_usage("<profile-id>", **window, cadence="daily")
+await client.get_unprofiled_devices_data_usage(**window)
+await client.get_unprofiled_data_usage_summary(**window, cadence="daily")
+
+settings = await client.get_data_usage_report_settings()
+```
+
+`cadence` is required by the API on `get_data_usage`, `get_device_data_usage`,
+`get_eeros_data_usage_summary`, `get_eero_data_usage`, `get_profile_data_usage`, and
+`get_unprofiled_data_usage_summary`; it is optional on the others and omitted from the request
+when not given. A value other than `"daily"` / `"hourly"` raises `EeroValidationException`
+before any request.
+
+> ⚠️ **Warning:** `set_data_usage_report_settings(*, cadence, notification_day, network_id=None)`
+> is an **unverified write** — its side effects beyond the request/response shape have not been
+> characterised against a live network. Read `get_data_usage_report_settings` first, write only
+> when the stored values differ, and never retry it. It invalidates that network's cache entry.
 
 > **Note**: `get_burst_reporters()` was removed in v8.0.0 — the endpoint returns 404; the
 > resource is POST-only. `client._api.burst_reporters.create_burst_reporter(...)` remains
@@ -392,6 +442,23 @@ blacklist = await client.get_blacklist(network_id=None)
 
 ---
 
+## OUI Check
+
+The API requires `serial` and `version` query parameters identifying the eero being checked and
+returns `404` without them; both are keyword-only and required. Take them from an eero envelope:
+
+```python
+result = await client.get_ouicheck(
+    network_id=None,
+    serial="<eero-serial>",    # the eero's serial number, as returned in its envelope
+    version="<eero-version>",  # the eero's version string, as returned in its envelope
+)
+```
+
+Empty or non-string values raise `EeroValidationException` before any request.
+
+---
+
 ## Removed Surface
 
 > ⚠️ **Warning:** `set_device_priority` and every `ActivityAPI` method / `EeroClient.get_activity*`
@@ -403,20 +470,29 @@ blacklist = await client.get_blacklist(network_id=None)
 
 ## Error Handling
 
-All exceptions derive from `EeroException` and end in `...Exception` (not `...Error`): `EeroAuthenticationException`, `EeroAPIException`, `EeroRateLimitException`, `EeroNetworkException`, `EeroTimeoutException`, `EeroValidationException`, and `from eero.exceptions import EeroNotFoundException, EeroPremiumRequiredException, EeroFeatureUnavailableException`.
+All exceptions derive from `EeroException`, end in `...Exception` (not `...Error`), and are importable from the package root: `EeroAuthenticationException` (every 401), `EeroRateLimitException`, `EeroNetworkException`, `EeroTimeoutException`, `EeroValidationException` (client-side validation **and** API 400 form errors — not an `EeroAPIException`), and `EeroAPIException` with its subclasses `EeroNotFoundException` (every 404), `EeroAccessDeniedException` (403 + `error.access.denied`), `EeroPremiumRequiredException`, `EeroFeatureUnavailableException`, and `EeroClientBlockedException`.
+
+The class is chosen from the HTTP status first and the API's `meta.error` catalogue string second. Every exception carries `envelope` (the raw response envelope, or `None`) and `error_code` (`meta.error`, or `None`); the message is only the status plus the recognised catalogue string (or `unrecognised error string`) — never the body. Branch on the class or on `error_code`, not on `str(err)`.
 
 ```python
-from eero import EeroAuthenticationException, EeroException
+from eero import (
+    EeroAPIException,
+    EeroAuthenticationException,
+    EeroException,
+    EeroNotFoundException,
+)
 
 try:
-    await client.get_network(network_id="invalid-id")
-except EeroAuthenticationException:
-    print("Session expired — log in again")
-except EeroException as e:
-    print(f"Request failed: {e}")
+    await client.get_network(network_id="<network-id>")
+except EeroAuthenticationException as err:
+    print(f"Session rejected ({err.error_code}) — log in again")
+except EeroNotFoundException:
+    print("No such network")
+except EeroAPIException as err:
+    print(f"API error {err.status_code}: {err.error_code}")
+except EeroException as err:
+    print(f"Request failed: {err.error_code or err}")
 ```
-
-> **Note**: `EeroNotFoundException`, `EeroPremiumRequiredException`, and `EeroFeatureUnavailableException` are **not** in `eero.__all__` — `from eero import EeroNotFoundException` raises `ImportError`. Import them from `eero.exceptions` instead. They are defined but never raised anywhere in `src/`. See [Error Handling](Error-Handling).
 
 Full hierarchy and per-exception guidance: [Error Handling](Error-Handling).
 

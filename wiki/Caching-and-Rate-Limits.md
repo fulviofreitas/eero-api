@@ -77,7 +77,7 @@ Some write methods invalidate the specific cache entries they affect via two int
 | `create_profile` | the network's profile list |
 | `rename_profile`, `delete_profile` | that profile's cache entry + the network's profile list |
 | `reboot_eero`, `set_led`, `set_nightlight` | the network's eeros list |
-| `set_guest_network`, `run_speed_test`, `set_network_name` | that network's cache entry |
+| `set_guest_network`, `run_speed_test`, `set_network_name`, the DNS writes, `set_data_usage_report_settings` | that network's cache entry |
 
 > ⚠️ **Gotcha:** Not every write invalidates a related read. Confirmed **not** invalidated by this SDK version, despite mutating server-side state that a cached read reflects:
 > - `set_led_brightness` — does **not** invalidate the eeros cache (unlike `set_led` and `set_nightlight`, which do)
@@ -102,7 +102,7 @@ Practical guidance:
 - **Lean on the cache** — the default 60-second TTL alone eliminates most redundant reads in interactive use.
 - **Raise `cache_timeout` for polling workloads** — a monitoring loop checking network health every few minutes doesn't need fresh data every call.
 - **Batch reads** — call `get_networks()` / `get_devices()` once and slice the response in memory rather than issuing one request per item.
-- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`.
+- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`. The SDK never retries a `429` itself, and never retries a write for any reason; the only built-in retry is the opt-in `get_retries` constructor option for `GET`s that fail with a transport error or a `5xx` (see [Configuration](Configuration#-retry-policy)).
 
 ### Example: a rate-limit-respecting monitoring loop
 
@@ -131,16 +131,13 @@ asyncio.run(main())
 
 ## Mobile User-Agent
 
-The SDK sends a mobile-style `User-Agent` header by default, defined in `src/eero/const.py`:
+The SDK sends a mobile-style `User-Agent` header on every request, defined in `src/eero/const.py`:
 
 ```python
-DEFAULT_HEADERS: Final[Dict[str, str]] = {
-    "User-Agent": "eero/3.0 (iPhone; iOS 17.0)",
-    "Content-Type": "application/json",
-}
+DEFAULT_USER_AGENT: Final[str] = "eero/3.0 (iPhone; iOS 17.0)"
 ```
 
-Per the inline comment in `const.py`, this exists because the Eero Cloud API "has been observed to treat non-mobile clients more aggressively" for rate-limiting — presenting as the official mobile app reduces the chance of being throttled.
+This exists because the Eero Cloud API rate-limits non-mobile clients more aggressively — presenting as the official mobile app reduces the chance of being throttled. It is not configurable. The full per-request header set (`Accept`, `User-Agent`, `X-Accept-Language`, and a per-request `Content-Type`) is described in [Configuration](Configuration#-request-headers-and-transport).
 
 ---
 

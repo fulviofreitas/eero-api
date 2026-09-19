@@ -20,6 +20,10 @@ already been removed entirely.
 | ❌ `SettingsAPI` / `EeroClient.get_settings` | removed v8.0.0 | `AttributeError` | `EeroClient.get_network` / `EeroClient.get_dns_settings` — the same fields are carried on the network envelope | Removed |
 | ❌ `PasswordAPI` / `EeroClient.get_password` | removed v8.0.0 | `AttributeError` | `EeroClient.get_network` — the network envelope carries the same fields | Removed |
 | ❌ `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | removed v8.0.0 | `AttributeError` | None — the resource is POST-only; use `BurstReportersAPI.create_burst_reporter` | Removed |
+| ❌ `AuthCredentials.refresh_token` / `.session_expiry` fields and `is_session_expired()` / `has_valid_session()` / `clear_session()` | removed v8.0.0 | `AttributeError` | None — there is no refresh token and no client-side expiry; the server decides session validity | Removed |
+| ❌ `eero.const.DEFAULT_HEADERS`, `REFRESH_ENDPOINTS`, `ACCOUNT_REFRESH_ENDPOINT`, `SESSION_TOKEN_KEY`, `REFRESH_TOKEN_KEY`, `MAX_ERROR_BODY_CHARS` | removed v8.0.0 | `ImportError` | `DEFAULT_USER_AGENT`; `LOGIN_REFRESH_ENDPOINT` (the only refresh path); `CREDENTIAL_SCHEMA_VERSION`; nothing for the rest | Removed |
+| ❌ `get_data_usage(network_id, payload, resource)` (positional `payload` dict and free-form `resource`) | removed v8.0.0 | `TypeError` | `get_data_usage(network_id, *, start, end, cadence, timezone=None)` plus the explicit `DataUsageAPI` reads (`get_breakdown`, `get_devices_usage`, …) | Removed |
+| ❌ `get_ouicheck(network_id)` with no `serial` / `version` | removed v8.0.0 | `TypeError` | `get_ouicheck(network_id, *, serial, version)` — the API returns `404` without both | Removed |
 
 ---
 
@@ -61,6 +65,13 @@ against the current API or the API stopped serving the underlying endpoint.
 | `SettingsAPI` (module) / `EeroClient.get_settings` | The endpoint returns 404 on every path version. The same fields are carried on the network envelope — use `EeroClient.get_network` (or `get_dns_settings` / `get_security_settings` for the relevant subset) |
 | `PasswordAPI` (module) / `EeroClient.get_password` | The endpoint returns 404 on every path version. The network envelope carries the same fields — use `EeroClient.get_network` |
 | `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | The endpoint returns 404; the resource is POST-only. Use `BurstReportersAPI.create_burst_reporter` (no `EeroClient` wrapper) via `client._api.burst_reporters` |
+| `AuthCredentials.refresh_token`, `AuthCredentials.session_expiry`, `is_session_expired()`, `has_valid_session()`, `clear_session()` | The API issues no refresh token (refresh reuses the session token) and the SDK no longer tracks an expiry — `is_authenticated` means a token is present, and the server signals invalidity with a 401. The persisted record is now `{"session_id": ..., "schema_version": 2}`; old records are migrated on load |
+| `DEFAULT_HEADERS` | Headers are built per request by `eero.api.base.build_request_headers`. The User-Agent string is `DEFAULT_USER_AGENT`; `Content-Type` is set per request by the body encoding |
+| `REFRESH_ENDPOINTS`, `ACCOUNT_REFRESH_ENDPOINT` | The API has one refresh path, `LOGIN_REFRESH_ENDPOINT` (`/2.2/login/refresh`); `account/refresh` is not served |
+| `SESSION_TOKEN_KEY`, `REFRESH_TOKEN_KEY` | Never used as storage keys by the current record shape. `CREDENTIAL_SCHEMA_VERSION` is the only storage-related constant |
+| `MAX_ERROR_BODY_CHARS` | Error bodies are no longer embedded in messages or logs at all, so there is nothing to truncate. Read `err.envelope` / `err.error_code` instead |
+| `get_data_usage(network_id, payload, resource)` | The data-usage endpoints accept query parameters only and reject a body. Use `get_data_usage(network_id, *, start, end, cadence, timezone=None)`; each former `resource` value is now an explicit `DataUsageAPI` method |
+| `get_ouicheck(network_id)` | The API returns 404 unless `serial` and `version` are supplied. Use `get_ouicheck(network_id, *, serial, version)` |
 
 See [Migration#v7x--v800](Migration#v7x--v800) for call-site replacement examples.
 

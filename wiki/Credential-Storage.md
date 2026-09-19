@@ -15,9 +15,20 @@ class CredentialStorage(ABC):
     async def clear(self) -> None: ...
 ```
 
-`AuthCredentials` is a plain `@dataclass` with three fields — `session_id`, `refresh_token`, `session_expiry` — plus helpers `is_session_expired()`, `has_valid_session()`, `to_dict()`, `from_dict()`, `clear_session()`, `clear_all()`. Every backend round-trips this object; none of them know about networks, profiles, or anything besides auth state.
+`AuthCredentials` is a plain `@dataclass` with exactly one field — `session_id` — plus helpers `to_dict()`, `from_dict()`, and `clear_all()`. Every backend round-trips this object; none of them know about networks, profiles, or anything besides the session token. There is no expiry field and no refresh token: the server decides whether a token is still valid, and refreshing reuses the same token (see [Authentication](Authentication#-session-lifetime)).
 
-`AuthAPI` owns exactly one `CredentialStorage` instance (built by `create_storage()` in its `__init__`) and calls `load()` on `__aenter__`, `save()` after every login/verify/refresh/token-seed, and `clear()` only from `clear_auth_data()`.
+`to_dict()` produces the persisted record shape, which is the same for every backend:
+
+```json
+{
+  "session_id": "…",
+  "schema_version": 2
+}
+```
+
+`schema_version` is `eero.const.CREDENTIAL_SCHEMA_VERSION`. A stored record **without** that key is a legacy record from an earlier release — it may use the pre-v3.0.0 `user_token` key instead of `session_id`, and may carry the extra fields 7.x wrote alongside the token (named in [Migration](Migration#the-credential-record)). Each backend's `load()` migrates such a record in place: it keeps the token (reading `session_id`, falling back to `user_token`), drops every other field, and re-saves the record in the current shape. The migration runs once per backend, is idempotent (a record that already carries `schema_version` is never rewritten), and logs no values — only a one-line `DEBUG` message that a migration happened.
+
+`AuthAPI` owns exactly one `CredentialStorage` instance (built by `create_storage()` in its `__init__`) and calls `load()` on `__aenter__`, `save()` after every login/verify/token-seed/token-clear (and after a refresh that ends the session), and `clear()` only from `clear_auth_data()`.
 
 There are four concrete implementations: `KeyringStorage`, `FileStorage`, `MemoryStorage`, `ChainedStorage`.
 
@@ -61,7 +72,7 @@ Delegates to the third-party `keyring` package, which resolves a platform backen
 | 🐧 Linux | Secret Service (GNOME Keyring, KWallet) |
 | 🪟 Windows | Windows Credential Locker |
 
-`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the loaded session is already expired — calls `clear_session()` on it and re-saves before returning it. `save()` JSON-encodes `credentials.to_dict()` and calls `keyring.set_password(...)`. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` (nothing to delete is not an error).
+`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()` and calls `keyring.set_password(...)`. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` (nothing to delete is not an error).
 
 > **Note**: `load()` and `save()` wrap the underlying `keyring` calls in a bare `except Exception` and log at **`DEBUG`**, not a higher level — a locked keyring, missing Secret Service daemon on headless Linux, or any other backend failure is treated as **non-fatal**. `load()` returns an empty `AuthCredentials()` on failure; `save()` just silently no-ops (the docstring/comment on `save()` explicitly notes "using file fallback" — meaning this is safe specifically because `ChainedStorage` is expected to be layered in front of it whenever you need persistence guarantees).
 
@@ -76,16 +87,17 @@ class FileStorage(CredentialStorage):
 
 - The path is resolved eagerly in `__init__` via `os.path.abspath(os.path.expanduser(file_path))` — `~` is expanded and the result is made absolute. There is **no default path**; you must always supply one.
 - `file_path` is a read-only `@property` returning the resolved path.
-- `load()` returns an empty `AuthCredentials()` if the file doesn't exist or fails to parse as JSON (`FileNotFoundError`, `json.JSONDecodeError` caught explicitly; any other exception is caught too and logged at `WARNING`). An expired session found on disk is cleared and re-saved, same as `KeyringStorage`.
+- `load()` returns an empty `AuthCredentials()` if the file doesn't exist or fails to parse as JSON (`FileNotFoundError`, `json.JSONDecodeError` caught explicitly; any other exception is caught too and logged at `WARNING`). A legacy record found on disk is migrated and re-saved, same as `KeyringStorage`.
 - `save()` creates the parent directory with `os.makedirs(cookie_dir, exist_ok=True)`, writes `json.dumps(credentials.to_dict())` to the file, then `os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)` — owner read/write only (`0600`). The exact keys written are:
 
 ```json
 {
   "session_id": "…",
-  "refresh_token": "…",
-  "session_expiry": "2026-10-10T12:00:00"
+  "schema_version": 2
 }
 ```
+
+> **Note**: If your own tooling reads this file, read `session_id` only. The extra fields 7.x wrote are no longer written, and any copy of them still sitting in an old file is dropped the first time the SDK loads it — see [Migration](Migration#the-credential-record).
 
 - `clear()` removes the file with `os.remove()` if it exists; a missing file or any other error is logged at `WARNING` and swallowed (never raises).
 
@@ -98,7 +110,7 @@ class ChainedStorage(CredentialStorage):
     def __init__(self, primary: CredentialStorage, fallback: CredentialStorage) -> None
 ```
 
-Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(cookie_file))` — but nothing stops you from composing it yourself with any two `CredentialStorage` instances.
+Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(cookie_file))` — but nothing stops you from composing it yourself with any two `CredentialStorage` instances. `ChainedStorage` performs no legacy-record migration of its own; each underlying backend migrates on its own `load()`.
 
 | Operation | Order of operations | On partial failure |
 |---|---|---|
@@ -106,10 +118,10 @@ Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringSt
 | `save()` | Try `primary.save()`. | If `primary.save()` raises, the exception is caught, logged at `DEBUG`, and `fallback.save()` is attempted. If **both** raise, the fallback's exception is logged at `ERROR` and swallowed — `save()` never raises to the caller. |
 | `clear()` | Calls `primary.clear()` **and** `fallback.clear()` unconditionally (both always run; no early return). | Not explicitly guarded — an exception from either would propagate, since `clear()` has no try/except here (unlike `load`/`save`). |
 
-> ⚠️ **Warning: The `save()` fallback path is dead code.** `KeyringStorage.save()` catches its
+> ⚠️ **Warning: `save()` never reaches the file fallback.** `KeyringStorage.save()` catches its
 > own exceptions internally and returns normally instead of raising (see above). That means
-> `ChainedStorage.save()`'s `except` branch — the one that would call `fallback.save()` — never
-> fires in practice; a keyring failure on save is invisible, and the file is **never written** as
+> `ChainedStorage.save()`'s `except` branch — the one that would call `fallback.save()` — is not
+> reached in practice; a keyring failure on save is invisible, and the file is **not written** as
 > part of `save()`. The only path that ever populates the file backend is the **read-side**
 > migration in `load()` (a successful `fallback.load()` gets copied back into `primary`) — but
 > that only helps if the file already has credentials in it from some other source. Do not rely on
@@ -160,7 +172,7 @@ There is no monkey-patch-free extension point beyond that — don't assume one e
 | Goal | Call |
 |---|---|
 | Rotate to a new externally-issued token | `await client.set_session_token(new_token)` |
-| Drop the active session but keep other stored state, no server round-trip | `await client.clear_session_token()` |
+| Drop the active session locally, no server round-trip | `await client.clear_session_token()` |
 | Log out and tell the server too | `await client.logout()` |
 | Wipe everything, including deleting the keyring entry / cookie file outright | `await client._api.auth.clear_auth_data()` (reaches into the private `AuthAPI`; not exposed on `EeroClient`/`EeroAPI`; not covered by semver) |
 
@@ -172,6 +184,7 @@ All four invalidate `EeroClient`'s in-memory response cache as a side effect whe
 
 - [Home](Home) — Overview and quick start
 - [Configuration](Configuration) — Storage-selection summary table and constructor options
-- [Authentication](Authentication) — Login/verify flow, session lifetime, and what gets persisted
+- [Authentication](Authentication) — Login/verify flow, session transport, and what gets persisted
+- [Migration](Migration#v7x--v800) — What changed in the credential record in v8.0.0
 - [Logging and Security](Logging-and-Security) — Sensitive-field redaction in logs
 - [Troubleshooting](Troubleshooting) — Common issues & fixes

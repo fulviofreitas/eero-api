@@ -122,7 +122,7 @@ This project is a modern revamp of the original [eero-client](https://github.com
 **What's new:**
 - Full async/await with `aiohttp`
 - Raw JSON passthrough — no Pydantic models, no data transformation
-- 26 domain-specific APIs + AuthAPI (27 API classes total) covering the full Eero Cloud API surface
+- 23 domain-specific APIs + AuthAPI (24 API classes total) covering the Eero Cloud API surface the API still serves
 - Secure credential storage — OS keyring, with an owner-only (`0600`) file fallback
 
 ---

@@ -15,7 +15,7 @@ EeroAPI      → composition root: aggregates 23 domain APIs + AuthAPI (24 API c
     ↓
 Domain APIs  → one class per Eero Cloud resource (NetworksAPI, DevicesAPI, ProfilesAPI, ...)
     ↓
-BaseAPI / AuthenticatedAPI → HTTP transport, error mapping, auth headers
+BaseAPI / AuthenticatedAPI → HTTP transport, error mapping, credential placement (X-User-Token header)
 ```
 
 Use `EeroClient` for almost everything — it's the only layer with the 60s TTL cache and
@@ -38,8 +38,10 @@ shaped `{"meta": {...}, "data": {...}}` unless noted otherwise. See [Raw Respons
 `from eero import EeroClient`. Constructor:
 
 ```python
-def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, use_keyring: bool=True, cache_timeout: int=60) -> None
+def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, use_keyring: bool=True, cache_timeout: int=60, *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0) -> None
 ```
+
+The three keyword-only options (`send_legacy_cookie`, `accept_language`, `get_retries`) are forwarded unchanged to `EeroAPI` → `AuthAPI` → the transport; see [Configuration](Configuration#-constructor-reference).
 
 All `network_id` parameters below are trailing optional kwargs — when omitted, `EeroClient`
 resolves the network via `preferred_network_id` (if set); only 19 methods will additionally
@@ -155,7 +157,7 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 
 > ### ⚠️ A DNS change reboots the whole mesh
 >
-> Every eero restarts and all clients lose Wi-Fi and internet while they do. Observed
+> Every eero restarts and all clients lose Wi-Fi and internet while they do. Verified
 > 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting
 > within a 17-second window. The eero app behaves the same way when applying a DNS change.
 >
@@ -282,7 +284,17 @@ build a picker from that list so it stays current and complete.
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: Optional[str]=None, device_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_data_usage` | `async def get_data_usage(self, network_id: Optional[str]=None, payload: Optional[Dict[str, Any]]=None, resource: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `get_data_usage` | `async def get_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `start`/`end`/`cadence` are keyword-only; `cadence` is `"daily"` or `"hourly"`, required by the API here. All data-usage reads send query parameters only and are never cached |
+| `get_data_usage_breakdown` | `async def get_data_usage_breakdown(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_breakdown` |
+| `get_devices_data_usage` | `async def get_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_devices_usage` |
+| `get_device_data_usage` | `async def get_device_data_usage(self, device_mac: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_device_usage`; `device_mac` is the leading positional |
+| `get_eeros_data_usage_summary` | `async def get_eeros_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eeros_summary` |
+| `get_eero_data_usage` | `async def get_eero_data_usage(self, eero_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eero_usage` |
+| `get_profile_data_usage` | `async def get_profile_data_usage(self, profile_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_profile_usage` |
+| `get_unprofiled_devices_data_usage` | `async def get_unprofiled_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_devices` |
+| `get_unprofiled_data_usage_summary` | `async def get_unprofiled_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_summary` |
+| `get_data_usage_report_settings` | `async def get_data_usage_report_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_report_settings` |
+| `set_data_usage_report_settings` | `async def set_data_usage_report_settings(self, *, cadence: str, notification_day: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | **Unverified write** — read first, write only on a difference, never retry. Invalidates that network's cache entry |
 | `get_insights` | see [Networks](#networks) | `Dict[str, Any]` | |
 
 > **Note**: `get_burst_reporters` was removed in v8.0.0 — the endpoint returns 404; the resource
@@ -302,7 +314,7 @@ build a picker from that list so it stays current and complete.
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_ac_compat` | `async def get_ac_compat(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_ouicheck` | `async def get_ouicheck(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `get_ouicheck` | `async def get_ouicheck(self, network_id: Optional[str]=None, *, serial: str, version: str) -> Dict[str, Any]` | `Dict[str, Any]` | `serial` and `version` are keyword-only and required — the API returns `404` without them. Take them from an eero envelope (`get_eeros()`) |
 | `get_updates` | `async def get_updates(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 
 > **Note**: `get_password` was removed in v8.0.0 — the endpoint returns 404 on every path
@@ -336,15 +348,27 @@ Transport layer — not reached via an `EeroAPI` attribute; domain classes inher
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, base_url: str='') -> None` | `BaseAPI` | |
+| Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, base_url: str='', *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0) -> None` | `BaseAPI` | `base_url`'s hostname is the only host the session token is ever sent to |
 | `session` | `def session(self) -> ClientSession` | `ClientSession` | Property-style accessor |
-| `get` | `async def get(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `post` | `async def post(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `put` | `async def put(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `delete` | `async def delete(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `get` | `async def get(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Subject to the bounded `get_retries` policy |
+| `post` | `async def post(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Never retried |
+| `put` | `async def put(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Never retried |
+| `delete` | `async def delete(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Never retried |
 
-`id_from_url(id_or_url: str) -> str` is a module-level function in `base.py`, re-exported from
-the package root (`from eero import id_from_url`).
+`**kwargs` are forwarded to the aiohttp request. `json=` selects a JSON body, `data=` a form
+body, `encoding=RequestEncoding.EMPTY_JSON_STRING` the two-character `""` body; only one may be
+supplied. `params=` is independent of the body. `headers=` may add per-call headers (validated;
+`X-User-Token` / `Cookie` / `Authorization` are rejected). `allow_redirects=True` is rejected.
+
+`AuthenticatedAPI.__init__(self, auth_api: AuthAPI, base_url: str='', *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0)` takes the same three options; every domain class passes only `auth_api` and inherits the values `AuthAPI` was built with.
+
+Module-level exports of `eero.api.base`:
+
+| Symbol | Signature / values | Notes |
+|--------|--------------------|-------|
+| `id_from_url` | `id_from_url(id_or_url: str) -> str` | Re-exported from the package root (`from eero import id_from_url`) |
+| `RequestEncoding` | `str, Enum`: `JSON`, `FORM`, `EMPTY_JSON_STRING`, `NONE` | The body encoding active on a single request |
+| `build_request_headers` | `build_request_headers(*, accept_language: str, extra_headers: Optional[Dict[str, str]]=None) -> Dict[str, str]` | Returns `Accept`, `User-Agent`, `X-Accept-Language` plus validated extras; never sets `Content-Type` |
 
 ### AuthAPI (`client._api.auth`)
 
@@ -352,14 +376,14 @@ Owns login/session lifecycle and credential storage.
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, use_keyring: bool=True) -> None` | `AuthAPI` | |
-| `is_authenticated` | `def is_authenticated(self) -> bool` | `bool` | **Property** |
-| `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | |
-| `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | |
-| `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | No `EeroClient` wrapper |
-| `logout` | `async def logout(self) -> bool` | `bool` | |
-| `refresh_session` | `async def refresh_session(self) -> bool` | `bool` | No `EeroClient` wrapper |
-| `ensure_authenticated` | `async def ensure_authenticated(self) -> bool` | `bool` | No `EeroClient` wrapper |
+| Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, use_keyring: bool=True, *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0) -> None` | `AuthAPI` | |
+| `is_authenticated` | `def is_authenticated(self) -> bool` | `bool` | **Property** — `True` when a session token is present; no client-side expiry |
+| `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | Form-encoded `login=` body |
+| `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | Form-encoded `code=` body |
+| `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | No `EeroClient` wrapper; sends `{}` |
+| `logout` | `async def logout(self) -> bool` | `bool` | Form-encoded body, field `Cookie` = `s=<token>` |
+| `refresh_session` | `async def refresh_session(self) -> bool` | `bool` | No `EeroClient` wrapper; `POST /2.2/login/refresh` with body `""`, authenticated by the session token; concurrent calls coalesced; `True` on 200, `False` on any API error from the refresh endpoint; network/timeout failures still raise |
+| `ensure_authenticated` | `async def ensure_authenticated(self) -> bool` | `bool` | No `EeroClient` wrapper; returns `is_authenticated` |
 | `get_auth_token` | `async def get_auth_token(self) -> Optional[str]` | `Optional[str]` | No `EeroClient` wrapper |
 | `clear_auth_data` | `async def clear_auth_data(self) -> None` | `None` | No `EeroClient` wrapper |
 | `set_session_token` | `async def set_session_token(self, token: str) -> None` | `None` | |
@@ -375,11 +399,9 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 
 | Class | Method | Signature |
 |-------|--------|-----------|
-| `AuthCredentials` | — | `is_session_expired(self) -> bool` |
-| `AuthCredentials` | — | `has_valid_session(self) -> bool` |
-| `AuthCredentials` | — | `to_dict(self) -> dict` |
-| `AuthCredentials` | classmethod | `from_dict(cls, data: dict) -> 'AuthCredentials'` |
-| `AuthCredentials` | — | `clear_session(self) -> None` |
+| `AuthCredentials` | field | `session_id: Optional[str] = None` — the only field |
+| `AuthCredentials` | — | `to_dict(self) -> Dict[str, Any]` — `{"session_id": ..., "schema_version": 2}` |
+| `AuthCredentials` | classmethod | `from_dict(cls, data: Dict[str, Any]) -> 'AuthCredentials'` — for records already carrying `schema_version`; legacy records are migrated by each backend's `load()` |
 | `AuthCredentials` | — | `clear_all(self) -> None` |
 | `CredentialStorage` (ABC) | — | `async def load(self) -> AuthCredentials` |
 | `CredentialStorage` (ABC) | — | `async def save(self, credentials: AuthCredentials) -> None` |
@@ -613,13 +635,34 @@ Each of these constructors is `def __init__(self, auth_api: AuthAPI) -> None`.
 | Class | Attribute | Method | Signature | Notes |
 |-------|-----------|--------|-----------|-------|
 | `TransferAPI` | `client._api.transfer` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None) -> Dict[str, Any]` | |
-| `DataUsageAPI` | `client._api.data_usage` | `get_data_usage` | `async def get_data_usage(self, network_id: str, payload: Dict[str, Any], resource: Optional[str]=None) -> Dict[str, Any]` | `payload` is required here (unlike the `EeroClient` wrapper, where it defaults to `None`) |
 | `BurstReportersAPI` | `client._api.burst_reporters` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any]) -> Dict[str, Any]` | No `EeroClient` wrapper |
 | `ACCompatAPI` | `client._api.ac_compat` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str) -> Dict[str, Any]` | |
-| `OUICheckAPI` | `client._api.ouicheck` | `get_ouicheck` | `async def get_ouicheck(self, network_id: str) -> Dict[str, Any]` | |
+| `OUICheckAPI` | `client._api.ouicheck` | `get_ouicheck` | `async def get_ouicheck(self, network_id: str, *, serial: str, version: str) -> Dict[str, Any]` | Both keyword-only arguments are required; sent as query parameters. The API returns `404` without them. Empty/non-string values raise `EeroValidationException` |
 | `UpdatesAPI` | `client._api.updates` | `get_updates` | `async def get_updates(self, network_id: str) -> Dict[str, Any]` | |
 
 Each of these constructors is `def __init__(self, auth_api: AuthAPI) -> None`.
+
+**`DataUsageAPI` (`client._api.data_usage`).** Every read is a `GET` on
+`networks/{network_id}/data_usage…` taking query parameters only — `start` and `end` (ISO 8601
+timestamps), an optional IANA `timezone`, and `cadence` (`"daily"` or `"hourly"`). Where
+`cadence` is typed `str` below it is required by the API; where it is `Optional[str]` it is
+omitted from the request when `None`. An invalid `cadence` raises `EeroValidationException`
+locally. Every method has an `EeroClient` wrapper (listed under [Stats & Usage](#stats--usage))
+with the `*_data_usage*` naming shown there.
+
+| Method | Signature | Notes |
+|--------|-----------|-------|
+| `get_data_usage` | `async def get_data_usage(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | Network-level series |
+| `get_breakdown` | `async def get_breakdown(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_devices_usage` | `async def get_devices_usage(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None) -> Dict[str, Any]` | `profile_id` scopes to one profile's devices |
+| `get_device_usage` | `async def get_device_usage(self, network_id: str, device_mac: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | One device, addressed by MAC |
+| `get_eeros_summary` | `async def get_eeros_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_eero_usage` | `async def get_eero_usage(self, network_id: str, eero_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_profile_usage` | `async def get_profile_usage(self, network_id: str, profile_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_unprofiled_devices` | `async def get_unprofiled_devices(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_unprofiled_summary` | `async def get_unprofiled_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | |
+| `get_report_settings` | `async def get_report_settings(self, network_id: str) -> Dict[str, Any]` | No query parameters |
+| `set_report_settings` | `async def set_report_settings(self, network_id: str, *, cadence: str, notification_day: str) -> Dict[str, Any]` | `PUT` with a JSON body. **Unverified write** — its side effects have not been characterised against a live network. Read `get_report_settings` first, write only when the stored values differ, never retry |
 
 > **Note**: `BurstReportersAPI.get_burst_reporters` and `OUICheckAPI.run_ouicheck` were removed
 > in v8.0.0 (both returned 404 / declared no such operation upstream). `PasswordAPI` was removed
@@ -634,18 +677,32 @@ Each of these constructors is `def __init__(self, auth_api: AuthAPI) -> None`.
 
 | Name | Base class | Raised when |
 |------|-----------|-------------|
-| `EeroException` | `Exception` | Base for all SDK errors; `__init__(self, message: str='An error occurred')`, has `is_auth_error()` |
-| `EeroAuthenticationException` | `EeroException` | Login/session failures; `is_auth_error()` always `True` |
-| `EeroRateLimitException` | `EeroException` | HTTP 429 from the Eero Cloud API |
-| `EeroNetworkException` | `EeroException` | Low-level connection/transport failures |
-| `EeroAPIException` | `EeroException` | Generic HTTP error mapping (`status_code`, `message`); `is_auth_error()` checks `status_code == 401` |
-| `EeroTimeoutException` | `EeroException` | Request exceeded the client timeout |
-| `EeroNotFoundException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
-| `EeroPremiumRequiredException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
-| `EeroFeatureUnavailableException` | `EeroException` | **Never raised anywhere in `src/`** and not in `eero.__all__` — see [Error Handling](Error-Handling) |
-| `EeroValidationException` | `EeroException` | `__init__(self, field: str, message: str)` — client-side input validation failure |
+| `EeroException` | `Exception` | Base for all SDK errors; `__init__(self, message: str='An error occurred', *, envelope: Optional[Dict[str, Any]]=None, error_code: Optional[str]=None)`; attributes `message`, `envelope` (raw response envelope or `None`), `error_code` (`meta.error` or `None`); `is_auth_error()` → `False` |
+| `EeroAuthenticationException` | `EeroException` | Every HTTP 401 (after the refresh-and-replay attempt) and local "no session token" failures; `is_auth_error()` → `True` |
+| `EeroRateLimitException` | `EeroException` | HTTP 429, or `error.rate.limit` on any status |
+| `EeroNetworkException` | `EeroException` | Low-level connection/transport failures; `envelope` is `None` |
+| `EeroTimeoutException` | `EeroException` | Request exceeded the client timeout; `envelope` is `None` |
+| `EeroValidationException` | `EeroException` | `__init__(self, field: str, message: str, *, envelope=None, error_code=None)` for client-side validation; `from_response(message, *, envelope=None, error_code=None)` (sets `field="request"`) for an API 400 carrying a `VALIDATION` catalogue string. **Not** an `EeroAPIException` |
+| `EeroAPIException` | `EeroException` | `__init__(self, status_code: Optional[int], message: str, *, envelope=None, error_code=None)`; `str(err)` is `API error <status>: <catalogue string or "unrecognised error string">`; `is_auth_error()` → `status_code == 401` (never produced by the transport, which raises `EeroAuthenticationException` for 401). Raised for 3xx, oversized/invalid bodies, every `DOMAIN` string, and any status not claimed by a subclass |
+| `EeroAccessDeniedException` | `EeroAPIException` | HTTP 403 with `error.access.denied`; not an auth error |
+| `EeroClientBlockedException` | `EeroAPIException` | `error.app.version.blocked` on any status |
+| `EeroNotFoundException` | `EeroAPIException` | Every HTTP 404. `__init__(self, resource_type: str, resource_id: str, *, envelope=None, error_code=None)` for direct construction; `from_response(message, *, status_code: int=404, envelope=None, error_code=None)` (both resource attributes `None`) is what the transport uses |
+| `EeroPremiumRequiredException` | `EeroAPIException` | A `PREMIUM` string on any status. `__init__(self, feature: str='This feature', *, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` |
+| `EeroFeatureUnavailableException` | `EeroAPIException` | A `FEATURE_UNAVAILABLE` string on any status. `__init__(self, feature: str, reason: str='not supported on this device', *, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` sets `feature` to the `error_code` and `reason` to the message |
 
-Full hierarchy, matching, and handling patterns: [Error Handling](Error-Handling).
+Full hierarchy, the catalogue groups, and handling patterns: [Error Handling](Error-Handling).
+
+### The error catalogue (`eero.errors`)
+
+| Symbol | Signature / values | Root-importable? |
+|--------|--------------------|------------------|
+| `ErrorGroup` | `str, Enum`: `SESSION`, `SESSION_REFRESH`, `VERIFICATION`, `ACCESS_DENIED`, `NOT_FOUND`, `RATE_LIMIT`, `VALIDATION`, `PREMIUM`, `FEATURE_UNAVAILABLE`, `CLIENT_BLOCKED`, `DOMAIN` | Yes |
+| `classify_error_code` | `classify_error_code(error_code: Optional[str]) -> Optional[ErrorGroup]` — case-insensitive, whitespace-trimmed; `None` for unrecognised/free-text/absent input | Yes |
+| `exception_for_error` | `exception_for_error(status_code: int, *, envelope: Optional[Dict[str, Any]], error_code: Optional[str]) -> EeroException` — builds (never raises) the exception for a non-2xx/3xx response; status first, catalogue string second | Yes |
+| `message_for_error_code` | `message_for_error_code(error_code: Optional[str]) -> str` — the normalised catalogue string or `"unrecognised error string"` | `eero.errors` only |
+| `SESSION_ERRORS`, `SESSION_REFRESH_ERRORS`, `VERIFICATION_ERRORS`, `ACCESS_DENIED_ERRORS`, `NOT_FOUND_ERRORS`, `RATE_LIMIT_ERRORS`, `VALIDATION_ERRORS`, `PREMIUM_ERRORS`, `FEATURE_UNAVAILABLE_ERRORS`, `CLIENT_BLOCKED_ERRORS`, `DOMAIN_ERRORS` | `FrozenSet[str]` — the member strings of each group | `eero.errors` only |
+
+The full string list per group is in [Error Handling](Error-Handling#the-groups).
 
 ---
 
@@ -658,14 +715,28 @@ __all__ = [
     "EeroAPI",
     "EeroClient",
     "EeroException",
+    "EeroAccessDeniedException",
     "EeroAPIException",
     "EeroAuthenticationException",
+    "EeroClientBlockedException",
+    "EeroFeatureUnavailableException",
     "EeroNetworkException",
+    "EeroNotFoundException",
+    "EeroPremiumRequiredException",
     "EeroRateLimitException",
     "EeroTimeoutException",
     "EeroValidationException",
+    # Error catalogue
+    "ErrorGroup",
+    "classify_error_code",
+    "exception_for_error",
     # URL / ID utilities
     "id_from_url",
+    "join_api_path",
+    "resolve_link",
+    "resource_url",
+    "self_url",
+    "sub_resource_url",
     # Secure logging utilities
     "get_secure_logger",
     "SecureLoggerAdapter",
@@ -673,19 +744,8 @@ __all__ = [
 ]
 ```
 
-> ⚠️ **Warning:** Only the exceptions in `__all__` above are importable from the package root
-> (`from eero import ...`) — everything else in `src/eero/exceptions.py` must be imported from
-> `eero.exceptions` directly.
-
-| Root-importable (`from eero import ...`) | `eero.exceptions`-only (`from eero.exceptions import ...`) |
-|---|---|
-| `EeroException` | `EeroNotFoundException` |
-| `EeroAPIException` | `EeroPremiumRequiredException` |
-| `EeroAuthenticationException` | `EeroFeatureUnavailableException` |
-| `EeroNetworkException` | |
-| `EeroRateLimitException` | |
-| `EeroTimeoutException` | |
-| `EeroValidationException` | |
+Every exception class is importable from the package root. `message_for_error_code` and the
+per-group `*_ERRORS` frozensets are `eero.errors`-only (`from eero.errors import ...`).
 
 > ⚠️ **Warning:** `EeroDeviceType`, `EeroNetworkStatus`, and `EeroDeviceStatus` (defined in
 > `src/eero/const.py`) are **NOT** re-exported from the package root. `eero/__init__.py` does
@@ -700,21 +760,28 @@ Public, useful constants from `src/eero/const.py` (import via `from eero.const i
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `API_ENDPOINT` | `"https://api-user.e2ro.com/2.2"` | Base URL for reads and most writes |
-| `DEVICE_UPDATE_ENDPOINT` | `"https://api-user.e2ro.com/2.3"` | Base URL for device-mutation writes only |
-| `LOGIN_ENDPOINT` | `f"{API_ENDPOINT}/login"` | |
-| `LOGIN_VERIFY_ENDPOINT` | `f"{API_ENDPOINT}/login/verify"` | |
-| `LOGOUT_ENDPOINT` | `f"{API_ENDPOINT}/logout"` | |
+| `API_HOST` | `"https://api-user.e2ro.com"` | The only host the session token is ever sent to |
+| `API_VERSION` | `"2.2"` | Path version for reads and most writes |
+| `API_ENDPOINT` | `f"{API_HOST}/{API_VERSION}"` | Base URL for reads and most writes |
+| `DEVICE_UPDATE_ENDPOINT` | `f"{API_HOST}/2.3"` | Base URL for device-mutation writes only |
+| `LOGIN_ENDPOINT` | `f"{API_ENDPOINT}/login"` | Form-encoded `login=` body |
+| `LOGIN_VERIFY_ENDPOINT` | `f"{API_ENDPOINT}/login/verify"` | Form-encoded `code=` body |
+| `LOGIN_RESEND_ENDPOINT` | `f"{LOGIN_ENDPOINT}/resend"` | JSON `{}` body |
+| `LOGIN_REFRESH_ENDPOINT` | `f"{API_ENDPOINT}/login/refresh"` | The only refresh path; JSON `""` body, authenticated by the session token |
+| `LOGOUT_ENDPOINT` | `f"{API_ENDPOINT}/logout"` | Form-encoded body |
+| `LOGOUT_COOKIE_FIELD_NAME` | `"Cookie"` | Name of the single form field the logout endpoint expects |
+| `SESSION_COOKIE_PREFIX` | `"s="` | Prefix of that field's value (`s=<token>`), and of the legacy cookie |
 | `ACCOUNT_ENDPOINT` | `f"{API_ENDPOINT}/account"` | |
-| `LOGIN_REFRESH_ENDPOINT` | `f"{API_ENDPOINT}/login/refresh"` | Tried first for session refresh |
-| `ACCOUNT_REFRESH_ENDPOINT` | `f"{API_ENDPOINT}/account/refresh"` | Fallback refresh path |
-| `REFRESH_ENDPOINTS` | `(LOGIN_REFRESH_ENDPOINT, ACCOUNT_REFRESH_ENDPOINT)` | Tried in order |
-| `DEFAULT_HEADERS` | `{"User-Agent": "eero/3.0 (iPhone; iOS 17.0)", "Content-Type": "application/json"}` | Mobile UA reduces rate-limiting risk |
+| `DEFAULT_USER_AGENT` | `"eero/3.0 (iPhone; iOS 17.0)"` | Sent on every request; mobile UA reduces rate-limiting risk |
+| `DEFAULT_ACCEPT_LANGUAGE` | `"en-US"` | Default for the `accept_language` constructor option (`X-Accept-Language` header) |
 | `CACHE_TIMEOUT` | `60` | Unused — not imported anywhere in `src/`. `EeroClient` hardcodes `cache_timeout: int = 60` instead |
 | `MAX_RESPONSE_BYTES` | `10 * 1024 * 1024` (10 MiB) | Guards against unbounded response bodies |
-| `MAX_ERROR_BODY_CHARS` | `512` | Caps how much of a hostile/oversized body is embedded in error messages and logs |
-| `SESSION_TOKEN_KEY` | `"session_token"` | Keyring/file storage key |
-| `REFRESH_TOKEN_KEY` | `"refresh_token"` | Keyring/file storage key |
+| `GET_RETRY_DELAY_SECONDS` | `0.5` | Fixed pause between bounded GET retries (`get_retries`) |
+| `CREDENTIAL_SCHEMA_VERSION` | `2` | Written into every persisted credential record as `schema_version`; a record without it is migrated on load |
+
+> **Note**: Six constants (the old header dict, the refresh-endpoint tuple and its account
+> fallback, the two storage-key names, and the error-body cap) were removed in v8.0.0 — they are
+> listed with their replacements in [Migration](Migration#removed-constants).
 
 > ⚠️ **Warning:** The `/2.2` vs `/2.3` split matters for device mutations, but only for two
 > methods: `set_device_nickname` and `pause_device`. These route through

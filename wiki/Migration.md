@@ -320,10 +320,18 @@ Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back
 
 ## v7.x → v8.0.0
 
-**What broke**: Ten symbols that either never worked against the current API, or that the API
-stopped serving outright, are gone. There is no deprecation window for this release — every one
-of these calls now raises `AttributeError` (or, for `configure_security(thread=...)`,
-`TypeError`) instead of the previous no-op or 404.
+**What broke**: Three groups of changes landed together. First, ten symbols that either never
+worked against the current API, or that the API stopped serving outright, are gone (this
+section). Second, the session transport, refresh flow, credential record, retry policy, and
+error model (new exception classes, `envelope` / `error_code`) changed — see
+[Session transport and authentication](#session-transport-and-authentication) and the
+subsections that follow it, in particular [Error classes and attributes](#error-classes-and-attributes). Third, `get_data_usage` and `get_ouicheck` now take the
+parameters the API actually requires — see [`get_data_usage`](#get_data_usage-and-the-data-usage-family)
+and [`get_ouicheck`](#get_ouicheck).
+
+There is no deprecation window for this release — every removed call now raises
+`AttributeError` (or, for `configure_security(thread=...)`, `TypeError`) instead of the previous
+no-op or 404.
 
 | Removed | If you called it | Do this instead |
 |---|---|---|
@@ -384,6 +392,244 @@ Checklist:
 - [ ] Grep for `get_burst_reporters(` and `client._api.burst_reporters.get_burst_reporters` —
       remove; `create_burst_reporter` is unaffected.
 
+### Session transport and authentication
+
+**What changes for a caller: usually nothing.** `login()`, `verify()`, `logout()`,
+`set_session_token()`, `clear_session_token()`, and `is_authenticated` keep their signatures,
+and a stored session from 7.x keeps working after the credential record is migrated (below).
+What changed is underneath:
+
+| Before (v7.x) | After (v8.0.0) |
+|---|---|
+| Session token stored in the shared `aiohttp` cookie jar and sent as the `s=` cookie | Sent as the `X-User-Token` header on every request to the API host over `https`, and never to any other host or scheme. The legacy `s=` cookie is still sent **per request** (not via the jar) while `send_legacy_cookie=True` (default) |
+| `login` / `verify` / `logout` sent JSON bodies | They send `application/x-www-form-urlencoded` bodies (`login=`, `code=`, and a field named `Cookie` carrying `s=<token>` respectively). `resend` sends `{}`; refresh sends the JSON string `""` |
+| `User-Agent` and `Content-Type: application/json` on every request (`DEFAULT_HEADERS`) | `Accept: application/json`, `User-Agent` (`DEFAULT_USER_AGENT`), and `X-Accept-Language` (constructor option `accept_language`, default `en-US`) on every request; `Content-Type` set per request by the body encoding |
+| Redirects refused (`allow_redirects=False`) | Still refused, and now `allow_redirects=True` raises `EeroValidationException` — it cannot be re-enabled |
+
+Two things that will break if you relied on them:
+
+- **If you passed your own `aiohttp.ClientSession`** and read the session token back out of its
+  cookie jar, that jar is now empty — the SDK never writes the credential into it. Use
+  `client._api.auth.get_auth_token()` if you need the token value.
+- **If you called `BaseAPI.get`/`post`/… directly** with a `headers=` dict containing
+  `X-User-Token`, `Cookie`, or `Authorization`, the call now raises `EeroValidationException`.
+  Drop those headers — the transport attaches the credential itself.
+
+`AuthCredentials` lost `is_session_expired()`, `has_valid_session()`, and `clear_session()`
+along with the `refresh_token` and `session_expiry` fields. There is no client-side expiry any
+more: **`is_authenticated` means a session token is present**, nothing else. Any "days
+remaining" logic built on `session_expiry` has nothing to read and must go — the server is the
+only authority on whether a token is still valid, and it says so with a 401.
+
+### The credential record
+
+The persisted record (keyring entry or `cookie_file`) is now:
+
+```json
+{"session_id": "…", "schema_version": 2}
+```
+
+A record written by 7.x (or earlier) — one with no `schema_version`, possibly carrying
+`refresh_token`, `session_expiry`, or the pre-v3.0.0 `user_token` key — is migrated in place
+the first time it is loaded: only the token is kept, the other fields are dropped, and the
+record is re-saved in the shape above. This happens once, is idempotent, and logs no values.
+No re-authentication is needed.
+
+> **If you serialise or parse the credential file yourself, stop reading `session_expiry`
+> and `refresh_token`.** They are no longer written, and any copy left in an old file is
+> removed on first load. Read `session_id` only. If you *write* the file yourself, write the
+> shape above including `schema_version: 2` — a record without the marker is treated as legacy
+> and rewritten.
+
+### Refresh now works — and what that means for long-running processes
+
+In 7.x `refresh_session()` looked for a `refresh_token` that the API never issues, so a
+server-driven refresh signal could not succeed. In v8.0.0 refresh is
+`POST /2.2/login/refresh` authenticated by the session token itself, with the JSON body `""`:
+
+| Behaviour | v8.0.0 |
+|---|---|
+| Credential used | The current session token — there is no refresh token |
+| Endpoint | `/2.2/login/refresh` only; the `account/refresh` fallback is gone |
+| Concurrency | Coalesced: one refresh in flight, concurrent callers wait for its result, then their original request is replayed once |
+| Return value | `True` on HTTP 200, `False` on any API error from the refresh endpoint (401, 429, 5xx, …); a network or timeout failure still raises |
+| Stored credentials | Cleared when the refresh endpoint answers 401 with `error.session.expired`, `.invalid`, `.revoked`, or an unrecognised/absent `error_code`. **Kept** for a recognised non-session code such as `error.verification.required` |
+| Token in the refresh response | Deliberately ignored — the current token stays in use |
+
+For a daemon, exporter, or scheduled job this is the practical change: the process can now
+hold one token indefinitely. When the server asks for a refresh (a 401 carrying
+`error.session.refresh`), the SDK refreshes and replays the request transparently; the only
+`EeroAuthenticationException` you will see is a terminal one (session expired / invalid /
+revoked), after which the stored credential is already cleared and you need to re-seed a token
+or run the OTP flow. Catch it, re-authenticate, continue — do not add your own periodic
+`refresh_session()` calls.
+
+### Error classes and attributes
+
+The SDK now classifies every error response against the API's closed catalogue of
+`meta.error` strings (`eero.errors`, matched case-insensitively): the HTTP status picks the
+class first, the string second, and an unrecognised or free-text string never changes the
+status-chosen class. Every `EeroException` carries `envelope` (the raw, unmodified JSON
+response body, or `None`) and `error_code` (`meta.error`, or `None`). The exception
+**message** no longer contains the response body — it is the status plus the recognised
+catalogue string, or the fixed label `unrecognised error string` — and `MAX_ERROR_BODY_CHARS`
+(with its `... [truncated, N chars total]` suffix) is gone.
+
+**Class changes** (all still subclasses of `EeroException`, so broad handlers keep working):
+
+| Response | Before (v7.x) | After (v8.0.0) |
+|---|---|---|
+| Any 404 | `EeroAPIException(status_code=404)` | `EeroNotFoundException` — a subclass of `EeroAPIException`, so `except EeroAPIException` still catches it |
+| 403 with `error.access.denied` | `EeroAPIException(status_code=403)` | `EeroAccessDeniedException` (subclass of `EeroAPIException`); `is_auth_error()` is `False`, credentials kept |
+| 400 with a form-error string (`error.form.errors`, `error.form.email.malformed`, …) | `EeroAPIException(status_code=400)` | `EeroValidationException` with `field == "request"` and the envelope attached. **Not** a subclass of `EeroAPIException` — it derives from `EeroException` only, because it is also the SDK's client-side validation error. **Handlers that catch only `EeroAPIException` will not see it.** |
+| Premium strings (`error.premium.user_not_subscribed`, `error.partner.unavailable`), any status | `EeroAPIException` | `EeroPremiumRequiredException` (now a subclass of `EeroAPIException`) |
+| Feature-unavailable strings (`error.eero.offline`, `error.network.unavailable`, …), any status | `EeroAPIException` | `EeroFeatureUnavailableException` (now a subclass of `EeroAPIException`) |
+| `error.app.version.blocked`, any status | `EeroAPIException` | `EeroClientBlockedException` (new; subclass of `EeroAPIException`) |
+| `error.rate.limit` on a non-429 status | `EeroAPIException` | `EeroRateLimitException` |
+| Any 401 | `EeroAuthenticationException` | Unchanged — always `EeroAuthenticationException`. Stored credentials are cleared only for a session-group string (`error.session.expired` / `.invalid` / `.revoked`) or an unrecognised 401 from the refresh endpoint; verification-state and `error.session.refresh` strings never clear them |
+| Everything else (including every recognised domain string) | `EeroAPIException` | Unchanged — `EeroAPIException` with `error_code` set |
+
+`EeroNotFoundException`, `EeroPremiumRequiredException`, and `EeroFeatureUnavailableException`
+were previously defined but never raised; they are now raised by the transport and importable
+from the package root. Their legacy constructors (`EeroNotFoundException(resource_type,
+resource_id)`, etc.) still work; each also has a `from_response(...)` classmethod. `is_auth_error()`
+is `True` only for `EeroAuthenticationException`.
+
+**Matching on the message no longer works.** If you followed the `eeroctl`-style pattern of
+matching a substring of `str(exc)`, switch to `error_code`:
+
+```python
+# Before (v7.x) — the body was pasted (truncated) into the message
+except EeroAPIException as err:
+    if "error.session.expired" in str(err): ...
+    if err.status_code == 404: ...
+
+# After (v8.0.0+) — the class and error_code carry the meaning
+except EeroNotFoundException:
+    ...
+except EeroAuthenticationException as err:
+    if err.error_code == "error.session.expired": ...
+except EeroValidationException as err:          # API 400 form errors land here now
+    print(err.error_code, err.envelope)
+except EeroAPIException as err:
+    if err.error_code == "error.assignment.ip.unavailable": ...
+    print(err.status_code, err.envelope)         # the API's own envelope, unmodified
+```
+
+`from eero import ErrorGroup, classify_error_code` gives you the catalogue group of any
+`error_code` if you want to branch by meaning rather than by exact string. The full group
+list is in [Error Handling](Error-Handling#the-groups).
+
+### Retry policy and new constructor options
+
+Writes (`POST`/`PUT`/`DELETE`/`PATCH`) are never retried by the SDK, for any reason. An
+opt-in bounded retry exists for `GET`s that fail with a transport error or a `5xx`:
+
+```python
+EeroClient(
+    send_legacy_cookie=True,  # default; False sends only the X-User-Token header
+    accept_language="en-US",  # default; X-Accept-Language header, printable ASCII only
+    get_retries=0,            # default; additional GET attempts on transport error / 5xx
+)
+```
+
+All three are keyword-only and also accepted by `EeroAPI` and `AuthAPI`. `4xx` and `429` are
+never retried whatever `get_retries` is set to. The 401 refresh-and-replay is not a retry and
+is not affected by this option.
+
+### `get_data_usage` and the data-usage family
+
+The data-usage endpoints accept query parameters only and reject a request body. The old
+`payload` dict and free-form `resource` argument are gone; `start`, `end`, and `cadence`
+(`"daily"` or `"hourly"`) are required keyword-only arguments, `timezone` is optional:
+
+```python
+# Before (v7.x)
+await client.get_data_usage(payload={"resource": "network"})
+
+# After (v8.0.0+)
+await client.get_data_usage(
+    start="2026-07-01T00:00:00Z",
+    end="2026-07-21T00:00:00Z",
+    cadence="daily",
+    timezone="UTC",  # optional IANA name
+)
+```
+
+Each former `resource` value is now an explicit method, on `EeroClient` (trailing
+`network_id=None`, no auto-discovery) and on `DataUsageAPI` (`network_id` first), with the same
+keyword-only window arguments:
+
+| Old `resource` intent | `EeroClient` | `DataUsageAPI` |
+|---|---|---|
+| breakdown | `get_data_usage_breakdown(network_id=None, *, start, end, cadence=None, timezone=None)` | `get_breakdown(network_id, *, …)` |
+| per-device list | `get_devices_data_usage(network_id=None, *, start, end, cadence=None, timezone=None, profile_id=None)` | `get_devices_usage(network_id, *, …)` |
+| one device | `get_device_data_usage(device_mac, network_id=None, *, start, end, cadence, timezone=None)` | `get_device_usage(network_id, device_mac, *, …)` |
+| eeros summary | `get_eeros_data_usage_summary(network_id=None, *, start, end, cadence, timezone=None)` | `get_eeros_summary(network_id, *, …)` |
+| one eero | `get_eero_data_usage(eero_id, network_id=None, *, start, end, cadence, timezone=None)` | `get_eero_usage(network_id, eero_id, *, …)` |
+| one profile | `get_profile_data_usage(profile_id, network_id=None, *, start, end, cadence, timezone=None)` | `get_profile_usage(network_id, profile_id, *, …)` |
+| unprofiled devices | `get_unprofiled_devices_data_usage(network_id=None, *, start, end, cadence=None, timezone=None)` | `get_unprofiled_devices(network_id, *, …)` |
+| unprofiled summary | `get_unprofiled_data_usage_summary(network_id=None, *, start, end, cadence, timezone=None)` | `get_unprofiled_summary(network_id, *, …)` |
+| report settings (read) | `get_data_usage_report_settings(network_id=None)` | `get_report_settings(network_id)` |
+| report settings (write) | `set_data_usage_report_settings(*, cadence, notification_day, network_id=None)` — invalidates that network's cache entry | `set_report_settings(network_id, *, cadence, notification_day)` |
+
+The report-settings write is **unverified**: read first, write only on a difference, never retry.
+
+An invalid `cadence` raises `EeroValidationException` before any request.
+
+### `get_ouicheck`
+
+The API returns `404` for `GET /networks/{id}/ouicheck` unless both `serial` and `version`
+query parameters are present, so the old one-argument call never returned data. Both are now
+required keyword-only arguments, taken from an eero envelope:
+
+```python
+# Before (v7.x) — always EeroAPIException (404)
+await client.get_ouicheck()
+
+# After (v8.0.0+) — both values come from the eero's own envelope (get_eeros / get_eero)
+await client.get_ouicheck(serial="<eero-serial>", version="<eero-version>")
+```
+
+### Removed constants
+
+| Removed from `eero.const` | Use instead |
+|---|---|
+| `DEFAULT_HEADERS` | `DEFAULT_USER_AGENT` for the UA string; headers are built per request by `eero.api.base.build_request_headers` |
+| `REFRESH_ENDPOINTS`, `ACCOUNT_REFRESH_ENDPOINT` | `LOGIN_REFRESH_ENDPOINT` — the only refresh path |
+| `SESSION_TOKEN_KEY`, `REFRESH_TOKEN_KEY` | Nothing — the record shape is `{"session_id", "schema_version"}`; `CREDENTIAL_SCHEMA_VERSION` is the only storage constant |
+| `MAX_ERROR_BODY_CHARS` | Nothing — error bodies are no longer embedded; read `err.envelope` |
+
+New: `API_HOST`, `API_VERSION`, `DEFAULT_USER_AGENT`, `DEFAULT_ACCEPT_LANGUAGE`,
+`GET_RETRY_DELAY_SECONDS`, `CREDENTIAL_SCHEMA_VERSION`, `LOGIN_RESEND_ENDPOINT`,
+`LOGOUT_COOKIE_FIELD_NAME`, `SESSION_COOKIE_PREFIX`. `eero.api.base` additionally exports
+`RequestEncoding` and `build_request_headers`.
+
+Checklist (transport, auth, errors, parameters):
+
+- [ ] Grep for `session_expiry`, `refresh_token`, `is_session_expired`, `has_valid_session`,
+      and `clear_session(` — remove; there is no client-side expiry and no refresh token.
+- [ ] If anything outside the SDK reads or writes the credential file, read `session_id` only
+      and write `{"session_id": ..., "schema_version": 2}`.
+- [ ] Grep for `str(err)` / `err.message` / `in str(exc)` parsing of API error bodies — switch
+      to `err.error_code` / `err.envelope` or the new exception classes.
+- [ ] Grep for `except EeroAPIException` — add `except EeroValidationException` wherever an API
+      400 form error must be handled; check `status_code == 404` / `== 403` branches, which can
+      become `except EeroNotFoundException` / `except EeroAccessDeniedException`.
+- [ ] Grep for `from eero.exceptions import EeroNotFoundException` (etc.) — still works, but
+      these classes are now raised for real and importable from `eero` directly.
+- [ ] Grep for `X-User-Token`, `"Cookie"`, or `Authorization` in any `headers=` you pass to the
+      transport — remove them.
+- [ ] Grep for `allow_redirects` — remove; it cannot be set.
+- [ ] Grep for `from eero.const import` of `DEFAULT_HEADERS`, `REFRESH_ENDPOINTS`,
+      `ACCOUNT_REFRESH_ENDPOINT`, `SESSION_TOKEN_KEY`, `REFRESH_TOKEN_KEY`, or
+      `MAX_ERROR_BODY_CHARS` — replace per the table above.
+- [ ] Grep for `get_data_usage(` — pass `start=`, `end=`, `cadence=`; drop `payload` /
+      `resource`; move per-resource reads to the explicit `DataUsageAPI` methods.
+- [ ] Grep for `get_ouicheck(` — pass `serial=` and `version=`.
+- [ ] Long-running processes: remove any home-grown periodic refresh; handle a terminal
+      `EeroAuthenticationException` by re-seeding a token or re-running the OTP flow.
+
 ---
 
 ## Upgrading safely
@@ -411,6 +657,10 @@ Checklist:
   - `set_device_priority(`, `get_activity`, `set_ipv6_dns(`, `run_insights(`, `run_ouicheck(`,
     `set_thread(`/`set_thread_enabled(`, `get_settings(`, `get_password(`, and
     `get_burst_reporters(` — all removed outright in v8.0.0, see above.
+  - `session_expiry`, `refresh_token`, `MAX_ERROR_BODY_CHARS`, `DEFAULT_HEADERS`,
+    `REFRESH_ENDPOINTS` — removed in v8.0.0 with the transport/auth changes, see above.
+  - `get_data_usage(` without `start=`/`end=`/`cadence=`, and `get_ouicheck(` without
+    `serial=`/`version=` — signatures changed in v8.0.0, see above.
 
 ---
 

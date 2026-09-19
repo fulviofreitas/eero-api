@@ -6,15 +6,15 @@ Why this SDK ships its own logging layer, how redaction works, and how to debug 
 
 ## Why the SDK Ships Its Own Logging Layer
 
-Session tokens and the `s=` session cookie flow through request cookies and through JSON response bodies (`{"meta": ..., "data": ...}` envelopes can carry `user_token`, `session_id`, and similar fields). Naive `DEBUG` logging of requests/responses — the first thing anyone reaches for while debugging — will happily print these values verbatim. `src/eero/logging.py` exists so that debug logging is safe by default wherever it's used.
+The session token travels on every request as the `X-User-Token` header (and, by default, as the `s=` cookie), and JSON response bodies (`{"meta": ..., "data": ...}` envelopes can carry `user_token`, `session_id`, and similar fields). Naive `DEBUG` logging of requests/responses — the first thing anyone reaches for while debugging — will happily print these values verbatim. `src/eero/logging.py` exists so that debug logging is safe by default wherever it's used.
 
-In practice, only the two modules that handle credentials directly opt into it:
+In practice, the modules that handle credentials or response bodies directly opt into it:
 
 | Module | Logger | Why |
 |---|---|---|
-| `src/eero/api/auth.py` | `get_secure_logger(__name__)` | Handles login, verify, session tokens |
-| `src/eero/api/password.py` | `get_secure_logger(__name__)` | Handles the network Wi-Fi password |
-| Everything else (`base.py`, domain APIs, `client.py`) | plain `logging.getLogger(__name__)` | Log request method/URL/status, not raw payload bodies |
+| `src/eero/api/auth.py` | `get_secure_logger(__name__)` | Handles login, verify, refresh, session tokens |
+| `src/eero/api/base.py` (the transport) | `get_secure_logger(__name__)` | Logs parsed error envelopes at `DEBUG`/`ERROR` — never the raw body text — so any credential-shaped field in an error envelope is redacted |
+| Domain APIs and `client.py` | plain `logging.getLogger(__name__)` unless a module opts in | Log request method/URL/status and identifiers, not raw payload bodies |
 
 > **Note**: If you add your own debug logging around SDK calls — e.g. logging the raw envelope returned by `get_account()` or `get_devices()` — use `get_secure_logger()` yourself. The SDK's internal loggers only protect the modules listed above.
 
@@ -39,7 +39,7 @@ _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
 > set to your logger, but it doesn't reliably. `_get_sensitive_regex()` compiles and caches a
 > single **module-global** regex the first time *any* sensitive-key check runs anywhere in the
 > process, then ignores the `patterns` argument on every subsequent call — including yours. In
-> practice the SDK's own `auth.py`/`password.py` loggers usually compile that global regex first
+> practice the SDK's own `auth.py`/`base.py` loggers usually compile that global regex first
 > (with `DEFAULT_SENSITIVE_PATTERNS`), so a `sensitive_patterns=` you pass to `get_secure_logger()`
 > is silently a no-op. This looks like an SDK bug, not documented behavior — use
 > `add_sensitive_pattern()` below, which is the one mechanism that actually works.
@@ -149,7 +149,7 @@ logger.debug("Config: %s", {"my_webhook_url": "https://hooks.example.com/T00/B00
 
 ## ⚠️ Warning: `logging.basicConfig(level=logging.DEBUG)` Is Not Safe
 
-> ⚠️ **Warning:** `logging.basicConfig(level=logging.DEBUG)` sets the **root** logger to `DEBUG`, which also enables `DEBUG` for every third-party library, including `aiohttp`. `aiohttp`'s own client logging at `DEBUG` includes request/response **headers** — which includes the `Cookie` header carrying your live session token (`s=<session_id>`). `SecureLoggerAdapter` only wraps loggers obtained through `get_secure_logger()`; it cannot intercept or redact `aiohttp`'s own log records.
+> ⚠️ **Warning:** `logging.basicConfig(level=logging.DEBUG)` sets the **root** logger to `DEBUG`, which also enables `DEBUG` for every third-party library, including `aiohttp`. `aiohttp`'s own client logging at `DEBUG` includes request/response **headers** — which includes the `X-User-Token` header and the `Cookie` header (`s=<token>`), both carrying your live session token. `SecureLoggerAdapter` only wraps loggers obtained through `get_secure_logger()`; it cannot intercept or redact `aiohttp`'s own log records.
 
 The correct recipe: turn on `DEBUG` for this SDK's own loggers only, and keep `aiohttp` (and everything else) at `INFO` or `WARNING`:
 
@@ -173,9 +173,9 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 Before pasting logs into a GitHub issue:
 
 - [ ] Confirm you did **not** set the root logger to `DEBUG` (see the warning above) — if you did, re-run with `logging.getLogger("eero").setLevel(logging.DEBUG)` instead and capture fresh output
-- [ ] Search the log for `Cookie:`, `Set-Cookie:`, `s=`, or any `session_id`/`user_token` value and redact manually — the SDK's redaction only covers what passes through `get_secure_logger()`
+- [ ] Search the log for `X-User-Token:`, `Cookie:`, `Set-Cookie:`, `s=`, or any `session_id`/`user_token` value and redact manually — the SDK's redaction only covers what passes through `get_secure_logger()`
 - [ ] Scrub the account email address / phone number used for login — it's not in `DEFAULT_SENSITIVE_PATTERNS`
-- [ ] Scrub the network's Wi-Fi password and guest network password if present in a `get_network()` / `get_password()` response dump
+- [ ] Scrub the network's Wi-Fi password and guest network password if present in a `get_network()` response dump
 - [ ] Truncate or omit full response bodies where possible — device MACs, hostnames, and nicknames are personally identifying
 - [ ] Double-check any `extra={...}` dicts you added yourself for custom debug statements
 
@@ -187,10 +187,13 @@ Verified in `src/eero/api/base.py` and `src/eero/const.py`:
 
 | Behavior | Detail |
 |---|---|
-| 🔁 Redirects | Never followed — `allow_redirects=False` is set on every request; any `3xx` response is rejected as an `EeroAPIException` rather than letting the session cookie travel to a different host |
+| 🔑 Credential placement | The session token is sent as the `X-User-Token` header (plus the `s=` cookie while `send_legacy_cookie=True`) **only** on requests whose hostname and scheme match the configured API host. Any other host, or plain `http`, gets no credential and a `WARNING` log line. The token is never written to the shared `aiohttp` cookie jar |
+| 🚫 Caller-supplied credential headers | A `headers=` dict containing `X-User-Token`, `Cookie`, or `Authorization` (any case) raises `EeroValidationException` before the request is sent |
+| 🧹 Header validation | Every header value must be printable ASCII with no CR/LF (`EeroValidationException` otherwise) — header injection is impossible by construction |
+| 🔁 Redirects | Never followed — `allow_redirects=False` is forced on every request and cannot be re-enabled (`allow_redirects=True` raises `EeroValidationException`); any `3xx` response is rejected as an `EeroAPIException` rather than letting the token travel to a different host |
 | 📏 Response size cap | `MAX_RESPONSE_BYTES = 10 * 1024 * 1024` (10 MiB) — the body is streamed in 64 KiB chunks and the request is aborted with `EeroAPIException` if the cap is exceeded |
-| ✂️ Error body truncation | `MAX_ERROR_BODY_CHARS = 512` — error messages / log lines embed at most 512 characters of an upstream error body, suffixed with `... [truncated, <n> chars total]` if longer |
-| 🔒 HTTPS only | `API_ENDPOINT = "https://api-user.e2ro.com/2.2"` (three device-mutation writes use `"https://api-user.e2ro.com/2.3"`, see [API Reference](API-Reference#constants)) — both are HTTPS-only hardcoded hosts; there is no HTTP fallback |
+| 🙈 Error bodies | The raw text of an error response is never embedded in an exception message or log line. The message carries the HTTP status plus `meta.code` / `meta.error` (or a byte count for a non-JSON body); the parsed envelope is attached as `err.envelope` and logged only through the secure logger |
+| 🔒 HTTPS only | `API_HOST = "https://api-user.e2ro.com"`, `API_ENDPOINT = f"{API_HOST}/2.2"` (two device-mutation writes use `f"{API_HOST}/2.3"`, see [API Reference](API-Reference#constants)) — HTTPS-only hardcoded hosts; there is no HTTP fallback |
 
 See [Error Handling](Error-Handling#http-status--exception-mapping) for the full status-to-exception mapping these behaviors feed into.
 

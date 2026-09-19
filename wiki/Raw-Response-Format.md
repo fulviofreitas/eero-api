@@ -31,6 +31,8 @@ Every `EeroAPI` / `EeroClient` method returns:
 
 `meta.code` mirrors the HTTP status of a successful call (typically `200`). `data` holds the endpoint-specific payload — its shape (list vs. object) depends on the endpoint.
 
+Error responses follow the same envelope shape, with `meta.error` carrying the API's error string. The SDK raises them as exceptions instead of returning them, but the envelope is attached unmodified as `err.envelope` (and `meta.error` as `err.error_code`) — see [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
+
 ### `get_networks()` (abridged)
 
 ```python
@@ -98,14 +100,14 @@ Use `.get(...)` with defaults throughout — a field's absence is not an error c
 
 ## The networks shape, specifically
 
-`get_networks()` is the one response worth calling out, because its `data` has been observed in
+`get_networks()` is the one response worth calling out, because its `data` has been seen in
 three different shapes:
 
 | Shape | Where it comes from |
 |---|---|
 | `data["networks"]` is a **list** | What the SDK's own auto-discovery assumes, and what the `/account` fallback in `EeroClient.get_networks()` constructs |
-| `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Observed in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
-| `data` is a **bare list** | Observed on some accounts |
+| `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Seen in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
+| `data` is a **bare list** | Seen on some accounts |
 
 > ⚠️ **Warning:** The SDK's internal auto-discovery does `networks = data.get("networks") or
 > data.get("data") or []` and then indexes `networks[0]`. It assumes `data["networks"]` is a

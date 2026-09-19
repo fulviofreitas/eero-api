@@ -30,16 +30,19 @@ The `[dev]` extra adds `pytest`, `pytest-asyncio`, `pytest-cov`, `black`, `isort
 
 ## 🏗️ Constructor Reference
 
-`EeroClient` takes exactly four keyword arguments — nothing else:
+`EeroClient` takes exactly seven keyword arguments — nothing else:
 
 ```python
 from eero import EeroClient
 
 client = EeroClient(
-    session=None,        # Optional[aiohttp.ClientSession]
-    cookie_file=None,    # Optional[str]
-    use_keyring=True,    # bool
-    cache_timeout=60,    # int (seconds)
+    session=None,             # Optional[aiohttp.ClientSession]
+    cookie_file=None,         # Optional[str]
+    use_keyring=True,         # bool
+    cache_timeout=60,         # int (seconds)
+    send_legacy_cookie=True,  # bool (keyword-only)
+    accept_language="en-US",  # str  (keyword-only)
+    get_retries=0,            # int  (keyword-only)
 )
 ```
 
@@ -49,6 +52,11 @@ client = EeroClient(
 | `cookie_file` | `Optional[str]` | `None` | Explicit path to a JSON credential file (see [File storage](#file-storage)) |
 | `use_keyring` | `bool` | `True` | Whether to try the OS keyring for credential storage |
 | `cache_timeout` | `int` | `60` | TTL in seconds for the client's in-memory response cache (`account`, `networks`, `network`, `eeros`, `devices`, `profiles`) |
+| `send_legacy_cookie` | `bool` | `True` | Also send the session token as a per-request `s=<token>` cookie alongside the `X-User-Token` header. `False` sends the header only. See [Request Headers and Transport](#-request-headers-and-transport) |
+| `accept_language` | `str` | `"en-US"` | Value of the `X-Accept-Language` header sent on every request. Must be printable ASCII with no CR/LF; anything else raises `EeroValidationException` at construction time |
+| `get_retries` | `int` | `0` | Number of **additional** attempts for a `GET` that fails with a transport error or a `5xx`. `0` disables retrying. Never applies to writes. See [Retry Policy](#-retry-policy) |
+
+The same three keyword-only options exist on `EeroAPI` and `AuthAPI` (and on `BaseAPI` / `AuthenticatedAPI` for anyone composing the transport directly); `EeroClient` forwards them unchanged.
 
 > **Note**: There is no `config_path`, `timeout`, or `session_token` constructor argument. There are no `connect()` / `close()` methods — the async context manager (`async with EeroClient() as client:`) is the only lifecycle API.
 
@@ -67,7 +75,7 @@ Storage backend selection is handled by `create_storage()` in `eero.api.auth_sto
 
 > ⚠️ **Warning:** `EeroClient(use_keyring=False)` with no `cookie_file` silently resolves to `MemoryStorage`. Credentials live only in the process's memory and vanish the moment the process exits — there is no error, warning, or log line to tell you this happened. If you want persistence without the OS keyring, you **must** pass `cookie_file` explicitly.
 
-> ⚠️ **Warning:** The `save()` side of `ChainedStorage`'s file fallback is dead code. `KeyringStorage.save()` swallows its own exceptions and returns normally, so `ChainedStorage.save()`'s except-and-fall-back-to-file branch never fires in practice — the file is never written by `save()`. For headless/container/CI persistence, use `use_keyring=False, cookie_file=...` (plain `FileStorage`), not `use_keyring=True` with a `cookie_file` set. See [Credential Storage](Credential-Storage) for the full mechanics.
+> ⚠️ **Warning:** `ChainedStorage.save()` does not reach its file fallback. `KeyringStorage.save()` swallows its own exceptions and returns normally, so `ChainedStorage.save()`'s except-and-fall-back-to-file branch is not reached in practice — the file is not written by `save()`. For headless/container/CI persistence, use `use_keyring=False, cookie_file=...` (plain `FileStorage`), not `use_keyring=True` with a `cookie_file` set. See [Credential Storage](Credential-Storage) for the full mechanics.
 
 ### Keyring backends
 
@@ -100,6 +108,7 @@ client = EeroClient(cookie_file="/data/eero-cookies.json")
 - The parent directory is created with `os.makedirs(..., exist_ok=True)` if missing.
 - After every write, permissions are set to **owner read/write only** (`0600`, via `os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)`).
 - `FileStorage.file_path` (property) returns the resolved absolute path (`~` expanded).
+- The file holds `{"session_id": ..., "schema_version": 2}` and nothing else. A file written by an earlier release (with the extra fields 7.x wrote, or the pre-v3.0.0 `user_token` key) is migrated to this shape the first time it is loaded. See [Credential Storage](Credential-Storage#-the-credentialstorage-abstraction) and [Migration](Migration#the-credential-record).
 
 ---
 
@@ -147,6 +156,51 @@ Both are `async` methods on `EeroClient` (delegating to `AuthAPI.set_session_tok
 
 ---
 
+## 📨 Request Headers and Transport
+
+Every request the SDK sends carries this fixed header set, built in one place (`eero.api.base.build_request_headers`):
+
+| Header | Value | Configurable? |
+|---|---|---|
+| `Accept` | `application/json` | No |
+| `User-Agent` | `eero.const.DEFAULT_USER_AGENT` (a mobile-app-style string) | No |
+| `X-Accept-Language` | `accept_language` constructor option (default `en-US`) | Yes — constructor option |
+| `Content-Type` | Set per request by the body encoding: `application/json` for JSON bodies, `application/x-www-form-urlencoded` for form bodies (login, verify, logout) | No |
+| `X-User-Token` | The session token — only on requests to the API host over `https` | No — always sent when a token exists |
+| `Cookie` | `s=<token>` — same rule, while `send_legacy_cookie=True` | Yes — `send_legacy_cookie` |
+
+Rules the transport enforces regardless of how you configure it:
+
+- Every header value (SDK-supplied and caller-supplied) must be printable ASCII with no CR/LF, otherwise `EeroValidationException` is raised.
+- A caller-supplied `headers=` dict may not contain `X-User-Token`, `Cookie`, or `Authorization` (case-insensitive) — `EeroValidationException`. Only the credential builder writes those.
+- The session token is never attached to a request whose hostname or scheme differs from the configured API host (`https://api-user.e2ro.com`). Such a request goes out with no credential and a `WARNING` log line.
+- Redirects are refused: `allow_redirects=False` is forced on every request, any `3xx` raises `EeroAPIException`, and passing `allow_redirects=True` yourself raises `EeroValidationException`.
+- The session token is never written to the shared `aiohttp` cookie jar, so a `session=` you pass in never accumulates the credential.
+
+`send_legacy_cookie` exists so the SDK keeps sending the cookie the API has historically accepted alongside the header; it defaults on and is expected to be removed in a future major version.
+
+> **Note**: For advanced callers composing requests on `BaseAPI` directly, `eero.api.base` exports `RequestEncoding` (`JSON`, `FORM`, `EMPTY_JSON_STRING`, `NONE`) and `build_request_headers(*, accept_language, extra_headers=None)`. Pass `json=` for a JSON body, `data=` for a form body, or `encoding=RequestEncoding.EMPTY_JSON_STRING` for the two-character `""` body some parameterless POSTs require; supplying more than one carrier raises `EeroValidationException`.
+
+---
+
+## 🔁 Retry Policy
+
+| Request | Retried by the SDK? |
+|---|---|
+| `POST` / `PUT` / `DELETE` / `PATCH` | **Never**, for any reason. A write is attempted exactly once, whatever `get_retries` is set to |
+| `GET` that fails with `EeroNetworkException`, `EeroTimeoutException`, or a `5xx` `EeroAPIException` | Up to `get_retries` additional times, with a fixed `GET_RETRY_DELAY_SECONDS` (0.5 s) pause between attempts. Default `0` — off |
+| `GET` that fails with `400`, `401`, `403`, `404`, `409`, or `429` | Never |
+
+```python
+client = EeroClient(get_retries=2)  # a failing GET is attempted up to 3 times in total
+```
+
+The 401 refresh-and-replay described in [Authentication](Authentication#-transparent-refresh-and-replay) is not part of this policy: it is a single replay of the original request (any method) after a successful server-driven re-authentication, not a retry of a failed call.
+
+Rate limiting (`429`) is likewise never retried by the SDK — see [Caching and Rate Limits](Caching-and-Rate-Limits) for how to back off in your own code.
+
+---
+
 ## ⏱️ Timeouts
 
 Every HTTP request made by `BaseAPI._request` uses a hardcoded `aiohttp.ClientTimeout`:
@@ -169,8 +223,10 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 - **Keyring-backed storage** keeps the session token out of any file on disk, encrypted at rest by the OS.
 - **File storage** is `0600` (owner-only), but is still plaintext JSON — treat the containing volume/host as sensitive.
 - **`MemoryStorage`** never touches disk, but also never survives process restart — see the warning above about the silent fallback.
-- All API responses are capped at `MAX_RESPONSE_BYTES` (10 MiB) to prevent unbounded memory growth from a hostile or misbehaving upstream, and error-message bodies are truncated to `MAX_ERROR_BODY_CHARS` (512 chars) before being logged or raised.
-- Redirects are never followed (`allow_redirects=False`) — any 3xx response is rejected outright so the session cookie can never leak to an unintended host.
+- All API responses are capped at `MAX_RESPONSE_BYTES` (10 MiB) to prevent unbounded memory growth from a hostile or misbehaving upstream.
+- Error response bodies are never embedded raw in exception messages or log lines. The message carries the HTTP status plus `meta.code` / `meta.error`; the parsed envelope is available as `err.envelope` for your own handling, and is logged only through the redacting secure logger. See [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
+- The session token is sent only to the API host over `https`, never to any other host or scheme, and never via the shared cookie jar — see [Request Headers and Transport](#-request-headers-and-transport).
+- Redirects are never followed (`allow_redirects=False`, and it cannot be re-enabled) — any 3xx response is rejected outright so the session token can never leak to an unintended host.
 - For log redaction behavior (how tokens/cookies are masked in log output), see [Logging and Security](Logging-and-Security).
 
 ---
@@ -179,7 +235,8 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 
 - [Home](Home) — Overview and quick start
 - [Python API](Python-API) — Full API reference & examples
-- [Authentication](Authentication) — Login/verify flow and session lifecycle
+- [Authentication](Authentication) — Login/verify flow, session transport, and server-driven refresh
+- [Error Handling](Error-Handling) — Exception hierarchy and the `envelope` / `error_code` attributes
 - [Credential Storage](Credential-Storage) — Deep dive on storage backends
 - [Logging and Security](Logging-and-Security) — Sensitive-field redaction and secure logging
 - [Troubleshooting](Troubleshooting) — Common issues & fixes
