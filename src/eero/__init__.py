@@ -2,7 +2,7 @@
 
 from .api import EeroAPI
 from .api.base import id_from_url
-from .api.links import join_api_path, resolve_link, resource_url, self_url
+from .api.links import join_api_path, resolve_link, resource_url, self_url, sub_resource_url
 from .client import EeroClient
 from .errors import ErrorGroup, classify_error_code, exception_for_error
 from .exceptions import (
@@ -46,6 +46,7 @@ __all__ = [
     "resolve_link",
     "resource_url",
     "self_url",
+    "sub_resource_url",
     # Secure logging utilities
     "get_secure_logger",
     "SecureLoggerAdapter",

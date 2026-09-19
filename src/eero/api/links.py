@@ -33,6 +33,9 @@ _API_SCHEME = urlsplit(API_HOST).scheme or "https"
 
 Envelope = Dict[str, Any]
 
+# The single placeholder every URL template carries for the resource id.
+_ID_PLACEHOLDER = "{id}"
+
 
 def _as_data(parent: Envelope) -> Envelope:
     """Return the ``data`` object of a parent, without mutating it.
@@ -180,19 +183,69 @@ def resource_url(
     Raises:
         EeroValidationException: If ``id_or_url`` is not a non-empty string,
             or is an absolute URL that is not on the configured API host, or
-            uses a scheme other than the API host's scheme.
+            uses a scheme other than the API host's scheme, or ``template``
+            does not contain exactly one ``{id}`` placeholder.
+
+    When ``template`` continues after the placeholder (for example
+    ``"networks/{id}/settings"``), that suffix names a sub-resource of the
+    identified resource. A bare identifier is substituted into the whole
+    template; a path or absolute URL is taken to identify the parent
+    resource itself, so the suffix is appended to it.
     """
     if not isinstance(id_or_url, str) or not id_or_url:
         raise EeroValidationException("id_or_url", "must be a non-empty string")
+    if template.count(_ID_PLACEHOLDER) != 1:
+        raise EeroValidationException("template", "must contain exactly one {id} placeholder")
+
+    suffix = template.split(_ID_PLACEHOLDER, 1)[1]
 
     if id_or_url.startswith(("http://", "https://")):
-        return _validate_absolute_url(id_or_url)
+        return _validate_absolute_url(id_or_url).rstrip("/") + suffix
 
     if id_or_url.startswith("/"):
-        return join_api_path(id_or_url)
+        return join_api_path(id_or_url).rstrip("/") + suffix
 
     path = template.format(id=id_or_url)
     return f"{api_endpoint(version).rstrip('/')}/{path.lstrip('/')}"
+
+
+def sub_resource_url(
+    id_or_url: str,
+    template: str,
+    *,
+    link: str,
+    parent: Optional[Envelope] = None,
+    version: str = API_VERSION_DEFAULT,
+) -> str:
+    """Resolve a sub-resource URL, preferring the parent's own link.
+
+    Domain methods call this once per request: when the caller supplies the
+    parent envelope (for example a cached network), the link the API
+    published for the sub-resource is used, including whatever version
+    prefix the API put on it; otherwise the URL is built from
+    ``id_or_url`` and ``template`` exactly as :func:`resource_url` does.
+
+    Args:
+        id_or_url: The parent's bare identifier, path, or absolute URL.
+        template: A format string with one ``{id}`` placeholder followed by
+            the sub-resource suffix, e.g. ``"networks/{id}/settings"``.
+        link: The name of the link in the parent's ``resources`` object,
+            e.g. ``"settings"``.
+        parent: The parent envelope (full or ``data``), if the caller has
+            one. Read only; never mutated.
+        version: The API version for the template fallback.
+
+    Returns:
+        The absolute URL of the sub-resource.
+
+    Raises:
+        EeroValidationException: As :func:`resource_url`.
+    """
+    if parent is not None:
+        resolved = resolve_link(parent, link)
+        if resolved is not None:
+            return resolved
+    return resource_url(id_or_url, template, version=version)
 
 
 __all__ = [
@@ -202,4 +255,5 @@ __all__ = [
     "resolve_link",
     "resource_url",
     "self_url",
+    "sub_resource_url",
 ]

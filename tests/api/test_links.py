@@ -26,6 +26,7 @@ from eero.api.links import (
     resolve_link,
     resource_url,
     self_url,
+    sub_resource_url,
 )
 from eero.const import (
     API_ENDPOINT,
@@ -385,6 +386,75 @@ class TestVersionConstants:
         """The 2.3-only families share the same version constant value."""
         assert API_VERSION_MULTISTATICIP == "2.3"
         assert API_VERSION_SECONDARY_WAN == "2.3"
+
+
+# ========================== Sub-resource Resolution Tests ==========================
+
+
+class TestResourceUrlSuffix:
+    """A template suffix after the id names a sub-resource of the parent."""
+
+    @pytest.mark.parametrize(
+        ("id_or_url", "expected"),
+        [
+            (
+                "network-id-placeholder",
+                f"{API_ENDPOINT}/networks/network-id-placeholder/settings",
+            ),
+            (
+                "/2.3/networks/network-id-placeholder",
+                f"{API_HOST}/2.3/networks/network-id-placeholder/settings",
+            ),
+            (
+                f"{API_HOST}/2.2/networks/network-id-placeholder/",
+                f"{API_HOST}/2.2/networks/network-id-placeholder/settings",
+            ),
+        ],
+        ids=["bare-id", "path-keeps-its-version", "absolute-url-trailing-slash"],
+    )
+    def test_suffix_is_appended_to_parent(self, id_or_url: str, expected: str) -> None:
+        """The suffix is applied whether the parent is an id, a path or a URL."""
+        assert resource_url(id_or_url, "networks/{id}/settings") == expected
+
+    @pytest.mark.parametrize("template", ["networks", "networks/{id}/{id}"])
+    def test_template_must_contain_one_placeholder(self, template: str) -> None:
+        """Templates without exactly one placeholder are rejected."""
+        with pytest.raises(EeroValidationException):
+            resource_url("network-id-placeholder", template)
+
+
+class TestSubResourceUrl:
+    """The parent's published link wins; the template is the fallback."""
+
+    def test_link_from_parent_is_preferred(self, network_data: Dict[str, Any]) -> None:
+        """A link present on the parent is used, keeping its own version prefix."""
+        url = sub_resource_url(
+            "network-id-placeholder",
+            "networks/{id}/forwards",
+            link="forwards",
+            parent=network_data,
+        )
+
+        assert url == f"{API_HOST}/2.3/networks/network-id-placeholder/forwards"
+
+    @pytest.mark.parametrize("parent", [None, {"url": "/2.2/networks/x", "resources": {}}])
+    def test_template_fallback_without_link(self, parent: Any) -> None:
+        """Without a usable link the template on the default version is used."""
+        url = sub_resource_url(
+            "network-id-placeholder", "networks/{id}/forwards", link="forwards", parent=parent
+        )
+
+        assert url == f"{API_ENDPOINT}/networks/network-id-placeholder/forwards"
+
+    def test_parent_is_not_mutated(self, network_data: Dict[str, Any]) -> None:
+        """Resolution reads the parent and leaves it byte-identical."""
+        before = copy.deepcopy(network_data)
+
+        sub_resource_url(
+            "network-id-placeholder", "networks/{id}/eeros", link="eeros", parent=network_data
+        )
+
+        assert network_data == before
 
 
 # ========================== Transport Integration Test ==========================
