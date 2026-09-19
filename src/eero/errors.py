@@ -233,9 +233,32 @@ def classify_error_code(error_code: Optional[str]) -> Optional[ErrorGroup]:
     return _STRING_TO_GROUP.get(normalized)
 
 
+def message_for_error_code(error_code: Optional[str]) -> str:
+    """Build a leak-safe exception message for a ``meta.error`` value.
+
+    When ``error_code`` classifies into a known catalogue group, the message
+    is the catalogue string itself (normalized: trimmed and lowercased).
+    Otherwise -- ``error_code`` is ``None``, empty, or an unrecognised /
+    free-text value -- the message is the fixed label below. Neither branch
+    ever embeds any other part of the response body (no ``data``, no raw
+    body text, no request URL): those stay out of exception messages and are
+    only ever available via the ``envelope`` attribute or a debug log line.
+
+    Args:
+        error_code: The value of ``envelope["meta"]["error"]``, or ``None``.
+
+    Returns:
+        The message text to use for the raised exception.
+    """
+    if classify_error_code(error_code) is not None:
+        # classify_error_code returning non-None guarantees error_code is a
+        # non-empty string (see its own None/empty short-circuit above).
+        return error_code.strip().lower()  # type: ignore[union-attr]
+    return "unrecognised error string"
+
+
 def exception_for_error(
     status_code: int,
-    message: str,
     *,
     envelope: Optional[Dict[str, Any]],
     error_code: Optional[str],
@@ -243,18 +266,25 @@ def exception_for_error(
     """Choose and build the SDK exception for a non-2xx, non-3xx API response.
 
     Classification never rejects or alters ``envelope`` -- it is only ever
-    attached to the returned exception, verbatim. Precedence:
+    attached to the returned exception, verbatim. The exception message is
+    always built by :func:`message_for_error_code`, never from the raw
+    response body or the request URL. Precedence:
 
-    1. A ``meta.error`` string in one of the status-independent groups
-       (premium/feature-unavailable/client-blocked/rate-limit) always wins,
-       regardless of the HTTP status code.
-    2. Otherwise the HTTP status code selects the class: 401 ->
-       :class:`EeroAuthenticationException`, 403 (with
+    1. HTTP 401 always -> :class:`EeroAuthenticationException`, regardless
+       of ``meta.error``. This is checked first, before the
+       status-independent groups below, so this function stays safe as the
+       single classification point even for a 401 carrying one of their
+       strings (which should not happen per the catalogue, but must never
+       silently downgrade an authentication failure to something else).
+    2. Otherwise, a ``meta.error`` string in one of the status-independent
+       groups (premium/feature-unavailable/client-blocked/rate-limit)
+       always wins, regardless of the HTTP status code.
+    3. Otherwise the HTTP status code selects the class: 403 (with
        ``error.access.denied``) -> :class:`EeroAccessDeniedException`, 404 ->
        :class:`EeroNotFoundException` (regardless of whether ``meta.error``
        is present, recognised, or free text), 400 (with a recognised
        validation string) -> :class:`EeroValidationException`.
-    3. Anything else -- including every recognised "domain" string, an
+    4. Anything else -- including every recognised "domain" string, an
        unrecognised string, and a 403/400 that doesn't match the groups
        above -- is :class:`EeroAPIException`.
 
@@ -264,9 +294,6 @@ def exception_for_error(
 
     Args:
         status_code: The HTTP status code of the response.
-        message: A pre-built, leak-safe human-readable message for the
-            exception (the transport builds this; this function never
-            inspects the raw response body).
         envelope: The raw, unmodified parsed response envelope, or ``None``.
         error_code: The value of ``envelope["meta"]["error"]``, or ``None``.
 
@@ -274,16 +301,20 @@ def exception_for_error(
         An unraised :class:`EeroException` instance carrying ``envelope`` and
         ``error_code``. The caller is responsible for raising it.
     """
+    message = message_for_error_code(error_code)
     group = classify_error_code(error_code)
+
+    if status_code == 401:
+        return EeroAuthenticationException(message, envelope=envelope, error_code=error_code)
 
     if group in _STATUS_INDEPENDENT_GROUPS:
         if group is ErrorGroup.PREMIUM:
             return EeroPremiumRequiredException.from_response(
-                message, envelope=envelope, error_code=error_code
+                message, status_code=status_code, envelope=envelope, error_code=error_code
             )
         if group is ErrorGroup.FEATURE_UNAVAILABLE:
             return EeroFeatureUnavailableException.from_response(
-                message, envelope=envelope, error_code=error_code
+                message, status_code=status_code, envelope=envelope, error_code=error_code
             )
         if group is ErrorGroup.CLIENT_BLOCKED:
             return EeroClientBlockedException(
@@ -291,9 +322,6 @@ def exception_for_error(
             )
         # ErrorGroup.RATE_LIMIT
         return EeroRateLimitException(message, envelope=envelope, error_code=error_code)
-
-    if status_code == 401:
-        return EeroAuthenticationException(message, envelope=envelope, error_code=error_code)
 
     if status_code == 403:
         if group is ErrorGroup.ACCESS_DENIED:
@@ -304,7 +332,7 @@ def exception_for_error(
 
     if status_code == 404:
         return EeroNotFoundException.from_response(
-            message, envelope=envelope, error_code=error_code
+            message, status_code=status_code, envelope=envelope, error_code=error_code
         )
 
     if status_code == 429:

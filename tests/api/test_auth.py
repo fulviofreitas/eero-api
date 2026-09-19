@@ -27,6 +27,7 @@ from eero.const import CREDENTIAL_SCHEMA_VERSION, DEFAULT_ACCEPT_LANGUAGE
 from eero.exceptions import (
     EeroAuthenticationException,
     EeroNetworkException,
+    EeroNotFoundException,
     EeroValidationException,
 )
 
@@ -579,13 +580,28 @@ class TestAuthAPISessionRefresh:
     @pytest.mark.parametrize(
         "error_code,should_clear",
         [
+            # Retained: the explicit allowlist -- VERIFICATION and
+            # SESSION_REFRESH are the only two groups that do not clear.
             ("error.verification.required", False),
             ("error.verification.invalid", False),
             ("error.login.unknown", False),
             ("error.session.refresh", False),
+            # Cleared: the terminal Session group.
             ("error.session.expired", True),
             ("error.session.invalid", True),
             ("error.session.revoked", True),
+            # Cleared: every other recognised group -- none of these should
+            # legitimately come back from the refresh endpoint, but if one
+            # did, a stale token must not be retained on its account.
+            ("error.premium.user_not_subscribed", True),
+            ("error.eero.offline", True),
+            ("error.rate.limit", True),
+            ("error.app.version.blocked", True),
+            ("error.reservation.failed", True),
+            ("error.form.errors", True),
+            ("error.network.not.found", True),
+            ("error.access.denied", True),
+            # Cleared: unrecognised or absent.
             ("error.something_unrecognised", True),
             (None, True),
         ],
@@ -594,11 +610,12 @@ class TestAuthAPISessionRefresh:
     async def test_refresh_session_credential_clearing_matrix(
         self, api_with_session, error_code, should_clear
     ):
-        """Credentials clear only for the catalogue's Session group or an unrecognised/absent code.
+        """Credentials are retained only for an explicit allowlist of two groups.
 
-        The verification/login-state group and the session-refresh signal
-        itself both leave stored credentials untouched -- the session is
-        mid-verification or merely due for a refresh, not gone.
+        VERIFICATION (the account is mid-verification) and SESSION_REFRESH
+        (the session is merely due for a refresh) are the only two outcomes
+        that leave stored credentials untouched. Every other recognised
+        group, and an unrecognised or absent error_code, clears them.
         """
         api_with_session._credentials.session_id = "sess_token"
         err = EeroAuthenticationException("unauthorized", error_code=error_code)
@@ -611,6 +628,75 @@ class TestAuthAPISessionRefresh:
             assert api_with_session._credentials.session_id is None
         else:
             assert api_with_session._credentials.session_id == "sess_token"
+
+    @pytest.mark.parametrize(
+        "escaping_exception",
+        [
+            EeroNotFoundException("network", "unknown_id"),
+            EeroValidationException("field", "invalid"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_refresh_session_non_auth_exception_returns_false_without_escaping(
+        self, api_with_session, escaping_exception
+    ):
+        """No exception class may escape the credential decision in _do_refresh.
+
+        A 404 (EeroNotFoundException, now an EeroAPIException subclass) and a
+        validation error (EeroValidationException, still a direct
+        EeroException subclass) both come back from the broadened
+        ``except EeroException`` fallback as a plain ``False`` -- neither
+        propagates out of refresh_session(), and neither touches stored
+        credentials (they were never proven invalid).
+        """
+        api_with_session._credentials.session_id = "sess_token"
+
+        with patch.object(api_with_session, "post", new=AsyncMock(side_effect=escaping_exception)):
+            result = await api_with_session.refresh_session()
+
+        assert result is False
+        assert api_with_session._credentials.session_id == "sess_token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_network_error_still_propagates_after_broadening(
+        self, api_with_session
+    ):
+        """The broadened EeroException fallback must not swallow transport failures.
+
+        EeroNetworkException/EeroTimeoutException are EeroException
+        subclasses too, but they represent "no verdict on the session was
+        possible" rather than an API-level outcome, so they must still
+        propagate to the caller of refresh_session() unchanged.
+        """
+        api_with_session._credentials.session_id = "sess_token"
+        err = EeroNetworkException("connection reset")
+
+        with patch.object(api_with_session, "post", new=AsyncMock(side_effect=err)):
+            with pytest.raises(EeroNetworkException):
+                await api_with_session.refresh_session()
+
+        assert api_with_session._credentials.session_id == "sess_token"
+
+    @pytest.mark.asyncio
+    async def test_ordinary_endpoint_401_does_not_clear_credentials(
+        self, authenticated_api, mock_session
+    ):
+        """A 401 from an ordinary (non-refresh) endpoint never clears stored credentials.
+
+        Credential-clearing is exclusively _do_refresh's decision, reached
+        only via an explicit call to refresh_session(). A transport-level
+        401 from any other call -- here a plain BaseAPI.get() with no
+        refresh signal, which never even triggers the refresh hook -- must
+        leave the stored record completely untouched.
+        """
+        mock_response = create_mock_response(401, {"meta": {"code": 401}})
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAuthenticationException):
+            await authenticated_api.get("/2.2/networks/some_network")
+
+        assert authenticated_api._credentials.session_id == "active_session"
+        assert authenticated_api.is_authenticated is True
 
     @pytest.mark.asyncio
     async def test_refresh_session_single_flight_across_concurrent_callers(self, api_with_session):

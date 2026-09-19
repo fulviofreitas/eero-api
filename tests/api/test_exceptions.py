@@ -191,9 +191,19 @@ class TestEeroNotFoundException:
         assert isinstance(exc, EeroException)
 
     def test_from_response_message_is_preserved_verbatim(self):
-        """Test that from_response uses the given message unmodified."""
+        """Test that from_response embeds the given message unmodified (past the standard prefix)."""
         exc = EeroNotFoundException.from_response("No parameters were given to check.")
-        assert str(exc) == "No parameters were given to check."
+        assert str(exc) == "API error 404: No parameters were given to check."
+
+    def test_from_response_defaults_status_code_to_404(self):
+        """Test that from_response defaults status_code to 404."""
+        exc = EeroNotFoundException.from_response("not found")
+        assert exc.status_code == 404
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroNotFoundException is now an EeroAPIException."""
+        exc = EeroNotFoundException("network", "id")
+        assert isinstance(exc, EeroAPIException)
 
 
 class TestEeroAccessDeniedException:
@@ -267,12 +277,25 @@ class TestEeroPremiumRequiredException:
     def test_from_response_uses_generic_feature_name(self):
         """Test that from_response falls back to a generic feature name."""
         exc = EeroPremiumRequiredException.from_response(
-            "Requires Eero Plus", error_code="error.premium.user_not_subscribed"
+            "Requires Eero Plus", status_code=402, error_code="error.premium.user_not_subscribed"
         )
         assert exc.feature == "This feature"
-        assert str(exc) == "Requires Eero Plus"
+        assert exc.status_code == 402
+        assert str(exc) == "API error 402: Requires Eero Plus"
         assert exc.error_code == "error.premium.user_not_subscribed"
         assert isinstance(exc, EeroPremiumRequiredException)
+
+    def test_from_response_defaults_status_code_to_none(self):
+        """Test that from_response is None-safe when no status_code is supplied."""
+        exc = EeroPremiumRequiredException.from_response("Requires Eero Plus")
+        assert exc.status_code is None
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroPremiumRequiredException is now an EeroAPIException."""
+        exc = EeroPremiumRequiredException()
+        assert isinstance(exc, EeroAPIException)
+        assert exc.status_code is None
+        assert exc.is_auth_error() is False
 
 
 class TestEeroFeatureUnavailableException:
@@ -311,17 +334,30 @@ class TestEeroFeatureUnavailableException:
     def test_from_response_derives_feature_from_error_code(self):
         """Test that from_response uses error_code as the feature label."""
         exc = EeroFeatureUnavailableException.from_response(
-            "eero is offline", error_code="error.eero.offline"
+            "eero is offline", status_code=400, error_code="error.eero.offline"
         )
         assert exc.feature == "error.eero.offline"
         assert exc.reason == "eero is offline"
-        assert str(exc) == "eero is offline"
+        assert exc.status_code == 400
+        assert str(exc) == "API error 400: eero is offline"
         assert isinstance(exc, EeroFeatureUnavailableException)
 
     def test_from_response_falls_back_to_generic_feature_without_error_code(self):
         """Test that from_response falls back to a generic feature label."""
         exc = EeroFeatureUnavailableException.from_response("Feature unavailable")
         assert exc.feature == "feature"
+
+    def test_from_response_defaults_status_code_to_none(self):
+        """Test that from_response is None-safe when no status_code is supplied."""
+        exc = EeroFeatureUnavailableException.from_response("Feature unavailable")
+        assert exc.status_code is None
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroFeatureUnavailableException is now an EeroAPIException."""
+        exc = EeroFeatureUnavailableException("Thread")
+        assert isinstance(exc, EeroAPIException)
+        assert exc.status_code is None
+        assert exc.is_auth_error() is False
 
 
 class TestEeroValidationException:

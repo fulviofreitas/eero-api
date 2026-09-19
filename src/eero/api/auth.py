@@ -28,6 +28,7 @@ from ..errors import ErrorGroup, classify_error_code
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
+    EeroException,
     EeroNetworkException,
     EeroTimeoutException,
     EeroValidationException,
@@ -45,13 +46,19 @@ _LOGGER = get_secure_logger(__name__)
 # refresh anyway.
 _SESSION_REFRESH_GUARD_TIMEOUT_SECONDS: Final[float] = 30.0
 
-# Credentials are cleared on a 401 from the refresh endpoint only when the
-# error_code falls in the catalogue's Session group (a terminal, "your
-# session is really gone" signal) or is absent/unrecognised. Every other
-# recognised 401 error_code -- notably the verification/login-state group,
-# where the token is mid-verification rather than gone -- leaves stored
-# credentials untouched so the caller can finish verify() and retry.
-_CREDENTIAL_CLEARING_GROUPS: Final[FrozenSet[ErrorGroup]] = frozenset({ErrorGroup.SESSION})
+# Explicit allowlist: credentials are RETAINED on a 401 from the refresh
+# endpoint only when the error_code classifies into one of these two groups
+# -- the account is mid-verification (VERIFICATION), or the session is
+# merely due for a refresh (SESSION_REFRESH), neither of which means the
+# session is gone. Every other outcome clears credentials: the terminal
+# Session group, every other recognised group (premium, feature-unavailable,
+# rate-limit, client-blocked, domain, validation, not-found, access-denied --
+# none of which should ever legitimately come back from this endpoint, but
+# none of which may retain a stale token either), and an unrecognised or
+# absent error_code.
+_CREDENTIAL_RETENTION_GROUPS: Final[FrozenSet[ErrorGroup]] = frozenset(
+    {ErrorGroup.VERIFICATION, ErrorGroup.SESSION_REFRESH}
+)
 
 
 class AuthAPI(BaseAPI):
@@ -335,11 +342,16 @@ class AuthAPI(BaseAPI):
         """Perform the actual refresh request. Only called by the single-flight leader.
 
         Returns:
-            True on HTTP 200, False on any API-level error.
+            True on HTTP 200, False on any API-level error (including every
+            classified group other than VERIFICATION/SESSION_REFRESH, and
+            any unrecognised authentication error -- all of which either
+            clear credentials or leave them as-is per
+            ``_CREDENTIAL_RETENTION_GROUPS``, but never raise).
 
         Raises:
             EeroAuthenticationException: If no session token is available
             EeroNetworkException: If there's a network error
+            EeroTimeoutException: If the request times out
         """
         if not self._credentials.session_id:
             raise EeroAuthenticationException("No session token available. Login first.")
@@ -352,12 +364,11 @@ class AuthAPI(BaseAPI):
             )
         except EeroAuthenticationException as err:
             group = classify_error_code(err.error_code)
-            if group not in _CREDENTIAL_CLEARING_GROUPS and group is not None:
-                # A recognised, non-Session error_code (e.g. the
-                # verification/login-state group, or the session-refresh
-                # signal itself) means the session is mid-verification or
-                # otherwise not gone -- retaining credentials lets the
-                # caller finish verify() and retry.
+            if group in _CREDENTIAL_RETENTION_GROUPS:
+                # The verification/login-state group, or the session-refresh
+                # signal itself: the session is mid-verification or merely
+                # due for a refresh, not gone -- retaining credentials lets
+                # the caller finish verify() and retry.
                 _LOGGER.debug(
                     "Session refresh blocked by a non-terminal authentication error (%s); "
                     "retaining credentials",
@@ -372,7 +383,20 @@ class AuthAPI(BaseAPI):
             self._credentials.clear_all()
             await self._save_credentials()
             return False
-        except EeroAPIException as err:
+        except (EeroNetworkException, EeroTimeoutException):
+            # Transport-level failures are not a verdict on the session at
+            # all -- they must propagate to the caller unchanged, not be
+            # folded into the "refresh failed" False return below.
+            raise
+        except EeroException as err:
+            # Broad by design: no exception class -- including a domain
+            # error, a validation error, or any other non-auth failure the
+            # refresh endpoint could theoretically return -- may escape this
+            # method without a credential-clearing decision having been made.
+            # Every one of these is treated the same as a generic API
+            # failure: the refresh did not succeed, credentials are left as
+            # they are (they were not proven invalid), and the caller's own
+            # original authentication error is what ultimately surfaces.
             _LOGGER.debug("Session refresh failed: %s", err)
             return False
 

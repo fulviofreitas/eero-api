@@ -21,10 +21,9 @@ from ..const import (
     GET_RETRY_DELAY_SECONDS,
     MAX_RESPONSE_BYTES,
 )
-from ..errors import exception_for_error
+from ..errors import ErrorGroup, classify_error_code, exception_for_error
 from ..exceptions import (
     EeroAPIException,
-    EeroAuthenticationException,
     EeroNetworkException,
     EeroTimeoutException,
     EeroValidationException,
@@ -74,29 +73,6 @@ class RequestEncoding(str, Enum):
     FORM = "form"
     EMPTY_JSON_STRING = "empty_json_string"
     NONE = "none"
-
-
-def _error_body_summary(response_text: str, envelope: Optional[Dict[str, Any]]) -> str:
-    """Build a leak-safe summary of an error response body for exception messages.
-
-    The raw body text and the envelope's ``data`` field are never embedded.
-    When the body parsed as a JSON object, the summary is built from
-    ``meta.code``/``meta.error`` only. Otherwise it is a fixed label plus
-    the body's byte length.
-
-    Args:
-        response_text: The raw response body (used only for its length when
-            it did not parse as JSON).
-        envelope: The parsed response envelope, or ``None``.
-
-    Returns:
-        A summary string safe to embed in an exception message.
-    """
-    if envelope is not None:
-        meta = envelope.get("meta")
-        meta = meta if isinstance(meta, dict) else {}
-        return f"meta.code={meta.get('code')!r}, meta.error={meta.get('error')!r}"
-    return f"<non-JSON response body, {len(response_text.encode('utf-8'))} bytes>"
 
 
 def _log_error_body(
@@ -627,7 +603,7 @@ class BaseAPI:
                     # it is a single replay of the original call after a
                     # successful re-authentication, not a retry of a failure.
                     if not _refresh_retried and self._refresh_hook is not None:
-                        if error_code == "error.session.refresh":
+                        if classify_error_code(error_code) is ErrorGroup.SESSION_REFRESH:
                             _LOGGER.debug(
                                 "Server requested session refresh; refreshing and retrying"
                             )
@@ -659,19 +635,22 @@ class BaseAPI:
                             # Refresh failed — fall through to raise below.
                             _LOGGER.debug("Session refresh returned False; raising auth exception")
 
-                    raise EeroAuthenticationException(
-                        f"Authentication failed: {_error_body_summary(response_text, envelope)}",
+                    # The raised exception's message is built entirely by
+                    # exception_for_error from error_code (never from the raw
+                    # body or this URL) -- see eero.errors.message_for_error_code.
+                    raise exception_for_error(
+                        response.status,
                         envelope=envelope,
                         error_code=error_code,
                     )
                 elif response.status == 404:
-                    # Use debug level for 404s to reduce noise in CLI output
+                    # Use debug level for 404s to reduce noise in CLI output.
+                    # The URL is only ever logged here -- never embedded in
+                    # the raised exception's message.
                     _LOGGER.debug("Resource not found at %s", url)
                     _log_error_body(_LOGGER.debug, "Resource not found", response_text, envelope)
                     raise exception_for_error(
                         response.status,
-                        f"Resource not found: {_error_body_summary(response_text, envelope)}. "
-                        f"URL: {url}",
                         envelope=envelope,
                         error_code=error_code,
                     )
@@ -679,7 +658,6 @@ class BaseAPI:
                     _log_error_body(_LOGGER.debug, "Rate limited", response_text, envelope)
                     raise exception_for_error(
                         response.status,
-                        "Rate limit exceeded",
                         envelope=envelope,
                         error_code=error_code,
                     )
@@ -687,13 +665,13 @@ class BaseAPI:
                     # Single classification point for every other non-2xx,
                     # non-3xx, non-401/404/429 status: see
                     # eero.errors.exception_for_error for the full precedence
-                    # rules (status-independent groups, then status code).
+                    # rules (401 short-circuit, status-independent groups,
+                    # then status code).
                     _log_error_body(
                         _LOGGER.error, f"API error {response.status}", response_text, envelope
                     )
                     raise exception_for_error(
                         response.status,
-                        _error_body_summary(response_text, envelope),
                         envelope=envelope,
                         error_code=error_code,
                     )
@@ -741,7 +719,7 @@ class BaseAPI:
                 if attempt >= max_attempts:
                     raise
             except EeroAPIException as err:
-                if attempt >= max_attempts or err.status_code < 500:
+                if attempt >= max_attempts or err.status_code is None or err.status_code < 500:
                     raise
             _LOGGER.warning(
                 "Retrying GET %s after transient failure (attempt %s/%s)",

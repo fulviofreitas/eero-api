@@ -60,7 +60,7 @@ class EeroAPIException(EeroException):
 
     def __init__(
         self,
-        status_code: int,
+        status_code: Optional[int],
         message: str,
         *,
         envelope: Optional[Dict[str, Any]] = None,
@@ -69,7 +69,10 @@ class EeroAPIException(EeroException):
         """Initialize the exception.
 
         Args:
-            status_code: The HTTP status code returned by the API.
+            status_code: The HTTP status code returned by the API, or
+                ``None`` when no status code is known (e.g. a subclass
+                constructed the original, client-side-only way, before any
+                request was made).
             message: Human-readable error message.
             envelope: The raw, unmodified JSON response envelope, or ``None``
                 when the response body was not JSON.
@@ -113,8 +116,8 @@ class EeroClientBlockedException(EeroAPIException):
     pass
 
 
-class EeroNotFoundException(EeroException):
-    """Exception raised when a resource is not found.
+class EeroNotFoundException(EeroAPIException):
+    """Exception raised when a resource is not found (HTTP 404).
 
     Constructed either directly, with a known resource type and ID (the
     original, backward-compatible shape), or via :meth:`from_response` when
@@ -128,6 +131,7 @@ class EeroNotFoundException(EeroException):
         resource_type: str,
         resource_id: str,
         *,
+        status_code: int = 404,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ):
@@ -137,6 +141,8 @@ class EeroNotFoundException(EeroException):
             resource_type: The kind of resource that was not found (e.g.
                 ``"network"``, ``"device"``).
             resource_id: The identifier that was looked up.
+            status_code: The HTTP status code; always 404 in practice, kept
+                overridable for symmetry with the rest of the hierarchy.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
@@ -144,6 +150,7 @@ class EeroNotFoundException(EeroException):
         self.resource_type: Optional[str] = resource_type
         self.resource_id: Optional[str] = resource_id
         super().__init__(
+            status_code,
             f"{resource_type} '{resource_id}' not found",
             envelope=envelope,
             error_code=error_code,
@@ -154,6 +161,7 @@ class EeroNotFoundException(EeroException):
         cls,
         message: str,
         *,
+        status_code: int = 404,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ) -> "EeroNotFoundException":
@@ -161,6 +169,7 @@ class EeroNotFoundException(EeroException):
 
         Args:
             message: A pre-built, human-readable message describing the 404.
+            status_code: The HTTP status code; always 404 in practice.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
@@ -172,17 +181,20 @@ class EeroNotFoundException(EeroException):
         instance = cls.__new__(cls)
         instance.resource_type = None
         instance.resource_id = None
-        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        EeroAPIException.__init__(
+            instance, status_code, message, envelope=envelope, error_code=error_code
+        )
         return instance
 
 
-class EeroPremiumRequiredException(EeroException):
+class EeroPremiumRequiredException(EeroAPIException):
     """Exception raised when a feature requires Eero Plus subscription."""
 
     def __init__(
         self,
         feature: str = "This feature",
         *,
+        status_code: Optional[int] = None,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ):
@@ -190,12 +202,16 @@ class EeroPremiumRequiredException(EeroException):
 
         Args:
             feature: The name of the gated feature.
+            status_code: The HTTP status code, when known. ``None`` (the
+                default) covers the original, client-side-only construction
+                shape, where no request was involved.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
         """
         self.feature = feature
         super().__init__(
+            status_code,
             f"{feature} requires an Eero Plus subscription",
             envelope=envelope,
             error_code=error_code,
@@ -206,6 +222,7 @@ class EeroPremiumRequiredException(EeroException):
         cls,
         message: str,
         *,
+        status_code: Optional[int] = None,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ) -> "EeroPremiumRequiredException":
@@ -213,6 +230,7 @@ class EeroPremiumRequiredException(EeroException):
 
         Args:
             message: A pre-built, human-readable message from the transport.
+            status_code: The HTTP status code of the response, when known.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
@@ -224,11 +242,13 @@ class EeroPremiumRequiredException(EeroException):
         """
         instance = cls.__new__(cls)
         instance.feature = "This feature"
-        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        EeroAPIException.__init__(
+            instance, status_code, message, envelope=envelope, error_code=error_code
+        )
         return instance
 
 
-class EeroFeatureUnavailableException(EeroException):
+class EeroFeatureUnavailableException(EeroAPIException):
     """Exception raised when a feature is not available on the device."""
 
     def __init__(
@@ -236,6 +256,7 @@ class EeroFeatureUnavailableException(EeroException):
         feature: str,
         reason: str = "not supported on this device",
         *,
+        status_code: Optional[int] = None,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ):
@@ -244,19 +265,25 @@ class EeroFeatureUnavailableException(EeroException):
         Args:
             feature: The name of the unavailable feature.
             reason: A short explanation of why it is unavailable.
+            status_code: The HTTP status code, when known. ``None`` (the
+                default) covers the original, client-side-only construction
+                shape, where no request was involved.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
         """
         self.feature = feature
         self.reason = reason
-        super().__init__(f"{feature} is {reason}", envelope=envelope, error_code=error_code)
+        super().__init__(
+            status_code, f"{feature} is {reason}", envelope=envelope, error_code=error_code
+        )
 
     @classmethod
     def from_response(
         cls,
         message: str,
         *,
+        status_code: Optional[int] = None,
         envelope: Optional[Dict[str, Any]] = None,
         error_code: Optional[str] = None,
     ) -> "EeroFeatureUnavailableException":
@@ -264,6 +291,7 @@ class EeroFeatureUnavailableException(EeroException):
 
         Args:
             message: A pre-built, human-readable message from the transport.
+            status_code: The HTTP status code of the response, when known.
             envelope: The raw, unmodified response envelope, or ``None``.
             error_code: The value of ``envelope["meta"]["error"]``, or
                 ``None``.
@@ -277,7 +305,9 @@ class EeroFeatureUnavailableException(EeroException):
         instance = cls.__new__(cls)
         instance.feature = error_code or "feature"
         instance.reason = message
-        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        EeroAPIException.__init__(
+            instance, status_code, message, envelope=envelope, error_code=error_code
+        )
         return instance
 
 

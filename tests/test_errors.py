@@ -5,9 +5,11 @@ Tests cover:
   string lowercase and stable, every group non-empty)
 - ``classify_error_code`` lookup behaviour, including case-insensitivity and
   whitespace trimming
-- ``exception_for_error`` class selection is exercised end-to-end through the
-  transport in ``tests/api/test_base.py``; this module covers the pure
-  catalogue/classification functions in isolation.
+- ``message_for_error_code`` leak-safety (catalogue string when recognised,
+  fixed label otherwise, nothing else ever embedded)
+- ``exception_for_error``'s 401-short-circuit precedence, exercised directly
+  here in addition to end-to-end through the transport in
+  ``tests/api/test_base.py``
 """
 
 import pytest
@@ -27,7 +29,10 @@ from eero.errors import (
     VERIFICATION_ERRORS,
     ErrorGroup,
     classify_error_code,
+    exception_for_error,
+    message_for_error_code,
 )
+from eero.exceptions import EeroAuthenticationException
 
 ALL_GROUPS = [
     SESSION_ERRORS,
@@ -133,3 +138,62 @@ class TestClassifyErrorCode:
     def test_whitespace_trimmed(self):
         assert classify_error_code("  error.access.denied  ") is ErrorGroup.ACCESS_DENIED
         assert classify_error_code("\terror.session.refresh\n") is ErrorGroup.SESSION_REFRESH
+
+
+class TestMessageForErrorCode:
+    """Tests for ``message_for_error_code``'s leak-safe message building."""
+
+    def test_recognised_code_embeds_the_catalogue_string(self):
+        assert message_for_error_code("error.access.denied") == "error.access.denied"
+
+    def test_recognised_code_is_normalized(self):
+        """The embedded string is normalized (trimmed, lowercased), not the raw input."""
+        assert message_for_error_code("  ERROR.Access.Denied  ") == "error.access.denied"
+
+    def test_none_returns_fixed_label(self):
+        assert message_for_error_code(None) == "unrecognised error string"
+
+    def test_empty_string_returns_fixed_label(self):
+        assert message_for_error_code("") == "unrecognised error string"
+
+    def test_unrecognised_string_returns_fixed_label_only(self):
+        """An unrecognised string is never embedded -- only the fixed label is."""
+        message = message_for_error_code("error.totally_made_up")
+        assert message == "unrecognised error string"
+        assert "error.totally_made_up" not in message
+
+    def test_free_text_sentence_returns_fixed_label_only(self):
+        """A free-text sentence is never embedded -- only the fixed label is."""
+        message = message_for_error_code("No parameters were given to check.")
+        assert message == "unrecognised error string"
+        assert "parameters" not in message
+
+
+class TestExceptionForError401Precedence:
+    """Tests that a 401 always short-circuits to EeroAuthenticationException.
+
+    This is checked directly against ``exception_for_error`` (in addition to
+    the equivalent end-to-end coverage through the transport in
+    ``tests/api/test_base.py``) so the module stays provably safe as the
+    single classification point even if a caller ever routes a 401 through
+    it directly.
+    """
+
+    @pytest.mark.parametrize(
+        "error_code",
+        [
+            None,
+            "error.session.expired",
+            "error.verification.required",
+            # The four status-independent groups: none of these may win over
+            # the 401 short-circuit.
+            "error.premium.user_not_subscribed",
+            "error.eero.offline",
+            "error.rate.limit",
+            "error.app.version.blocked",
+        ],
+    )
+    def test_401_always_yields_authentication_exception(self, error_code):
+        exc = exception_for_error(401, envelope=None, error_code=error_code)
+        assert isinstance(exc, EeroAuthenticationException)
+        assert exc.error_code == error_code
