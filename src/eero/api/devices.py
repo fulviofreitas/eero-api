@@ -5,8 +5,7 @@ All data extraction, field mapping, and transformation must be done by downstrea
 """
 
 import logging
-import warnings
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..const import API_ENDPOINT, DEVICE_UPDATE_ENDPOINT
 from ..exceptions import EeroAPIException, EeroAuthenticationException
@@ -14,16 +13,6 @@ from .auth import AuthAPI
 from .base import AuthenticatedAPI
 
 _LOGGER = logging.getLogger(__name__)
-
-# Shared by DevicesAPI.set_device_priority and EeroClient.set_device_priority
-# (imported by client.py). Keep the message in one place so both surfaces stay
-# in sync when the removal target changes.
-PRIORITY_DEPRECATION_MSG = (
-    "set_device_priority is a no-op — Eero's cloud API no longer exposes"
-    " device-level priority. The method returns 200 OK but does not change state."
-    " Scheduled for removal in v6.0.0."
-    " See https://github.com/fulviofreitas/eero-api/issues/111"
-)
 
 
 class DevicesAPI(AuthenticatedAPI):
@@ -215,57 +204,3 @@ class DevicesAPI(AuthenticatedAPI):
         _LOGGER.debug("%s device %s", "Pausing" if paused else "Unpausing", device_id)
 
         return await self._update_device(network_id, device_id, {"paused": paused}, auth_token)
-
-    async def set_device_priority(
-        self,
-        network_id: str,
-        device_id: str,
-        prioritized: bool,
-        duration_minutes: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Set priority for a device (bandwidth prioritization) - returns raw Eero API response.
-
-        **Deprecated**: ``DevicesAPI.set_device_priority`` is a no-op. Eero's cloud
-        API no longer exposes device-level priority — there is no ``/priority`` or
-        ``/qos`` endpoint, and the ``prioritized`` field is absent from the device
-        object. Sending ``{prioritized: bool}`` via the device PUT returns 200 OK
-        but does not change any observable state (live-verified). This method is
-        scheduled for removal in v6.0.0. See
-        https://github.com/fulviofreitas/eero-api/issues/111
-
-        Args:
-            network_id: ID of the network
-            device_id: ID of the device
-            prioritized: True to prioritize, False to remove priority
-            duration_minutes: Duration in minutes (0 or None = indefinite)
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        warnings.warn(
-            f"DevicesAPI.{PRIORITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        payload: Dict[str, Any] = {"prioritized": prioritized}
-
-        if prioritized and duration_minutes is not None and duration_minutes > 0:
-            payload["priority_duration"] = duration_minutes
-
-        _LOGGER.debug(
-            "%s device %s%s",
-            "Prioritizing" if prioritized else "Deprioritizing",
-            device_id,
-            f" for {duration_minutes} minutes" if duration_minutes else "",
-        )
-
-        return await self._update_device(network_id, device_id, payload, auth_token)

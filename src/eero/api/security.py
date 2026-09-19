@@ -188,39 +188,6 @@ class SecurityAPI(AuthenticatedAPI):
             },
         )
 
-    async def set_thread(self, network_id: str, enabled: bool) -> Dict[str, Any]:
-        """Enable or disable Thread (for smart home devices) - returns raw Eero API response.
-
-        Thread is a low-power mesh networking protocol used by
-        smart home devices like Apple HomePod, Google Nest, etc.
-
-        Args:
-            network_id: ID of the network
-            enabled: True to enable Thread, False to disable
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug(
-            "%s Thread for network %s",
-            "Enabling" if enabled else "Disabling",
-            network_id,
-        )
-
-        return await self.put(
-            f"networks/{network_id}/settings",
-            auth_token=auth_token,
-            json={"thread": enabled},
-        )
-
     async def configure_security(
         self,
         network_id: str,
@@ -228,7 +195,6 @@ class SecurityAPI(AuthenticatedAPI):
         band_steering: Optional[bool] = None,
         upnp: Optional[bool] = None,
         ipv6: Optional[bool] = None,
-        thread: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Configure multiple security settings at once - returns raw Eero API response.
 
@@ -238,7 +204,6 @@ class SecurityAPI(AuthenticatedAPI):
             band_steering: Enable/disable band steering
             upnp: Enable/disable UPnP
             ipv6: Enable/disable IPv6
-            thread: Enable/disable Thread
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -265,9 +230,6 @@ class SecurityAPI(AuthenticatedAPI):
         if ipv6 is not None:
             payload["ipv6_upstream"] = ipv6
             payload["ipv6_downstream"] = ipv6
-
-        if thread is not None:
-            payload["thread"] = thread
 
         if not payload:
             _LOGGER.warning("No security settings provided")

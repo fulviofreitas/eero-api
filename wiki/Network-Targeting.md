@@ -33,7 +33,7 @@ raise EeroException("No network ID provided and no preferred network set")
 ```
 
 > ⚠️ **Warning: Auto-discovery is the exception, not the rule.** `_ensure_network_id` is called
-> 80 times across `EeroClient`; 60 of those calls pass `auto_discover=False`. Only the **19**
+> 72 times across `EeroClient`; 53 of those calls pass `auto_discover=False`. Only the **19**
 > methods below will fetch `get_networks()` to find a network on your behalf. Every other method
 > — including many read-only getters — requires an explicit `network_id=` or an already-set
 > preferred network, and raises `EeroException("No network ID provided and no preferred network
@@ -54,14 +54,14 @@ raise EeroException("No network ID provided and no preferred network set")
 | `set_device_nickname` | `set_guest_network` |
 | `set_profile_devices` | |
 
-Everything else — including common reads like `get_diagnostics`, `get_settings`, `get_insights`,
+Everything else — including common reads like `get_diagnostics`, `get_insights`,
 `get_routing`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`,
-`get_data_usage`, `get_password`, `get_updates`, `get_premium_status`, `get_security_settings`,
+`get_data_usage`, `get_updates`, `get_premium_status`, `get_security_settings`,
 `get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_network`,
 `get_backup_status`, `get_profile_schedule`, `get_blocked_applications`, `get_device_priority`,
-`get_ac_compat`, `get_ouicheck`, `get_support`, `get_thread`, `get_burst_reporters`, every
-`get_activity*` method, `run_diagnostics`, and every setter other than `set_device_nickname` /
-`set_guest_network` — requires an explicit `network_id=` or a preferred network already set.
+`get_ac_compat`, `get_ouicheck`, `get_support`, `get_thread`, `run_diagnostics`, and every
+setter other than `set_device_nickname` / `set_guest_network` — requires an explicit
+`network_id=` or a preferred network already set.
 
 > 💡 **Tip:** The practical fix is cheap: call `get_networks()` once, early, in your session. As a
 > side effect it populates `_preferred_network_id` (see below), and every one of the other 60
@@ -116,7 +116,6 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `set_wpa3` | `set_wpa3(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_ipv6` | `set_ipv6(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_dns_caching` | `set_dns_caching(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
-| `set_ipv6_dns` | `set_ipv6_dns(enabled, network_id=None)` | ID lands in `enabled` (truthy) |
 | `set_dns_mode` | `set_dns_mode(mode, custom_servers=None, network_id=None)` | ID lands in `mode` — **caught**: raises `EeroValidationException` |
 | `set_custom_dns` | `set_custom_dns(dns_servers, network_id=None)` | ID lands in `dns_servers` — **caught**: raises `EeroValidationException` |
 | `clear_custom_dns` | `clear_custom_dns(family=None, network_id=None)` | ID lands in `family` — **caught**: raises `EeroValidationException` |
@@ -127,9 +126,9 @@ Because `enabled` only checks truthiness, `set_upnp("123456")` doesn't raise —
 | `get_device` | `get_device(device_id, network_id=None, refresh_cache=False)` | ID lands in `device_id` |
 | `set_device_nickname` | `set_device_nickname(device_id, nickname, network_id=None)` | ID lands in `device_id` |
 
-For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network` / `set_dns_caching` / `set_ipv6_dns`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
+For `set_upnp` / `set_wpa3` / `set_ipv6` / `set_guest_network` / `set_dns_caching`, the ID silently becomes the *value* being set. For `reboot_eero` / `set_led` / `get_device` / `set_device_nickname`, the ID silently becomes the *resource ID*, targeting (or failing to find) the wrong eero or device. Always pass `network_id=` as a keyword.
 
-Only three methods catch this: `set_dns_mode`, `set_custom_dns` and `clear_custom_dns` validate their first argument, so a misplaced network ID raises `EeroValidationException` before any request is made. **Do not generalise that to "DNS methods are safe"** — `set_dns_caching` and `set_ipv6_dns` take a plain `bool` and validate nothing, so they fail silently exactly like the other boolean setters. The protection is a side effect of those three happening to validate, not a property of the DNS surface.
+Only three methods catch this: `set_dns_mode`, `set_custom_dns` and `clear_custom_dns` validate their first argument, so a misplaced network ID raises `EeroValidationException` before any request is made. **Do not generalise that to "DNS methods are safe"** — `set_dns_caching` takes a plain `bool` and validates nothing, so it fails silently exactly like the other boolean setters. The protection is a side effect of those three happening to validate, not a property of the DNS surface.
 
 ---
 

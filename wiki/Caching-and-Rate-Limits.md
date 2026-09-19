@@ -36,7 +36,7 @@ Only these `EeroClient` read methods check and populate the cache. Every other `
 | `get_profiles(network_id)` | `"profiles"` keyed by `f"{network_id}_profiles"` |
 | `get_profile(profile_id, network_id)` | `"profiles"` keyed by `f"{network_id}_{profile_id}"` |
 
-> ⚠️ **Warning:** `get_eero(eero_id, network_id, refresh_cache=False)` accepts a `refresh_cache` kwarg in its signature, but its implementation never checks or populates the cache — every call goes straight to the API. The kwarg currently has no effect. Every other method not in the table above (`get_diagnostics`, `get_settings`, `get_security_settings`, `get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_network`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`, `get_data_usage`, `get_activity*`, etc.) is likewise never cached — it always makes a fresh request.
+> ⚠️ **Warning:** `get_eero(eero_id, network_id, refresh_cache=False)` accepts a `refresh_cache` kwarg in its signature, but its implementation never checks or populates the cache — every call goes straight to the API. The kwarg currently has no effect. Every other method not in the table above (`get_diagnostics`, `get_security_settings`, `get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_network`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`, `get_data_usage`, etc.) is likewise never cached — it always makes a fresh request.
 
 ---
 
@@ -72,7 +72,7 @@ Some write methods invalidate the specific cache entries they affect via two int
 
 | Write method | Invalidates |
 |---|---|
-| `set_device_nickname`, `block_device`, `pause_device`, `set_device_priority` | that device's cache entry + the network's device list |
+| `set_device_nickname`, `block_device`, `pause_device` | that device's cache entry + the network's device list |
 | `pause_profile`, `set_blocked_applications`, `set_profile_devices`, `set_profile_schedule` | that profile's cache entry + the network's profile list |
 | `create_profile` | the network's profile list |
 | `rename_profile`, `delete_profile` | that profile's cache entry + the network's profile list |
@@ -82,7 +82,7 @@ Some write methods invalidate the specific cache entries they affect via two int
 > ⚠️ **Gotcha:** Not every write invalidates a related read. Confirmed **not** invalidated by this SDK version, despite mutating server-side state that a cached read reflects:
 > - `set_led_brightness` — does **not** invalidate the eeros cache (unlike `set_led` and `set_nightlight`, which do)
 > - `enable_bedtime` and `clear_profile_schedule` — do **not** invalidate the profile cache (unlike `set_profile_schedule`, which does)
-> - `set_wpa3`, `set_band_steering`, `set_upnp`, `set_ipv6`, `set_thread_enabled`, `configure_security` — security settings aren't cached at all, so nothing to invalidate, but also nothing protects you from reading stale data elsewhere if you assumed otherwise
+> - `set_wpa3`, `set_band_steering`, `set_upnp`, `set_ipv6`, `configure_security` — security settings aren't cached at all, so nothing to invalidate, but also nothing protects you from reading stale data elsewhere if you assumed otherwise
 > - `configure_backup_network`, `set_backup_network` — no cache invalidation
 >
 > **Workaround**: after any write whose effect you need to see immediately, call the corresponding getter with `refresh_cache=True` rather than trusting the cache to have been cleared for you:

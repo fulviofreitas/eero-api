@@ -57,13 +57,11 @@ class TestEeroAPIInit:
         assert hasattr(api, "profiles")
 
         # Feature APIs
-        assert hasattr(api, "activity")
         assert hasattr(api, "backup")
         assert hasattr(api, "dns")
         assert hasattr(api, "security")
         assert hasattr(api, "sqm")
         assert hasattr(api, "diagnostics")
-        assert hasattr(api, "settings")
         assert hasattr(api, "updates")
         assert hasattr(api, "insights")
         assert hasattr(api, "routing")
@@ -76,7 +74,6 @@ class TestEeroAPIInit:
         assert hasattr(api, "burst_reporters")
         assert hasattr(api, "ac_compat")
         assert hasattr(api, "ouicheck")
-        assert hasattr(api, "password")
 
 
 class TestEeroAPISubAPIs:

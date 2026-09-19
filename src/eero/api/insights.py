@@ -111,27 +111,3 @@ class InsightsAPI(AuthenticatedAPI):
             auth_token=auth_token,
             params=params,
         )
-
-    async def run_insights(self, network_id: str) -> Dict[str, Any]:
-        """Run insights analysis - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network to analyze
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug("Running insights for network %s", network_id)
-        return await self.post(
-            f"networks/{network_id}/insights",
-            auth_token=auth_token,
-            json={},
-        )

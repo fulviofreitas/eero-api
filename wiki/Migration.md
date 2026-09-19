@@ -195,10 +195,10 @@ Checklist:
 
 - [ ] Add `start=`, `end=`, and `insight_type=` to every `get_insights` call — they are
       keyword-only and mandatory; omitting any of them still raises via the upstream `400`.
-- [ ] Replace any `ActivityAPI` / `client.get_activity*` usage with
-      [`InsightsAPI.get_insights`](Deprecations#activityapi--clientget_activity) (category /
-      adblock / inspected breakdowns) or `DataUsageAPI.get_data_usage` (bandwidth per client or
-      node) — see [Deprecations](Deprecations) for full detail.
+- [ ] Replace any `ActivityAPI` / `client.get_activity*` usage with `InsightsAPI.get_insights`
+      (category / adblock / inspected breakdowns) or `DataUsageAPI.get_data_usage` (bandwidth per
+      client or node) — `ActivityAPI` was removed outright in v8.0.0, see
+      [Migration#v7x--v800](Migration#v7x--v800).
 
 ---
 
@@ -318,6 +318,74 @@ Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back
 
 ---
 
+## v7.x → v8.0.0
+
+**What broke**: Ten symbols that either never worked against the current API, or that the API
+stopped serving outright, are gone. There is no deprecation window for this release — every one
+of these calls now raises `AttributeError` (or, for `configure_security(thread=...)`,
+`TypeError`) instead of the previous no-op or 404.
+
+| Removed | If you called it | Do this instead |
+|---|---|---|
+| `DevicesAPI.set_device_priority` / `EeroClient.set_device_priority` | Remove the call — it never changed anything server-side | Use SQM: `client.set_sqm_enabled(True)` / `client.configure_sqm(enabled=True, upload_mbps=..., download_mbps=...)` |
+| `ActivityAPI` (module) / `client.get_activity*` (all five methods) | Remove the call — it always raised `EeroAPIException` (404) | Use `client.get_insights(start=..., end=..., insight_type=...)` for category/adblock/inspected data, or `client.get_data_usage(...)` for bandwidth per client or node |
+| `DnsAPI.set_ipv6_dns` / `EeroClient.set_ipv6_dns` | Replace with the method matching what you actually wanted | For the IPv6 connectivity toggle: `client.set_ipv6(enabled)`. For IPv6 DNS servers: `client.set_custom_dns_ipv6(servers)` |
+| `InsightsAPI.run_insights` | Remove the call — the API has no such operation | None |
+| `OUICheckAPI.run_ouicheck` | Remove the call — the API has no such operation | None |
+| `SecurityAPI.set_thread`, `EeroClient.set_thread_enabled`, `configure_security(thread=...)` | Remove the call/argument — the API does not accept this field | None yet; Thread write support is planned for a future release |
+| `SettingsAPI` (module) / `EeroClient.get_settings` | Replace with a network read | `client.get_network()` — the same fields live on the network envelope |
+| `PasswordAPI` (module) / `EeroClient.get_password` | Replace with a network read | `client.get_network()` — the network envelope carries the same fields |
+| `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | Remove the call — the endpoint returns 404 | None; the resource is POST-only — `client._api.burst_reporters.create_burst_reporter(...)` remains available |
+
+```python
+# Before (v7.x) — silent no-op
+await client.set_device_priority(device_id, prioritized=True)
+
+# After (v8.0.0+) — use SQM
+await client.set_sqm_enabled(True)
+await client.configure_sqm(enabled=True, upload_mbps=20, download_mbps=200)
+```
+
+```python
+# Before (v7.x) — always raised EeroAPIException (404)
+await client.get_activity_history(period="week")
+
+# After (v8.0.0+)
+await client.get_insights(
+    start="2026-07-01T00:00:00Z",
+    end="2026-07-21T00:00:00Z",
+    insight_type="blocked",
+    cadence="daily",
+)
+```
+
+```python
+# Before (v7.x) — toggled ipv6_upstream, not DNS servers
+await client.set_ipv6_dns(True)
+
+# After (v8.0.0+) — pick the one you actually meant
+await client.set_ipv6(True)                       # IPv6 connectivity toggle
+await client.set_custom_dns_ipv6(["2001:4860:4860::8888"])  # IPv6 DNS servers
+```
+
+Checklist:
+
+- [ ] Grep for `set_device_priority(` — remove it, switch to SQM if bandwidth control was the goal.
+- [ ] Grep for `get_activity`, `get_activity_clients`, `get_activity_for_device`,
+      `get_activity_history`, `get_activity_categories`, and `client._api.activity` — replace
+      with `get_insights` or `get_data_usage`.
+- [ ] Grep for `set_ipv6_dns(` and `client._api.dns.set_ipv6_dns` — split into `set_ipv6` and/or
+      `set_custom_dns_ipv6` depending on intent.
+- [ ] Grep for `run_insights(` and `run_ouicheck(` — remove; no replacement exists.
+- [ ] Grep for `set_thread(`, `set_thread_enabled(`, and `configure_security(` calls passing
+      `thread=` — remove the argument.
+- [ ] Grep for `get_settings(` and `client._api.settings` — replace with `get_network()`.
+- [ ] Grep for `get_password(` and `client._api.password` — replace with `get_network()`.
+- [ ] Grep for `get_burst_reporters(` and `client._api.burst_reporters.get_burst_reporters` —
+      remove; `create_burst_reporter` is unaffected.
+
+---
+
 ## Upgrading safely
 
 - **Pin your version** (`eero-api==7.0.0` or a narrow range) rather than `eero-api>=...` — this
@@ -340,6 +408,9 @@ Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back
   - `set_custom_dns(` / `set_dns_mode(` / `clear_custom_dns(` / `set_dns_caching(` — these were
     no-ops before v7.0.0 and now take effect. Also grep for `custom_dns`, `dns_caching` and
     `dns_servers` as *response* keys: none of them exist in the API.
+  - `set_device_priority(`, `get_activity`, `set_ipv6_dns(`, `run_insights(`, `run_ouicheck(`,
+    `set_thread(`/`set_thread_enabled(`, `get_settings(`, `get_password(`, and
+    `get_burst_reporters(` — all removed outright in v8.0.0, see above.
 
 ---
 

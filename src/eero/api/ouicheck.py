@@ -52,27 +52,3 @@ class OUICheckAPI(AuthenticatedAPI):
             f"networks/{network_id}/ouicheck",
             auth_token=auth_token,
         )
-
-    async def run_ouicheck(self, network_id: str) -> Dict[str, Any]:
-        """Run OUI check - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network to check
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug("Running OUI check for network %s", network_id)
-        return await self.post(
-            f"networks/{network_id}/ouicheck",
-            auth_token=auth_token,
-            json={},
-        )

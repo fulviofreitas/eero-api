@@ -470,34 +470,3 @@ class DnsAPI(AuthenticatedAPI):
             "Provider presets are available from the API at "
             "data.dns.default_test_servers — pass those addresses as custom_servers",
         )
-
-    async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]:
-        """Enable or disable IPv6 upstream - returns raw Eero API response.
-
-        .. warning::
-            Despite its name this method does **not** control IPv6 DNS servers.
-            It writes ``ipv6_upstream``, the network-level IPv6 connectivity
-            toggle, and IPv6 custom DNS works independently of it (verified:
-            ``ipv6.name_servers.mode`` can be "custom" while ``ipv6_upstream``
-            is False). ``SecurityAPI.set_ipv6`` writes the same field *and*
-            ``ipv6_downstream``, so the two can leave the network in a split
-            state. Tracked separately; use `set_custom_dns_ipv6` for IPv6 DNS
-            servers.
-
-        Args:
-            network_id: ID of the network
-            enabled: True to enable IPv6 upstream, False to disable
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        _LOGGER.debug(
-            "%s IPv6 upstream for network %s",
-            "Enabling" if enabled else "Disabling",
-            network_id,
-        )
-        return await self._put_settings(network_id, {"ipv6_upstream": enabled})

@@ -51,25 +51,3 @@ class TestOUICheckAPIGetOUICheck:
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await ouicheck_api.get_ouicheck("network_123")
-
-
-class TestOUICheckAPIRunOUICheck:
-    """Tests for run_ouicheck method."""
-
-    @pytest.fixture
-    def ouicheck_api(self, mock_session):
-        """Create an OUICheckAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return OUICheckAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_run_ouicheck_returns_raw_response(self, ouicheck_api, mock_session):
-        """Test run_ouicheck returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await ouicheck_api.run_ouicheck("network_123")
-
-        assert "meta" in result

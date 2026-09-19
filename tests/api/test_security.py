@@ -1,6 +1,6 @@
 """Tests for SecurityAPI module.
 
-Tests cover security settings like WPA3, band steering, UPnP, IPv6, and Thread.
+Tests cover security settings like WPA3, band steering, UPnP, and IPv6.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -212,48 +212,6 @@ class TestSecurityAPISetIPv6:
 
         with pytest.raises(EeroAuthenticationException):
             await security_api.set_ipv6("network_123", True)
-
-
-class TestSecurityAPISetThread:
-    """Tests for set_thread method."""
-
-    @pytest.fixture
-    def security_api(self, mock_session):
-        """Create a SecurityAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SecurityAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_set_thread_returns_raw_response(self, security_api, mock_session):
-        """Test setting Thread returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await security_api.set_thread("network_123", True)
-
-        assert "meta" in result
-
-    @pytest.mark.asyncio
-    async def test_set_thread_targets_settings_endpoint(self, security_api, mock_session):
-        """Test set_thread sends request to /settings endpoint."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        await security_api.set_thread("network_123", True)
-
-        call_args = mock_session.request.call_args
-        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-        assert "networks/network_123/settings" in url
-
-    @pytest.mark.asyncio
-    async def test_set_thread_not_authenticated(self, security_api):
-        """Test set_thread raises when not authenticated."""
-        security_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await security_api.set_thread("network_123", True)
 
 
 class TestSecurityAPIConfigure:

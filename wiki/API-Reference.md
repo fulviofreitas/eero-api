@@ -11,7 +11,7 @@ The SDK is a layered stack:
 ```
 EeroClient   → high-level facade: caching, network_id resolution, one method per operation
     ↓
-EeroAPI      → composition root: aggregates 26 domain APIs + AuthAPI (27 API classes total) as attributes (client._api.<domain>)
+EeroAPI      → composition root: aggregates 23 domain APIs + AuthAPI (24 API classes total) as attributes (client._api.<domain>)
     ↓
 Domain APIs  → one class per Eero Cloud resource (NetworksAPI, DevicesAPI, ProfilesAPI, ...)
     ↓
@@ -74,7 +74,6 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 | `run_speed_test` | `async def run_speed_test(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_diagnostics` | `async def get_diagnostics(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `run_diagnostics` | `async def run_diagnostics(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_settings` | `async def get_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_insights` | `async def get_insights(self, network_id: Optional[str]=None, *, start: str, end: str, insight_type: str, cadence: str='daily') -> Dict[str, Any]` | `Dict[str, Any]` | `start`/`end`/`insight_type` are keyword-only |
 | `get_routing` | `async def get_routing(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_thread` | `async def get_thread(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Thread radio settings |
@@ -98,7 +97,9 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 | `block_device` | `async def block_device(self, device_id: str, blocked: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `pause_device` | `async def pause_device(self, device_id: str, paused: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_device_priority` | `async def get_device_priority(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | No dedicated domain endpoint — internally calls `get_device()` and returns the full device payload |
-| `set_device_priority` | `async def set_device_priority(self, device_id: str, prioritized: bool, duration_minutes: Optional[int]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ **Deprecated / confirmed no-op** since v6.0.0 — returns 200 but changes nothing server-side (see issue #111). Use [SQM](#sqm--qos) instead |
+
+> **Note**: `set_device_priority` was removed in v8.0.0 — the API never exposed device-level
+> priority. Use [SQM](#sqm--qos) instead.
 
 ### Profiles
 
@@ -147,11 +148,10 @@ neither is available. See [Network Targeting](Network-Targeting) for the exact l
 | `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, dns_servers: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv4 untouched |
 | `clear_custom_dns` | `async def clear_custom_dns(self, family: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Switches to automatic; **retains** stored servers |
 | `set_dns_mode` | `async def set_dns_mode(self, mode: str, custom_servers: Optional[List[str]]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_ipv6_dns` | `async def set_ipv6_dns(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ IPv6 **upstream** toggle, not DNS — see below |
 
-> **⚠️ `set_ipv6_dns` does not set IPv6 DNS servers.** It writes `ipv6_upstream`, the
-> network-level IPv6 connectivity toggle. Use `set_custom_dns_ipv6()` for IPv6 DNS servers —
-> they work independently of `ipv6_upstream`. See [#125](https://github.com/fulviofreitas/eero-api/issues/125).
+> **Note**: `set_ipv6_dns` was removed in v8.0.0 — it wrote `ipv6_upstream`, the IPv6
+> connectivity toggle, not DNS servers. Use `set_ipv6()` for the connectivity toggle, or
+> `set_custom_dns_ipv6()` for IPv6 DNS servers.
 
 > ### ⚠️ A DNS change reboots the whole mesh
 >
@@ -224,8 +224,11 @@ build a picker from that list so it stays current and complete.
 | `set_band_steering` | `async def set_band_steering(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_upnp` | `async def set_upnp(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_ipv6` | `async def set_ipv6(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_thread_enabled` | `async def set_thread_enabled(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Named differently from `SecurityAPI.set_thread()` |
-| `configure_security` | `async def configure_security(self, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, thread: Optional[bool]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `configure_security` | `async def configure_security(self, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+
+> **Note**: `set_thread_enabled` (and the `thread=` keyword on `configure_security`) was removed
+> in v8.0.0 — the API does not accept a `thread` field on the settings write. Thread write
+> support is planned for a future release.
 
 ### Backup
 
@@ -280,8 +283,10 @@ build a picker from that list so it stays current and complete.
 |--------|-----------|---------|-------|
 | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: Optional[str]=None, device_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_data_usage` | `async def get_data_usage(self, network_id: Optional[str]=None, payload: Optional[Dict[str, Any]]=None, resource: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_burst_reporters` | `async def get_burst_reporters(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_insights` | see [Networks](#networks) | `Dict[str, Any]` | |
+
+> **Note**: `get_burst_reporters` was removed in v8.0.0 — the endpoint returns 404; the resource
+> is POST-only. `client._api.burst_reporters.create_burst_reporter(...)` remains available.
 
 ### Blacklist
 
@@ -292,24 +297,16 @@ build a picker from that list so it stays current and complete.
 > **Note**: `EeroClient` has no wrapper for `BlacklistAPI.add_to_blacklist()` or
 > `BlacklistAPI.remove_from_blacklist()` — call them via `client._api.blacklist` directly.
 
-### Deprecated (Activity)
-
-| Method | Signature | Returns | Notes |
-|--------|-----------|---------|-------|
-| `get_activity` | `async def get_activity(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Deprecated since v6.0.0 — upstream endpoint returns 404 |
-| `get_activity_clients` | `async def get_activity_clients(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Deprecated since v6.0.0 — upstream endpoint returns 404 |
-| `get_activity_for_device` | `async def get_activity_for_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Deprecated since v6.0.0 — upstream endpoint returns 404 |
-| `get_activity_history` | `async def get_activity_history(self, network_id: Optional[str]=None, period: str='day') -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Deprecated since v6.0.0 — upstream endpoint returns 404 |
-| `get_activity_categories` | `async def get_activity_categories(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Deprecated since v6.0.0 — upstream endpoint returns 404 |
-
 ### Misc
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_ac_compat` | `async def get_ac_compat(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_ouicheck` | `async def get_ouicheck(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_password` | `async def get_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_updates` | `async def get_updates(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+
+> **Note**: `get_password` was removed in v8.0.0 — the endpoint returns 404 on every path
+> version. Use `get_network()`; the same fields are carried on the network envelope.
 
 ### Cache
 
@@ -444,10 +441,10 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_device_nickname` | `async def set_device_nickname(self, network_id: str, device_id: str, nickname: str) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.3` endpoint |
 | `block_device` | `async def block_device(self, network_id: str, device_id: str, blocked: bool) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109) — not `/2.3` |
 | `pause_device` | `async def pause_device(self, network_id: str, device_id: str, paused: bool) -> Dict[str, Any]` | `Dict[str, Any]` | Writes via `/2.3` endpoint |
-| `set_device_priority` | `async def set_device_priority(self, network_id: str, device_id: str, prioritized: bool, duration_minutes: Optional[int]=None) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ Confirmed no-op (DeprecationWarning, returns 200, no server-side effect) — use SQM instead |
 
 > Note: there is no `get_device_priority` on `DevicesAPI` — `EeroClient.get_device_priority()`
-> is implemented by calling `get_device()` and returning the full payload.
+> is implemented by calling `get_device()` and returning the full payload. `set_device_priority`
+> was removed in v8.0.0 — use SQM instead.
 
 </details>
 
@@ -500,7 +497,10 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, network_id: str, dns_servers: List[str]) -> Dict[str, Any]` | `Dict[str, Any]` | Leaves IPv4 untouched |
 | `clear_custom_dns` | `async def clear_custom_dns(self, network_id: str, family: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `family="ipv4"`/`"ipv6"`, or both |
 | `set_dns_mode` | `async def set_dns_mode(self, network_id: str, mode: str, custom_servers: Optional[List[str]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_ipv6_dns` | `async def set_ipv6_dns(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | ⚠️ `ipv6_upstream` toggle, not DNS |
+
+> **Note**: `set_ipv6_dns` was removed in v8.0.0 — it wrote `ipv6_upstream`, the IPv6
+> connectivity toggle, not DNS. Use `SecurityAPI.set_ipv6` for the toggle, or
+> `set_custom_dns_ipv6` for IPv6 DNS servers.
 
 </details>
 
@@ -529,8 +529,10 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_band_steering` | `async def set_band_steering(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_upnp` | `async def set_upnp(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `set_ipv6` | `async def set_ipv6(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `set_thread` | `async def set_thread(self, network_id: str, enabled: bool) -> Dict[str, Any]` | `Dict[str, Any]` | `EeroClient` exposes this as `set_thread_enabled()` |
-| `configure_security` | `async def configure_security(self, network_id: str, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, thread: Optional[bool]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `configure_security` | `async def configure_security(self, network_id: str, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+
+> **Note**: `set_thread` was removed in v8.0.0 — the API does not accept a `thread` field on the
+> settings write. Thread write support is planned for a future release.
 
 </details>
 
@@ -585,57 +587,44 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 </details>
 
 <details>
-<summary>📦 DiagnosticsAPI, InsightsAPI, RoutingAPI, ThreadAPI, SupportAPI, SettingsAPI (single-purpose domains)</summary>
+<summary>📦 DiagnosticsAPI, InsightsAPI, RoutingAPI, ThreadAPI, SupportAPI (single-purpose domains)</summary>
 
 | Class | Attribute | Method | Signature | Notes |
 |-------|-----------|--------|-----------|-------|
 | `DiagnosticsAPI` | `client._api.diagnostics` | `get_diagnostics` | `async def get_diagnostics(self, network_id: str) -> Dict[str, Any]` | |
 | `DiagnosticsAPI` | `client._api.diagnostics` | `run_diagnostics` | `async def run_diagnostics(self, network_id: str) -> Dict[str, Any]` | |
 | `InsightsAPI` | `client._api.insights` | `get_insights` | `async def get_insights(self, network_id: str, *, start: str, end: str, insight_type: str, cadence: str='daily') -> Dict[str, Any]` | keyword-only args |
-| `InsightsAPI` | `client._api.insights` | `run_insights` | `async def run_insights(self, network_id: str) -> Dict[str, Any]` | No `EeroClient` wrapper |
 | `RoutingAPI` | `client._api.routing` | `get_routing` | `async def get_routing(self, network_id: str) -> Dict[str, Any]` | |
 | `ThreadAPI` | `client._api.thread` | `get_thread` | `async def get_thread(self, network_id: str) -> Dict[str, Any]` | |
 | `SupportAPI` | `client._api.support` | `get_support` | `async def get_support(self, network_id: str) -> Dict[str, Any]` | |
 | `SupportAPI` | `client._api.support` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]` | No `EeroClient` wrapper |
-| `SettingsAPI` | `client._api.settings` | `get_settings` | `async def get_settings(self, network_id: str) -> Dict[str, Any]` | |
 
 Each of these constructors is `def __init__(self, auth_api: AuthAPI) -> None`.
+
+> **Note**: `InsightsAPI.run_insights` was removed in v8.0.0 — the API declares no such
+> operation. `SettingsAPI` was removed entirely in v8.0.0 — the endpoint returns 404 on every
+> path version; use `NetworksAPI.get_network` for the same fields.
 
 </details>
 
 <details>
-<summary>📦 TransferAPI, DataUsageAPI, BurstReportersAPI, ACCompatAPI, OUICheckAPI, PasswordAPI, UpdatesAPI (stats & misc)</summary>
+<summary>📦 TransferAPI, DataUsageAPI, BurstReportersAPI, ACCompatAPI, OUICheckAPI, UpdatesAPI (stats & misc)</summary>
 
 | Class | Attribute | Method | Signature | Notes |
 |-------|-----------|--------|-----------|-------|
 | `TransferAPI` | `client._api.transfer` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None) -> Dict[str, Any]` | |
 | `DataUsageAPI` | `client._api.data_usage` | `get_data_usage` | `async def get_data_usage(self, network_id: str, payload: Dict[str, Any], resource: Optional[str]=None) -> Dict[str, Any]` | `payload` is required here (unlike the `EeroClient` wrapper, where it defaults to `None`) |
-| `BurstReportersAPI` | `client._api.burst_reporters` | `get_burst_reporters` | `async def get_burst_reporters(self, network_id: str) -> Dict[str, Any]` | |
 | `BurstReportersAPI` | `client._api.burst_reporters` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any]) -> Dict[str, Any]` | No `EeroClient` wrapper |
 | `ACCompatAPI` | `client._api.ac_compat` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str) -> Dict[str, Any]` | |
 | `OUICheckAPI` | `client._api.ouicheck` | `get_ouicheck` | `async def get_ouicheck(self, network_id: str) -> Dict[str, Any]` | |
-| `OUICheckAPI` | `client._api.ouicheck` | `run_ouicheck` | `async def run_ouicheck(self, network_id: str) -> Dict[str, Any]` | No `EeroClient` wrapper |
-| `PasswordAPI` | `client._api.password` | `get_password` | `async def get_password(self, network_id: str) -> Dict[str, Any]` | |
 | `UpdatesAPI` | `client._api.updates` | `get_updates` | `async def get_updates(self, network_id: str) -> Dict[str, Any]` | |
 
 Each of these constructors is `def __init__(self, auth_api: AuthAPI) -> None`.
 
-</details>
-
-<details>
-<summary>📦 ActivityAPI (<code>client._api.activity</code>) — ⚠️ fully deprecated since v6.0.0</summary>
-
-All methods return `Dict[str, Any]` but the upstream endpoints return HTTP 404 as of v6.0.0.
-Kept for backward compatibility only.
-
-| Method | Signature |
-|--------|-----------|
-| Constructor | `def __init__(self, auth_api: AuthAPI) -> None` |
-| `get_activity` | `async def get_activity(self, network_id: str) -> Dict[str, Any]` |
-| `get_activity_clients` | `async def get_activity_clients(self, network_id: str) -> Dict[str, Any]` |
-| `get_activity_for_device` | `async def get_activity_for_device(self, network_id: str, device_id: str) -> Dict[str, Any]` |
-| `get_activity_history` | `async def get_activity_history(self, network_id: str, period: str='day') -> Dict[str, Any]` |
-| `get_activity_categories` | `async def get_activity_categories(self, network_id: str) -> Dict[str, Any]` |
+> **Note**: `BurstReportersAPI.get_burst_reporters` and `OUICheckAPI.run_ouicheck` were removed
+> in v8.0.0 (both returned 404 / declared no such operation upstream). `PasswordAPI` was removed
+> entirely in v8.0.0 — the endpoint returns 404 on every path version; use
+> `NetworksAPI.get_network` for the same fields.
 
 </details>
 
@@ -727,8 +716,8 @@ Public, useful constants from `src/eero/const.py` (import via `from eero.const i
 | `SESSION_TOKEN_KEY` | `"session_token"` | Keyring/file storage key |
 | `REFRESH_TOKEN_KEY` | `"refresh_token"` | Keyring/file storage key |
 
-> ⚠️ **Warning:** The `/2.2` vs `/2.3` split matters for device mutations, but only for three
-> methods: `set_device_nickname`, `pause_device`, and `set_device_priority`. These route through
+> ⚠️ **Warning:** The `/2.2` vs `/2.3` split matters for device mutations, but only for two
+> methods: `set_device_nickname` and `pause_device`. These route through
 > `DevicesAPI._update_device()` to `DEVICE_UPDATE_ENDPOINT` (`/2.3`) because the mutation is
 > silently dropped on `/2.2` — the backend returns 200 OK but the change never persists
 > server-side. See issue #102. `block_device` is NOT one of these — it writes via `/2.2`

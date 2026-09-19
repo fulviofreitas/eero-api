@@ -30,29 +30,6 @@ class BurstReportersAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_burst_reporters(self, network_id: str) -> Dict[str, Any]:
-        """Get burst reporters - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network to get reporters from
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": [...]}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug("Getting burst reporters for network %s", network_id)
-        return await self.get(
-            f"networks/{network_id}/burst_reporters",
-            auth_token=auth_token,
-        )
-
     async def create_burst_reporter(
         self, network_id: str, reporter_data: Dict[str, Any]
     ) -> Dict[str, Any]:

@@ -176,11 +176,11 @@ The Eero Cloud API allows roughly 100 requests/minute. If you're polling frequen
 
 ### Device or Network Writes Appear to Succeed but Have No Effect
 
-Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for three device writes — `set_device_nickname`, `pause_device`, and `set_device_priority` — where `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). `block_device` is unaffected — it writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
+Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for two device writes — `set_device_nickname` and `pause_device` — where `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). `block_device` is unaffected — it writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
 
-### `set_device_priority` Does Nothing
+### `set_device_priority` is gone
 
-`set_device_priority` (and the underlying device-priority endpoint) is a confirmed no-op upstream — it returns `200 OK` and changes nothing (issue #111). Use [SQM](Deprecations) bandwidth controls instead. See [Deprecations](Deprecations).
+`set_device_priority` was removed in v8.0.0 — the API never exposed device-level priority; the method returned `200 OK` and changed nothing (issue #111). Use [SQM](Deprecations) bandwidth controls instead. See [Deprecations](Deprecations).
 
 ---
 
@@ -219,9 +219,9 @@ data = (await client.get_dns_settings())["data"]
 print(data["dns"]["mode"], data["dns"]["custom"]["ips"])
 ```
 
-### I set IPv6 DNS servers with `set_ipv6_dns` and nothing happened
+### `set_ipv6_dns` is gone
 
-`set_ipv6_dns` does not set DNS servers. It toggles `ipv6_upstream`, the network-level IPv6 connectivity setting, and always has — the name is misleading (issue #125). Use `set_custom_dns_ipv6()`.
+`set_ipv6_dns` was removed in v8.0.0. It never set DNS servers — it toggled `ipv6_upstream`, the network-level IPv6 connectivity setting, and the name was misleading (issue #125). Use `set_ipv6()` for the connectivity toggle, or `set_custom_dns_ipv6()` for IPv6 DNS servers.
 
 IPv6 DNS works independently of `ipv6_upstream`: the IPv6 servers can be configured and active while `ipv6_upstream` is `false`.
 

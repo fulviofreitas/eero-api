@@ -265,8 +265,9 @@ chosen = data["dns"]["default_test_servers"][0]
 await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
 ```
 
-> **⚠️** `set_ipv6_dns()` is **not** for IPv6 DNS servers — it toggles `ipv6_upstream`,
-> the IPv6 connectivity setting. Use `set_custom_dns_ipv6()` instead.
+> **Note**: `set_ipv6_dns()` was removed in v8.0.0 — it never set IPv6 DNS servers, only
+> `ipv6_upstream`, the IPv6 connectivity setting. Use `set_ipv6()` for the connectivity toggle,
+> or `set_custom_dns_ipv6()` for IPv6 DNS servers.
 
 ---
 
@@ -288,11 +289,12 @@ await client.set_wpa3(enabled=True, network_id=None)
 await client.set_band_steering(enabled=True, network_id=None)
 await client.set_upnp(enabled=False, network_id=None)
 await client.set_ipv6(enabled=True, network_id=None)
-await client.set_thread_enabled(enabled=True, network_id=None)
-await client.configure_security(wpa3=True, band_steering=True, upnp=False, ipv6=True, thread=True, network_id=None)
+await client.configure_security(wpa3=True, band_steering=True, upnp=False, ipv6=True, network_id=None)
 ```
 
-> **Note**: The `EeroClient` method is `set_thread_enabled` (the underlying `SecurityAPI` method is `set_thread`).
+> **Note**: `set_thread_enabled()` and the `thread=` keyword on `configure_security()` were
+> removed in v8.0.0 — the API does not accept a `thread` field on the settings write. Thread
+> write support is planned for a future release.
 
 ---
 
@@ -344,8 +346,11 @@ await client.enable_bedtime(profile_id, start_time="21:00", end_time="07:00", da
 ```python
 transfer = await client.get_transfer_stats(network_id=None, device_id=None)
 usage = await client.get_data_usage(network_id=None, payload={"resource": "network"}, resource=None)
-reporters = await client.get_burst_reporters(network_id=None)
 ```
+
+> **Note**: `get_burst_reporters()` was removed in v8.0.0 — the endpoint returns 404; the
+> resource is POST-only. `client._api.burst_reporters.create_burst_reporter(...)` remains
+> available.
 
 ### `get_insights`
 
@@ -387,15 +392,12 @@ blacklist = await client.get_blacklist(network_id=None)
 
 ---
 
-## Deprecated
+## Removed Surface
 
-> ⚠️ **Warning:** `set_device_priority` is a confirmed **no-op**. It emits a `DeprecationWarning`, the underlying request returns 200, but nothing changes on the eero. Use [SQM/QoS](#sqm--qos) (`configure_sqm`) for bandwidth control instead.
-
-```python
-await client.set_device_priority(device_id, prioritized=True, duration_minutes=30, network_id=None)  # no-op
-```
-
-> ⚠️ **Warning:** Every `ActivityAPI` method (`get_activity`, `get_activity_clients`, `get_activity_for_device`, `get_activity_history`, `get_activity_categories`) — and the matching `EeroClient` passthroughs — is deprecated as of v6.0.0. The upstream Eero endpoints now return 404. Migrate to `get_insights(...)` for category/adblock data.
+> ⚠️ **Warning:** `set_device_priority` and every `ActivityAPI` method / `EeroClient.get_activity*`
+> passthrough were removed outright in v8.0.0. For bandwidth control use [SQM/QoS](#sqm--qos)
+> (`configure_sqm`); for category/adblock/inspected data use `get_insights(...)`. See
+> [Deprecations](Deprecations) for the full removal list.
 
 ---
 

@@ -5,7 +5,6 @@ from typing import Optional
 from aiohttp import ClientSession
 
 from .ac_compat import ACCompatAPI
-from .activity import ActivityAPI
 from .auth import AuthAPI
 from .backup import BackupAPI
 from .blacklist import BlacklistAPI
@@ -19,13 +18,11 @@ from .forwards import ForwardsAPI
 from .insights import InsightsAPI
 from .networks import NetworksAPI
 from .ouicheck import OUICheckAPI
-from .password import PasswordAPI
 from .profiles import ProfilesAPI
 from .reservations import ReservationsAPI
 from .routing import RoutingAPI
 from .schedule import ScheduleAPI
 from .security import SecurityAPI
-from .settings import SettingsAPI
 from .sqm import SqmAPI
 from .support import SupportAPI
 from .thread import ThreadAPI
@@ -50,7 +47,6 @@ class EeroAPI:
             use_keyring: Whether to use keyring for secure token storage
         """
         self.auth = AuthAPI(session, cookie_file, use_keyring)
-        self.activity = ActivityAPI(self.auth)
         self.backup = BackupAPI(self.auth)
         self.dns = DnsAPI(self.auth)
         self.networks = NetworksAPI(self.auth)
@@ -61,7 +57,6 @@ class EeroAPI:
         self.security = SecurityAPI(self.auth)
         self.sqm = SqmAPI(self.auth)
         self.diagnostics = DiagnosticsAPI(self.auth)
-        self.settings = SettingsAPI(self.auth)
         self.updates = UpdatesAPI(self.auth)
         self.insights = InsightsAPI(self.auth)
         self.routing = RoutingAPI(self.auth)
@@ -75,7 +70,6 @@ class EeroAPI:
         self.data_usage = DataUsageAPI(self.auth)
         self.ac_compat = ACCompatAPI(self.auth)
         self.ouicheck = OUICheckAPI(self.auth)
-        self.password = PasswordAPI(self.auth)
 
     async def __aenter__(self) -> "EeroAPI":
         """Enter async context manager."""

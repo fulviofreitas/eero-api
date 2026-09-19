@@ -7,13 +7,11 @@ Response format: {"meta": {...}, "data": {...}}
 
 import logging
 import time
-import warnings
 from typing import Any, Dict, List, Optional
 
 from aiohttp import ClientSession
 
 from .api import EeroAPI
-from .api.devices import PRIORITY_DEPRECATION_MSG
 from .exceptions import EeroException
 
 _LOGGER = logging.getLogger(__name__)
@@ -816,11 +814,6 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.diagnostics.run_diagnostics(network_id)
 
-    async def get_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get network settings - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.settings.get_settings(network_id)
-
     async def get_insights(
         self,
         network_id: Optional[str] = None,
@@ -943,11 +936,6 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_data_usage(network_id, payload or {}, resource)
 
-    async def get_burst_reporters(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get burst reporters - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.burst_reporters.get_burst_reporters(network_id)
-
     async def get_ac_compat(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get AC compatibility - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
@@ -958,59 +946,10 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.ouicheck.get_ouicheck(network_id)
 
-    async def get_password(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get password info - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.password.get_password(network_id)
-
     async def get_updates(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get update info - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.updates.get_updates(network_id)
-
-    # ==================== Activity (Eero Plus) — DEPRECATED ====================
-    #
-    # Every /networks/{id}/activity* endpoint now returns 404 (live-verified on
-    # both API 2.2 and 2.3, and against the network's own resource map which
-    # lists `insights` but no `activity`). Retained for one release cycle;
-    # removal in v6.0.0. See issue #107.
-    #
-    # The DeprecationWarning is emitted by the delegated ActivityAPI methods
-    # (see api/activity.py) — these wrappers deliberately do not fire their
-    # own warning to avoid double-signalling on every call. The warning
-    # message still names the intended migration targets.
-    #
-    # Migrate to get_insights(...) for category / adblock / inspected breakdowns
-    # or get_data_usage(...) for bandwidth per client / node.
-
-    async def get_activity(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.activity.get_activity(network_id)
-
-    async def get_activity_clients(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.activity.get_activity_clients(network_id)
-
-    async def get_activity_for_device(
-        self, device_id: str, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.activity.get_activity_for_device(network_id, device_id)
-
-    async def get_activity_history(
-        self, network_id: Optional[str] = None, period: str = "day"
-    ) -> Dict[str, Any]:
-        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.activity.get_activity_history(network_id, period)
-
-    async def get_activity_categories(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """DEPRECATED — endpoint returns 404. See :class:`ActivityAPI` docstring."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.activity.get_activity_categories(network_id)
 
     async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get premium status - returns raw Eero API response."""
@@ -1245,17 +1184,6 @@ class EeroClient:
         self._invalidate_network_cache(network_id)
         return response
 
-    async def set_ipv6_dns(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Enable or disable IPv6 upstream - returns raw Eero API response.
-
-        Warning: despite the name this does not control IPv6 DNS servers — see
-        `DnsAPI.set_ipv6_dns`. Use `set_custom_dns_ipv6` for those.
-        """
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_ipv6_dns(network_id, enabled)
-        self._invalidate_network_cache(network_id)
-        return response
-
     # ==================== SQM ====================
 
     async def get_sqm_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1290,44 +1218,6 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.devices.get_device(network_id, device_id)
 
-    async def set_device_priority(
-        self,
-        device_id: str,
-        prioritized: bool,
-        duration_minutes: Optional[int] = None,
-        network_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Set device priority - returns raw Eero API response.
-
-        **Deprecated**: ``EeroClient.set_device_priority`` is a no-op. Eero's cloud
-        API no longer exposes device-level priority — there is no ``/priority`` or
-        ``/qos`` endpoint, and the ``prioritized`` field is absent from the device
-        object. Sending ``{prioritized: bool}`` via the device PUT returns 200 OK
-        but does not change any observable state (live-verified). This method is
-        scheduled for removal in v6.0.0. See
-        https://github.com/fulviofreitas/eero-api/issues/111
-
-        Args:
-            device_id: ID of the device
-            prioritized: True to prioritize, False to remove priority
-            duration_minutes: Duration in minutes (0 or None = indefinite)
-            network_id: ID of the network (uses preferred if None)
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-        """
-        warnings.warn(
-            f"EeroClient.{PRIORITY_DEPRECATION_MSG}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.devices.set_device_priority(
-            network_id, device_id, prioritized, duration_minutes
-        )
-        self._invalidate_device_cache(network_id, device_id)
-        return response
-
     # ==================== Security ====================
 
     async def get_security_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1357,20 +1247,12 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.security.set_ipv6(network_id, enabled)
 
-    async def set_thread_enabled(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Set Thread - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.set_thread(network_id, enabled)
-
     async def configure_security(
         self,
         wpa3: Optional[bool] = None,
         band_steering: Optional[bool] = None,
         upnp: Optional[bool] = None,
         ipv6: Optional[bool] = None,
-        thread: Optional[bool] = None,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Configure security - returns raw Eero API response."""
@@ -1381,7 +1263,6 @@ class EeroClient:
             band_steering=band_steering,
             upnp=upnp,
             ipv6=ipv6,
-            thread=thread,
         )
 
     # ==================== Blocked Applications ====================

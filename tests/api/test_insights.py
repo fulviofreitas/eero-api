@@ -112,25 +112,3 @@ class TestInsightsAPIGetInsights:
                 end="2026-07-22T00:00:00Z",
                 insight_type="adblock",
             )
-
-
-class TestInsightsAPIRunInsights:
-    """Tests for run_insights method."""
-
-    @pytest.fixture
-    def insights_api(self, mock_session):
-        """Create an InsightsAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return InsightsAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_run_insights_returns_raw_response(self, insights_api, mock_session):
-        """Test run_insights returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await insights_api.run_insights("network_123")
-
-        assert "meta" in result

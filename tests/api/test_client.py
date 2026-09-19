@@ -71,11 +71,8 @@ class TestEeroClientAuthentication:
         """Test that is_authenticated delegates to API."""
         client = EeroClient(session=mock_session)
 
-        # Mock the underlying auth API's session to make it appear authenticated
-        from datetime import datetime, timedelta
-
+        # A present session token is what makes the client authenticated.
         client._api.auth._credentials.session_id = "test_session"
-        client._api.auth._credentials.session_expiry = datetime.now() + timedelta(days=1)
 
         assert client.is_authenticated is True
 
@@ -503,7 +500,6 @@ class TestEeroClientDns:
             "set_custom_dns_ipv6",
             "clear_custom_dns",
             "set_dns_mode",
-            "set_ipv6_dns",
         ):
             setattr(client._api.dns, name, AsyncMock(return_value={"meta": {"code": 200}}))
         return client
@@ -563,13 +559,6 @@ class TestEeroClientDns:
         client._api.dns.set_dns_mode.assert_called_once_with("network_123", "custom", ["9.9.9.9"])
 
     @pytest.mark.asyncio
-    async def test_set_ipv6_dns_delegates(self, client):
-        """Test the ipv6_upstream toggle reaches DnsAPI."""
-        await client.set_ipv6_dns(True)
-
-        client._api.dns.set_ipv6_dns.assert_called_once_with("network_123", True)
-
-    @pytest.mark.asyncio
     async def test_explicit_network_id_overrides_preferred(self, client):
         """Test an explicit network_id wins over the preferred network."""
         await client.set_custom_dns(["1.1.1.1"], network_id="network_999")
@@ -586,7 +575,6 @@ class TestEeroClientDns:
             lambda c: c.clear_custom_dns(),
             lambda c: c.set_dns_caching(True),
             lambda c: c.set_dns_mode("auto"),
-            lambda c: c.set_ipv6_dns(True),
         ],
     )
     async def test_writes_invalidate_the_network_cache(self, client, call):
