@@ -14,15 +14,18 @@ Note: _mask_sensitive tests moved to tests/test_logging.py as part of SecureLogg
 """
 
 import asyncio
+import gc
 import json
 import logging
+import os
+import stat
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
 
 from eero.api.auth import AuthAPI
-from eero.api.auth_storage import AuthCredentials
+from eero.api.auth_storage import AuthCredentials, ChainedStorage, FileStorage
 from eero.const import CREDENTIAL_SCHEMA_VERSION, DEFAULT_ACCEPT_LANGUAGE
 from eero.exceptions import (
     EeroAuthenticationException,
@@ -398,6 +401,201 @@ class TestAuthAPIClearAuthData:
         mock_cookie_jar.update_cookies.assert_not_called()
 
 
+# ================ Credential Destruction Propagation Tests (item 1) ================
+
+
+class TestCredentialDestructionPropagatesToEveryBackend:
+    """Every credential-destroying path must destroy the record in EVERY backend.
+
+    Uses a real ``ChainedStorage`` (mocked keyring + a real file on disk) so
+    a stale token left behind in the non-primary backend after logout /
+    clear_session_token / a terminal-refresh clear would be caught here.
+    """
+
+    @pytest.fixture
+    def chained_api(self, mock_session, mock_keyring, tmp_path):
+        """An authenticated AuthAPI backed by chained keyring+file storage, seeded on both sides."""
+        cookie_file = tmp_path / "cookies.json"
+        token = "chained_live_token"
+        record = json.dumps({"session_id": token, "schema_version": CREDENTIAL_SCHEMA_VERSION})
+        mock_keyring.get_password.return_value = record
+        cookie_file.write_text(record)
+
+        api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=True)
+        api._session = mock_session
+        api._credentials.session_id = token
+        return api, cookie_file
+
+    @pytest.mark.asyncio
+    async def test_logout_destroys_token_in_every_backend(
+        self, chained_api, mock_session, mock_keyring
+    ):
+        """After logout, the keyring entry is deleted and the credential file is removed."""
+        api, cookie_file = chained_api
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        result = await api.logout()
+
+        assert result is True
+        assert api.is_authenticated is False
+        mock_keyring.delete_password.assert_called_once_with("eero-api", "auth-tokens")
+        assert not cookie_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_clear_session_token_destroys_token_in_every_backend(
+        self, chained_api, mock_keyring
+    ):
+        """After clear_session_token, the keyring entry is deleted and the credential file is removed."""
+        api, cookie_file = chained_api
+
+        await api.clear_session_token()
+
+        assert api.is_authenticated is False
+        mock_keyring.delete_password.assert_called_once_with("eero-api", "auth-tokens")
+        assert not cookie_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_terminal_refresh_clear_destroys_token_in_every_backend(
+        self, chained_api, mock_keyring
+    ):
+        """After a terminal-refresh clear, the keyring entry is deleted and the file is removed."""
+        api, cookie_file = chained_api
+        err = EeroAuthenticationException("session gone", error_code="error.session.expired")
+
+        with patch.object(api, "post", new=AsyncMock(side_effect=err)):
+            result = await api.refresh_session()
+
+        assert result is False
+        assert api.is_authenticated is False
+        mock_keyring.delete_password.assert_called_once_with("eero-api", "auth-tokens")
+        assert not cookie_file.exists()
+
+
+# ================ ChainedStorage Single-Writer Invariant Tests (item 2) ================
+
+
+class TestChainedStorageSingleWriterInvariant:
+    """Promoting a fallback record into the primary must clear the fallback."""
+
+    @pytest.mark.asyncio
+    async def test_load_clears_fallback_after_promoting_into_primary(self):
+        """A record found only in the fallback is promoted, then removed from the fallback."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        primary.save = AsyncMock()
+
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="fallback_token"))
+        fallback.clear = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        result = await storage.load()
+
+        assert result.session_id == "fallback_token"
+        primary.save.assert_awaited_once_with(AuthCredentials(session_id="fallback_token"))
+        fallback.clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_load_does_not_touch_fallback_when_primary_already_has_a_token(self):
+        """When the primary already has a token, the fallback is never consulted or cleared."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id="primary_token"))
+
+        fallback = AsyncMock()
+        fallback.load = AsyncMock()
+        fallback.clear = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        result = await storage.load()
+
+        assert result.session_id == "primary_token"
+        fallback.load.assert_not_awaited()
+        fallback.clear.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_load_does_not_clear_fallback_when_neither_side_has_a_token(self):
+        """When both sides are empty, there is nothing to promote and nothing to clear."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        primary.save = AsyncMock()
+
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        fallback.clear = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        result = await storage.load()
+
+        assert result.session_id is None
+        primary.save.assert_not_awaited()
+        fallback.clear.assert_not_awaited()
+
+
+# ================ FileStorage Atomic Secure-Permissions Tests (item 3) ================
+
+
+class TestFileStorageAtomicSecurePermissions:
+    """FileStorage.save() creates the file at 0600 atomically and refuses a symlinked path."""
+
+    @pytest.mark.asyncio
+    async def test_save_creates_file_with_0600_mode(self, tmp_path):
+        """Test the file is created with mode 0600."""
+        cookie_file = tmp_path / "cookies.json"
+        storage = FileStorage(str(cookie_file))
+
+        await storage.save(AuthCredentials(session_id="s"))
+
+        mode = stat.S_IMODE(os.stat(cookie_file).st_mode)
+        assert mode == 0o600
+
+    @pytest.mark.asyncio
+    async def test_save_refuses_symlinked_path(self, tmp_path):
+        """Test that O_NOFOLLOW refuses to write through a symlink at the configured path."""
+        real_target = tmp_path / "real_target.json"
+        real_target.write_text("untouched")
+        symlink_path = tmp_path / "cookies.json"
+        symlink_path.symlink_to(real_target)
+
+        storage = FileStorage(str(symlink_path))
+
+        await storage.save(AuthCredentials(session_id="s"))
+
+        # The write is refused -- the symlink target is left untouched, and
+        # the path is still a symlink rather than having been replaced.
+        assert real_target.read_text() == "untouched"
+        assert symlink_path.is_symlink()
+
+
+# ================ Identifier Redaction in Error Logging Tests (item 4) ================
+
+
+class TestLoginFailureNeverLogsSubmittedIdentifier:
+    """A login failure must never emit the submitted identifier into log records."""
+
+    @pytest.mark.asyncio
+    async def test_login_failure_identifier_not_in_logs(
+        self, api_with_session, mock_session, caplog
+    ):
+        """Test that an identifier echoed back by the server is redacted out of the logs."""
+        identifier = "someone-searchable@example.test"
+        # Simulate a server that echoes the submitted identifier back as
+        # structured fields in the error envelope.
+        error_body = {
+            "meta": {"code": 400, "error": "error.validation.invalid"},
+            "data": {"login": identifier, "email": identifier},
+        }
+        mock_session.request.return_value = create_mock_response(400, error_body)
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(EeroAuthenticationException):
+                await api_with_session.login(identifier)
+
+        assert identifier not in caplog.text
+
+
 # ========================== Request Encoding Tests ==========================
 
 
@@ -739,6 +937,59 @@ class TestAuthAPISessionRefresh:
         assert waiter_result is False
         assert leader_result is True
 
+    @pytest.mark.asyncio
+    async def test_refresh_session_discards_future_from_a_different_loop(self, api_with_session):
+        """A future left over from a different (e.g. closed) event loop is never awaited.
+
+        Regression test for item 10: reusing an AuthAPI instance whose
+        ``_refresh_future`` still references a future bound to a now-closed
+        loop must not raise -- the stale future/loop pair is discarded and a
+        fresh refresh proceeds normally on the current loop.
+        """
+        api_with_session._credentials.session_id = "sess_token"
+
+        stale_loop = asyncio.new_event_loop()
+        stale_future = stale_loop.create_future()
+        stale_loop.close()
+
+        api_with_session._refresh_future = stale_future
+        api_with_session._refresh_future_loop = stale_loop
+
+        with patch.object(
+            api_with_session, "post", new=AsyncMock(return_value=api_success_response({}))
+        ) as mock_post:
+            result = await api_with_session.refresh_session()
+
+        assert result is True
+        mock_post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_leader_exception_with_no_waiter_is_marked_retrieved(
+        self, api_with_session, caplog
+    ):
+        """A solo leader's failure must not leave the future's exception unretrieved.
+
+        Without retrieving the exception on the future itself, asyncio logs
+        "exception was never retrieved" (via the "asyncio" logger, at ERROR)
+        when the future is garbage collected and nothing ever called
+        ``.result()``/``.exception()`` on it -- which is exactly what
+        happens when a refresh leader has zero concurrent waiters.
+        """
+        api_with_session._credentials.session_id = "sess_token"
+
+        with patch.object(
+            api_with_session,
+            "post",
+            new=AsyncMock(side_effect=EeroNetworkException("boom")),
+        ):
+            with caplog.at_level(logging.ERROR, logger="asyncio"):
+                with pytest.raises(EeroNetworkException):
+                    await api_with_session.refresh_session()
+
+                gc.collect()
+
+        assert "never retrieved" not in caplog.text
+
 
 # ========================== Ensure Authenticated Tests ==========================
 
@@ -804,6 +1055,28 @@ class TestSetSessionToken:
             await api_with_session.set_session_token(None)  # type: ignore[arg-type]
 
     @pytest.mark.asyncio
+    async def test_set_session_token_rejects_crlf(self, api_with_session):
+        """Test that a token containing CR/LF is rejected (reuses the transport's header validator)."""
+        with pytest.raises(EeroValidationException):
+            await api_with_session.set_session_token("abc\r\ndef")
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_rejects_non_printable_ascii(self, api_with_session):
+        """Test that a token containing non-printable-ASCII characters is rejected."""
+        with pytest.raises(EeroValidationException):
+            await api_with_session.set_session_token("token\x00withnull")
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_rejected_token_is_not_persisted(self, api_with_session):
+        """Test that a rejected token is never written to storage."""
+        with patch.object(api_with_session, "_save_credentials", new=AsyncMock()) as mock_save:
+            with pytest.raises(EeroValidationException):
+                await api_with_session.set_session_token("abc\r\ndef")
+
+        mock_save.assert_not_awaited()
+        assert api_with_session._credentials.session_id is None
+
+    @pytest.mark.asyncio
     async def test_set_session_token_persists_via_storage(self, api_with_session):
         """Test that set_session_token awaits _save_credentials."""
         with patch.object(api_with_session, "_save_credentials", new=AsyncMock()) as mock_save:
@@ -837,14 +1110,25 @@ class TestClearSessionToken:
 
     @pytest.mark.asyncio
     async def test_clear_session_token_persists_via_storage(self, authenticated_api):
-        """Test that clear_session_token awaits _save_credentials."""
-        with patch.object(authenticated_api, "_save_credentials", new=AsyncMock()) as mock_save:
+        """Test that clear_session_token destroys the record via storage.clear()."""
+        with patch.object(authenticated_api._storage, "clear", new=AsyncMock()) as mock_clear:
             await authenticated_api.clear_session_token()
 
-        mock_save.assert_awaited_once()
+        mock_clear.assert_awaited_once()
 
 
 # ========================== Keyring Storage Tests ==========================
+
+
+class TestAuthStorageUsesSecureLogger:
+    """Item 5: auth_storage.py must use the redacting SecureLoggerAdapter, not plain logging."""
+
+    def test_module_logger_is_a_secure_logger_adapter(self):
+        """Test the module-level logger is wired through get_secure_logger."""
+        from eero.api import auth_storage
+        from eero.logging import SecureLoggerAdapter
+
+        assert isinstance(auth_storage._LOGGER, SecureLoggerAdapter)
 
 
 class TestAuthAPIKeyringStorage:
@@ -1046,9 +1330,10 @@ class TestCredentialMigration:
         """Test a legacy record held only by the fallback (file) side.
 
         Keyring (primary) is empty; the file (fallback) holds a legacy
-        record. Both the file (via its own migration) and the keyring (via
-        ChainedStorage priming the primary from a successful fallback load)
-        end up holding the migrated, schema-versioned record.
+        record. The record is migrated (session_id retained, legacy fields
+        dropped) and promoted into the keyring; per the single-writer
+        invariant, ChainedStorage then clears the fallback file so the
+        primary is the sole remaining owner of the live record.
         """
         mock_keyring.get_password.return_value = None
         cookie_file = tmp_path / "cookies.json"
@@ -1060,8 +1345,14 @@ class TestCredentialMigration:
         await api._load_credentials()
 
         assert api._credentials.session_id == legacy_session_data["session_id"]
-        assert json.loads(cookie_file.read_text())["schema_version"] == CREDENTIAL_SCHEMA_VERSION
         assert mock_keyring.set_password.called
+        saved = json.loads(mock_keyring.set_password.call_args[0][2])
+        assert saved == {
+            "session_id": legacy_session_data["session_id"],
+            "schema_version": CREDENTIAL_SCHEMA_VERSION,
+        }
+        # Single-writer invariant: the fallback file no longer exists.
+        assert not cookie_file.exists()
 
 
 # ========================== Context Manager Tests ==========================

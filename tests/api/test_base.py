@@ -763,6 +763,35 @@ class TestServerDrivenSessionRefresh:
         second_kwargs = mock_session.request.call_args_list[1][1]
         assert second_kwargs["headers"]["X-User-Token"] == "original_token"
 
+    @pytest.mark.asyncio
+    async def test_replay_with_empty_json_string_encoding_succeeds(
+        self, api_with_hook, mock_session
+    ):
+        """A POST using RequestEncoding.EMPTY_JSON_STRING must replay exactly once, successfully.
+
+        Regression test (item 9): the derived two-byte '""' body must not be
+        re-passed alongside encoding=EMPTY_JSON_STRING on the replay --
+        _classify_encoding would otherwise reject that as two body carriers
+        and the replay would raise EeroValidationException instead of
+        succeeding.
+        """
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        result = await api_with_hook.post(
+            "/endpoint",
+            auth_token="original_token",
+            encoding=RequestEncoding.EMPTY_JSON_STRING,
+        )
+
+        assert mock_session.request.call_count == 2
+        assert result["data"] == {"ok": True}
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        assert second_kwargs["data"] == '""'
+        assert second_kwargs["headers"]["Content-Type"] == "application/json"
+
 
 # ========================== AuthenticatedAPI Refresh Hook Wiring Tests ==========================
 

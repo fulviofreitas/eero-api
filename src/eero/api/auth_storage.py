@@ -14,7 +14,6 @@ schema existed are migrated in place the first time they are loaded.
 """
 
 import json
-import logging
 import os
 import stat
 from abc import ABC, abstractmethod
@@ -24,8 +23,9 @@ from typing import Any, Dict, Optional, Tuple
 import keyring
 
 from ..const import CREDENTIAL_SCHEMA_VERSION
+from ..logging import get_secure_logger
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_secure_logger(__name__)
 
 
 @dataclass
@@ -204,18 +204,32 @@ class FileStorage(CredentialStorage):
             return AuthCredentials()
 
     async def save(self, credentials: AuthCredentials) -> None:
-        """Save credentials to file with restricted permissions."""
+        """Save credentials to file with restricted permissions.
+
+        The file is created (or truncated) via ``os.open`` with mode 0600
+        applied at creation time -- there is no window where the file is
+        briefly world/group readable, unlike ``open()`` + a later
+        ``chmod()``. ``O_NOFOLLOW`` refuses to write through a symlink at
+        ``file_path`` (e.g. one planted by another local user to redirect
+        the write elsewhere): the open fails with ``OSError`` and nothing is
+        written. The trailing ``chmod`` is kept as defense in depth in case
+        a restrictive mode passed to ``os.open`` is not honoured verbatim on
+        some platform/filesystem combination.
+        """
         try:
             # Ensure directory exists
             cookie_dir = os.path.dirname(self._file_path)
             if cookie_dir:
                 os.makedirs(cookie_dir, exist_ok=True)
 
-            # Write credentials
-            with open(self._file_path, "w") as f:
-                json.dump(credentials.to_dict(), f)
+            payload = json.dumps(credentials.to_dict()).encode("utf-8")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+            fd = os.open(self._file_path, flags, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(payload)
 
-            # Set restrictive permissions (owner read/write only)
+            # Defense in depth: re-assert restrictive permissions (owner
+            # read/write only) in case the mode above wasn't fully honoured.
             os.chmod(self._file_path, stat.S_IRUSR | stat.S_IWUSR)
             _LOGGER.debug("Saved authentication data to %s", self._file_path)
 
@@ -276,7 +290,14 @@ class ChainedStorage(CredentialStorage):
         self._fallback = fallback
 
     async def load(self) -> AuthCredentials:
-        """Load credentials, trying primary first then fallback."""
+        """Load credentials, trying primary first then fallback.
+
+        A record found only in the fallback is promoted into the primary
+        and then removed from the fallback (single-writer invariant): after
+        this call, at most one backend ever holds the live record, so a
+        later credential-clearing write to the primary can never be
+        "resurrected" by a stale copy still sitting in the fallback.
+        """
         # Try primary first
         credentials = await self._primary.load()
         if credentials.session_id:
@@ -285,8 +306,10 @@ class ChainedStorage(CredentialStorage):
         # Fall back to secondary
         credentials = await self._fallback.load()
         if credentials.session_id:
-            # Migrate to primary storage
+            # Migrate to primary storage, then remove the now-duplicate
+            # fallback copy so the primary is the sole owner going forward.
             await self._primary.save(credentials)
+            await self._fallback.clear()
 
         return credentials
 

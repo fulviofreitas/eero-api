@@ -11,8 +11,48 @@ import re
 from functools import lru_cache
 from typing import Any, Dict, FrozenSet, List, MutableMapping, Optional, Pattern, Tuple
 
-# Default sensitive field name patterns (case-insensitive)
+# Default sensitive field name patterns (case-insensitive). Includes both
+# credential-shaped fields (token/password/secret/...) and identifier-shaped
+# fields (login/email/phone/...) that could otherwise leak a user-submitted
+# identifier (e.g. the value passed to AuthAPI.login) into a log record via
+# an echoed API response or a caller-provided extra/args dict.
 DEFAULT_SENSITIVE_PATTERNS: FrozenSet[str] = frozenset(
+    {
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "key",
+        "credential",
+        "session_id",
+        "session",
+        "cookie",
+        "auth",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "user_token",
+        "bearer",
+        "authorization",
+        "private",
+        "login",
+        "email",
+        "phone",
+        "sms",
+        "serial",
+        "mac",
+        "mac_address",
+        "ssid",
+    }
+)
+
+# The subset of sensitive patterns considered credential-shaped rather than
+# merely identifier-shaped. A key matching one of these must never have any
+# of its value's leading characters logged -- only its length (see
+# _redact_value / _redact_dict). Identifier-shaped fields (email, phone,
+# ...) still show a short prefix for debugging usability.
+_ZERO_VISIBILITY_PATTERNS: FrozenSet[str] = frozenset(
     {
         "token",
         "password",
@@ -35,12 +75,16 @@ DEFAULT_SENSITIVE_PATTERNS: FrozenSet[str] = frozenset(
     }
 )
 
-# Compiled regex for detecting sensitive field names
-_SENSITIVE_REGEX: Optional[Pattern[str]] = None
 
-
+@lru_cache(maxsize=32)
 def _get_sensitive_regex(patterns: FrozenSet[str]) -> Pattern[str]:
-    """Get compiled regex for sensitive field detection.
+    """Get a compiled regex for a specific set of sensitive field patterns.
+
+    Cached per distinct ``patterns`` argument (via ``lru_cache``) rather than
+    behind a single module-global slot, so a logger built with a narrow or
+    custom pattern set can never leak into -- or be leaked into by -- the
+    cached regex for a different pattern set (e.g. ``DEFAULT_SENSITIVE_
+    PATTERNS``) built before or after it.
 
     Args:
         patterns: Set of sensitive field name patterns
@@ -48,11 +92,8 @@ def _get_sensitive_regex(patterns: FrozenSet[str]) -> Pattern[str]:
     Returns:
         Compiled regex pattern
     """
-    global _SENSITIVE_REGEX
-    if _SENSITIVE_REGEX is None:
-        pattern = "|".join(re.escape(p) for p in patterns)
-        _SENSITIVE_REGEX = re.compile(pattern, re.IGNORECASE)
-    return _SENSITIVE_REGEX
+    pattern = "|".join(re.escape(p) for p in patterns)
+    return re.compile(pattern, re.IGNORECASE)
 
 
 def _is_sensitive_key(key: str, patterns: FrozenSet[str] = DEFAULT_SENSITIVE_PATTERNS) -> bool:
@@ -70,12 +111,27 @@ def _is_sensitive_key(key: str, patterns: FrozenSet[str] = DEFAULT_SENSITIVE_PAT
     return bool(regex.search(key_lower))
 
 
+def _is_zero_visibility_key(key: str) -> bool:
+    """Check if a key name is credential-shaped and must never show a value prefix.
+
+    Args:
+        key: The key/field name to check
+
+    Returns:
+        True if the key matches one of ``_ZERO_VISIBILITY_PATTERNS``
+    """
+    regex = _get_sensitive_regex(_ZERO_VISIBILITY_PATTERNS)
+    return bool(regex.search(key.lower()))
+
+
 def _redact_value(value: Any, visible_chars: int = 4) -> str:
     """Redact a sensitive value for safe logging.
 
     Args:
         value: The value to redact
-        visible_chars: Number of characters to show (default 4)
+        visible_chars: Number of characters to show. A value of 0 (or a
+            string no longer than this many characters) shows the length
+            only, never any of the value's own characters.
 
     Returns:
         Redacted string representation
@@ -92,7 +148,7 @@ def _redact_value(value: Any, visible_chars: int = 4) -> str:
         return "[EMPTY]"
 
     length = len(str_value)
-    if length <= visible_chars:
+    if visible_chars <= 0 or length <= visible_chars:
         return f"[REDACTED:{length}chars]"
 
     return f"{str_value[:visible_chars]}...[REDACTED:{length}chars]"
@@ -116,7 +172,12 @@ def _redact_dict(
     result: Dict[str, Any] = {}
     for key, value in data.items():
         if _is_sensitive_key(key, patterns):
-            result[key] = _redact_value(value, visible_chars)
+            # Credential-shaped keys (token/password/secret/...) never show
+            # any leading characters, regardless of the caller's
+            # visible_chars -- only identifier-shaped keys (email/phone/...)
+            # get the normal partial-prefix redaction.
+            key_visible_chars = 0 if _is_zero_visibility_key(key) else visible_chars
+            result[key] = _redact_value(value, key_visible_chars)
         elif isinstance(value, dict):
             result[key] = _redact_dict(value, patterns, visible_chars)
         elif isinstance(value, list):
@@ -307,7 +368,9 @@ def add_sensitive_pattern(pattern: str) -> FrozenSet[str]:
 
         patterns = add_sensitive_pattern("my_secret_field")
         logger = get_secure_logger(__name__, sensitive_patterns=patterns)
+
+        No cache invalidation is needed here: ``_get_sensitive_regex`` is
+        keyed by the pattern set itself, so the returned (new) frozenset
+        simply gets its own independently-cached regex on first use.
     """
-    global _SENSITIVE_REGEX
-    _SENSITIVE_REGEX = None  # Clear cache to rebuild with new pattern
     return DEFAULT_SENSITIVE_PATTERNS | {pattern.lower()}

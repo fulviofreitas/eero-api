@@ -35,7 +35,7 @@ from ..exceptions import (
 )
 from ..logging import get_secure_logger
 from .auth_storage import AuthCredentials, CredentialStorage, create_storage
-from .base import BaseAPI, RequestEncoding
+from .base import BaseAPI, RequestEncoding, _validate_header_value
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -97,7 +97,12 @@ class AuthAPI(BaseAPI):
         self._login_in_progress = False
         # Single-flight guard for refresh_session(): the future for the
         # currently in-flight refresh, or None when no refresh is running.
+        # The event loop the future was created on is tracked alongside it
+        # so a future left over from a different (e.g. closed) loop -- which
+        # can never be safely awaited -- is detected and discarded rather
+        # than passed to asyncio.wait_for/shield.
         self._refresh_future: "Optional[asyncio.Future[bool]]" = None
+        self._refresh_future_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -128,6 +133,24 @@ class AuthAPI(BaseAPI):
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
         await self._storage.save(self._credentials)
+
+    async def _destroy_stored_credentials(self) -> None:
+        """Clear the in-memory session token and destroy the persisted record in every backend.
+
+        Every credential-destroying path (logout, clear_session_token, and
+        the terminal-refresh clear in ``_do_refresh``) must route through
+        this method rather than clearing ``self._credentials`` and calling
+        ``_save_credentials()``. ``CredentialStorage.save()`` on a
+        ``ChainedStorage`` only writes the primary backend on success (by
+        design, to avoid duplicating a *live* token across backends) --
+        saving an emptied record would therefore leave the OLD, still-valid
+        token sitting untouched in the fallback backend forever.
+        ``CredentialStorage.clear()`` instead removes the record from every
+        backend in the chain, so a credential-destroying operation can never
+        leave a valid token recoverable from a non-primary backend.
+        """
+        self._credentials.clear_all()
+        await self._storage.clear()
 
     async def login(self, user_identifier: str) -> bool:
         """Start the login process by requesting a verification code.
@@ -282,9 +305,9 @@ class AuthAPI(BaseAPI):
             # Still clear local credentials even if the request never reached
             # the server -- the whole point of logging out locally.
 
-        # Always clear local credentials regardless of API response
-        self._credentials.clear_all()
-        await self._save_credentials()
+        # Always destroy local credentials, in every backend, regardless of
+        # the API response.
+        await self._destroy_stored_credentials()
         return True
 
     async def refresh_session(self) -> bool:
@@ -313,8 +336,13 @@ class AuthAPI(BaseAPI):
                 refresh
             EeroNetworkException: If there's a network error
         """
+        running_loop = asyncio.get_running_loop()
         existing_future = self._refresh_future
-        if existing_future is not None and not existing_future.done():
+        if (
+            existing_future is not None
+            and self._refresh_future_loop is running_loop
+            and not existing_future.done()
+        ):
             try:
                 return await asyncio.wait_for(
                     asyncio.shield(existing_future),
@@ -324,12 +352,25 @@ class AuthAPI(BaseAPI):
                 _LOGGER.debug("Timed out waiting for an in-flight session refresh")
                 return False
 
-        future: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        # Either no refresh is in flight, or the one on record belongs to a
+        # different (e.g. already-closed) event loop and can never be safely
+        # awaited here -- it is simply discarded in favour of a fresh one.
+        future: "asyncio.Future[bool]" = running_loop.create_future()
         self._refresh_future = future
+        self._refresh_future_loop = running_loop
         try:
             result = await self._do_refresh()
         except BaseException as exc:
             future.set_exception(exc)
+            # Mark the exception retrieved immediately from the leader's own
+            # side. Without this, a leader that has zero concurrent waiters
+            # leaves the future's exception unretrieved, and asyncio logs
+            # "exception was never retrieved" when the future is garbage
+            # collected. A waiter concurrently awaiting the shielded future
+            # via asyncio.wait_for still observes and re-raises this same
+            # exception normally -- marking it retrieved here does not
+            # consume or suppress it for them.
+            future.exception()
             raise
         else:
             future.set_result(result)
@@ -337,6 +378,7 @@ class AuthAPI(BaseAPI):
         finally:
             if self._refresh_future is future:
                 self._refresh_future = None
+                self._refresh_future_loop = None
 
     async def _do_refresh(self) -> bool:
         """Perform the actual refresh request. Only called by the single-flight leader.
@@ -380,8 +422,7 @@ class AuthAPI(BaseAPI):
                 "clearing credentials",
                 err.error_code or "no error_code",
             )
-            self._credentials.clear_all()
-            await self._save_credentials()
+            await self._destroy_stored_credentials()
             return False
         except (EeroNetworkException, EeroTimeoutException):
             # Transport-level failures are not a verdict on the session at
@@ -428,15 +469,11 @@ class AuthAPI(BaseAPI):
     async def clear_auth_data(self) -> None:
         """Clear all authentication data including stored credentials.
 
-        This completely removes all authentication data from storage,
-        including the session token.
+        This completely removes all authentication data from storage, in
+        every backend, including the session token.
         """
-        # Clear in-memory credentials
-        self._credentials.clear_all()
         self._login_in_progress = False
-
-        # Delete stored credentials entirely (removes file/keyring entry)
-        await self._storage.clear()
+        await self._destroy_stored_credentials()
 
         _LOGGER.debug("Cleared all authentication data")
 
@@ -452,10 +489,15 @@ class AuthAPI(BaseAPI):
                 the ``s=`` cookie / ``X-User-Token`` header).
 
         Raises:
-            EeroValidationException: If the token is empty or non-string.
+            EeroValidationException: If the token is empty, non-string, or
+                contains characters outside printable ASCII (which also
+                excludes CR/LF) -- the same rule the transport enforces for
+                any header value it sends, since this token becomes the
+                ``X-User-Token`` header verbatim.
         """
         if not isinstance(token, str) or not token:
             raise EeroValidationException("token", "must be a non-empty string")
+        _validate_header_value("token", token)
 
         self._credentials.session_id = token
         await self._save_credentials()
@@ -465,11 +507,10 @@ class AuthAPI(BaseAPI):
     async def clear_session_token(self) -> None:
         """Clear the active session token from in-memory credentials and storage.
 
-        This is a narrower counterpart to ``clear_auth_data``: it removes the
-        session token but does not touch any other persisted state beyond
-        what is implied by re-saving credentials after clearing.
+        This is a narrower counterpart to ``clear_auth_data``: it removes
+        only the session token, destroying the persisted record in every
+        storage backend (see ``_destroy_stored_credentials``).
         """
-        self._credentials.session_id = None
-        await self._save_credentials()
+        await self._destroy_stored_credentials()
 
         _LOGGER.debug("Session token cleared")

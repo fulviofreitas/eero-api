@@ -616,10 +616,21 @@ class BaseAPI:
                                 # the token provider (falling back to the
                                 # originally supplied auth_token when no
                                 # provider is wired).
+                                excluded_replay_keys = {"headers", "cookies"}
+                                if resolved_encoding is RequestEncoding.EMPTY_JSON_STRING:
+                                    # The "data" key in kwargs here is this
+                                    # method's OWN derived two-byte '""'
+                                    # body, not something the caller passed
+                                    # in -- re-passing it alongside
+                                    # encoding=EMPTY_JSON_STRING would be
+                                    # rejected by _classify_encoding as two
+                                    # body carriers. encoding= alone re-
+                                    # derives the identical body below.
+                                    excluded_replay_keys.add("data")
                                 replay_kwargs = {
                                     key: value
                                     for key, value in kwargs.items()
-                                    if key not in ("headers", "cookies")
+                                    if key not in excluded_replay_keys
                                 }
                                 replay_token = auth_token
                                 if self._token_provider is not None:
@@ -667,8 +678,9 @@ class BaseAPI:
                     # eero.errors.exception_for_error for the full precedence
                     # rules (401 short-circuit, status-independent groups,
                     # then status code).
+                    _LOGGER.error("API error %s for %s %s", response.status, method, url)
                     _log_error_body(
-                        _LOGGER.error, f"API error {response.status}", response_text, envelope
+                        _LOGGER.debug, f"API error {response.status}", response_text, envelope
                     )
                     raise exception_for_error(
                         response.status,
