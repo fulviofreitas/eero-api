@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from aiohttp import ClientSession
 
 from .api import EeroAPI
+from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,6 +38,10 @@ class EeroClient:
         cookie_file: Optional[str] = None,
         use_keyring: bool = True,
         cache_timeout: int = 60,
+        *,
+        send_legacy_cookie: bool = True,
+        accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        get_retries: int = 0,
     ) -> None:
         """Initialize the EeroClient.
 
@@ -45,8 +50,27 @@ class EeroClient:
             cookie_file: Optional path to a file for storing authentication cookies
             use_keyring: Whether to use keyring for secure token storage
             cache_timeout: Cache timeout in seconds
+            send_legacy_cookie: When True (default), also send the session
+                token as the legacy ``s=<token>`` cookie, per request, on
+                requests to the configured API host. Exists for compatibility
+                with the eero mobile app for one major version and defaults
+                on.
+            accept_language: Value sent as the ``X-Accept-Language`` header
+                on every request. Validated as printable ASCII with no
+                CR/LF.
+            get_retries: Number of additional attempts for GET requests that
+                fail with a transport error or a 5xx response. 0 (default)
+                disables retrying. Never applies to writes
+                (POST/PUT/DELETE/PATCH).
         """
-        self._api = EeroAPI(session=session, cookie_file=cookie_file, use_keyring=use_keyring)
+        self._api = EeroAPI(
+            session=session,
+            cookie_file=cookie_file,
+            use_keyring=use_keyring,
+            send_legacy_cookie=send_legacy_cookie,
+            accept_language=accept_language,
+            get_retries=get_retries,
+        )
         self._cache_timeout = cache_timeout
         self._preferred_network_id: Optional[str] = None
         self._cache: Dict[str, Dict] = {
@@ -929,22 +953,245 @@ class EeroClient:
     async def get_data_usage(
         self,
         network_id: Optional[str] = None,
-        payload: Optional[Dict[str, Any]] = None,
-        resource: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get data usage statistics - returns raw Eero API response."""
+        """Get network-level data usage - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_data_usage`. The reads in
+        this family are time-windowed, so they are never cached.
+
+        Args:
+            network_id: ID of the network (uses preferred if None).
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size for the returned series, ``"daily"`` or
+                ``"hourly"``.
+            timezone: Optional IANA timezone name.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.data_usage.get_data_usage(network_id, payload or {}, resource)
+        return await self._api.data_usage.get_data_usage(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_data_usage_breakdown(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: Optional[str] = None,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get a data usage breakdown - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_breakdown`. Not cached; the
+        read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_breakdown(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_devices_data_usage(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: Optional[str] = None,
+        timezone: Optional[str] = None,
+        profile_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get per-device data usage - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_devices_usage`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_devices_usage(
+            network_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            profile_id=profile_id,
+        )
+
+    async def get_device_data_usage(
+        self,
+        device_mac: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for a single device - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_device_usage`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_device_usage(
+            network_id, device_mac, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_eeros_data_usage_summary(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get a summary of data usage across all Eero devices - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_eeros_summary`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_eeros_summary(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_eero_data_usage(
+        self,
+        eero_id: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for a single Eero device - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_eero_usage`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_eero_usage(
+            network_id, eero_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_profile_data_usage(
+        self,
+        profile_id: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for a single profile - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_profile_usage`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_profile_usage(
+            network_id, profile_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_unprofiled_devices_data_usage(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: Optional[str] = None,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for devices not assigned to a profile - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_unprofiled_devices`. Not
+        cached; the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_unprofiled_devices(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_unprofiled_data_usage_summary(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get a summary of data usage for unprofiled devices - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_unprofiled_summary`. Not
+        cached; the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_unprofiled_summary(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+        )
+
+    async def get_data_usage_report_settings(
+        self, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get the data usage report settings for a network - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_report_settings`.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_report_settings(network_id)
+
+    async def set_data_usage_report_settings(
+        self,
+        *,
+        cadence: str,
+        notification_day: str,
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Set the data usage report settings for a network - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.set_report_settings`. See that
+        method's docstring — this write is not live-verified and must be
+        issued conditionally (read via `get_data_usage_report_settings`
+        first, skip if unchanged) rather than unconditionally or in a retry
+        loop.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.data_usage.set_report_settings(
+            network_id, cadence=cadence, notification_day=notification_day
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def get_ac_compat(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get AC compatibility - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.ac_compat.get_ac_compat(network_id)
 
-    async def get_ouicheck(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get OUI check - returns raw Eero API response."""
+    async def get_ouicheck(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        serial: str,
+        version: str,
+    ) -> Dict[str, Any]:
+        """Get OUI check - returns raw Eero API response.
+
+        Args:
+            network_id: ID of the network (uses preferred if None).
+            serial: Serial number of the eero hardware being checked.
+            version: Firmware/hardware version string of the eero hardware
+                being checked.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.ouicheck.get_ouicheck(network_id)
+        return await self._api.ouicheck.get_ouicheck(network_id, serial=serial, version=version)
 
     async def get_updates(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get update info - returns raw Eero API response."""

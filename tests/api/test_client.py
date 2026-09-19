@@ -656,3 +656,199 @@ class TestEeroClientDns:
             await client.set_custom_dns(["nope"])
 
         assert "network_123" in client._cache["network"]
+
+
+class TestEeroClientCoreOptions:
+    """Tests for the keyword-only core transport options forwarded to AuthAPI."""
+
+    def test_defaults_forwarded_to_auth_api(self):
+        """Test the default option values reach AuthAPI unchanged."""
+        client = EeroClient()
+
+        assert client._api.auth._send_legacy_cookie is True
+        assert client._api.auth._accept_language == "en-US"
+        assert client._api.auth._get_retries == 0
+
+    def test_custom_values_forwarded_to_auth_api(self):
+        """Test explicit option values reach AuthAPI unchanged."""
+        client = EeroClient(
+            send_legacy_cookie=False,
+            accept_language="fr-FR",
+            get_retries=3,
+        )
+
+        assert client._api.auth._send_legacy_cookie is False
+        assert client._api.auth._accept_language == "fr-FR"
+        assert client._api.auth._get_retries == 3
+
+
+class TestEeroClientDataUsage:
+    """Tests for the EeroClient data-usage wrappers.
+
+    These cover the facade's delegation boundary (network resolution, argument
+    forwarding, and cache behaviour) rather than DataUsageAPI itself.
+    """
+
+    START = "2026-07-01T00:00:00Z"
+    END = "2026-07-02T00:00:00Z"
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed DataUsageAPI."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        for name in (
+            "get_data_usage",
+            "get_breakdown",
+            "get_devices_usage",
+            "get_device_usage",
+            "get_eeros_summary",
+            "get_eero_usage",
+            "get_profile_usage",
+            "get_unprofiled_devices",
+            "get_unprofiled_summary",
+            "get_report_settings",
+            "set_report_settings",
+        ):
+            setattr(
+                client._api.data_usage,
+                name,
+                AsyncMock(return_value={"meta": {"code": 200}, "data": {}}),
+            )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_get_data_usage_resolves_network_and_forwards_args(self, client):
+        """Test network_id resolution and pass-through of the raw envelope."""
+        result = await client.get_data_usage(start=self.START, end=self.END, cadence="daily")
+
+        assert result == {"meta": {"code": 200}, "data": {}}
+        client._api.data_usage.get_data_usage.assert_called_once_with(
+            "network_123", start=self.START, end=self.END, cadence="daily", timezone=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_device_data_usage_forwards_device_mac(self, client):
+        """Test the device MAC leads the domain call's positional args."""
+        await client.get_device_data_usage(
+            "device_mac_aa", start=self.START, end=self.END, cadence="hourly"
+        )
+
+        client._api.data_usage.get_device_usage.assert_called_once_with(
+            "network_123",
+            "device_mac_aa",
+            start=self.START,
+            end=self.END,
+            cadence="hourly",
+            timezone=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_eero_data_usage_forwards_eero_id(self, client):
+        """Test the eero ID reaches the domain call."""
+        await client.get_eero_data_usage("eero_1", start=self.START, end=self.END, cadence="daily")
+
+        client._api.data_usage.get_eero_usage.assert_called_once_with(
+            "network_123", "eero_1", start=self.START, end=self.END, cadence="daily", timezone=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_data_usage_forwards_profile_id(self, client):
+        """Test the profile ID reaches the domain call."""
+        await client.get_profile_data_usage(
+            "profile_1", start=self.START, end=self.END, cadence="daily"
+        )
+
+        client._api.data_usage.get_profile_usage.assert_called_once_with(
+            "network_123",
+            "profile_1",
+            start=self.START,
+            end=self.END,
+            cadence="daily",
+            timezone=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_devices_data_usage_forwards_profile_id(self, client):
+        """Test the optional profile_id filter reaches the domain call."""
+        await client.get_devices_data_usage(
+            start=self.START, end=self.END, profile_id="profile_abc"
+        )
+
+        client._api.data_usage.get_devices_usage.assert_called_once_with(
+            "network_123",
+            start=self.START,
+            end=self.END,
+            cadence=None,
+            timezone=None,
+            profile_id="profile_abc",
+        )
+
+    @pytest.mark.asyncio
+    async def test_data_usage_reads_are_not_cached(self, client):
+        """Test consecutive reads always call through, never serve a cached copy.
+
+        The data-usage family is time-windowed, so caching it would silently
+        serve stale or mismatched windows.
+        """
+        await client.get_data_usage(start=self.START, end=self.END, cadence="daily")
+        await client.get_data_usage(start=self.START, end=self.END, cadence="daily")
+
+        assert client._api.data_usage.get_data_usage.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_set_report_settings_forwards_args_and_invalidates_cache(self, client):
+        """Test the write forwards cadence/notification_day and drops the network cache."""
+        client._cache["network"]["network_123"] = {"data": {}, "timestamp": time.monotonic()}
+
+        await client.set_data_usage_report_settings(cadence="daily", notification_day="monday")
+
+        client._api.data_usage.set_report_settings.assert_called_once_with(
+            "network_123", cadence="daily", notification_day="monday"
+        )
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_get_report_settings_delegates(self, client):
+        """Test the read wrapper resolves the network and delegates."""
+        await client.get_data_usage_report_settings()
+
+        client._api.data_usage.get_report_settings.assert_called_once_with("network_123")
+
+    @pytest.mark.asyncio
+    async def test_requires_network_id(self, mock_session):
+        """Test a data-usage read with no network available raises."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.get_data_usage(start=self.START, end=self.END, cadence="daily")
+
+
+class TestEeroClientOuicheck:
+    """Tests for the EeroClient OUI check wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_get_ouicheck_resolves_network_and_forwards_args(self, mock_session):
+        """Test network_id resolution and serial/version pass-through."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.ouicheck.get_ouicheck = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {}}
+        )
+
+        result = await client.get_ouicheck(serial="serial_example", version="1.0.0-example")
+
+        assert result == {"meta": {"code": 200}, "data": {}}
+        client._api.ouicheck.get_ouicheck.assert_called_once_with(
+            "network_123", serial="serial_example", version="1.0.0-example"
+        )
+
+    @pytest.mark.asyncio
+    async def test_requires_network_id(self, mock_session):
+        """Test an OUI check with no network available raises."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await client.get_ouicheck(serial="serial_example", version="1.0.0-example")

@@ -76,6 +76,30 @@ class TestEeroAPIInit:
         assert hasattr(api, "ouicheck")
 
 
+class TestEeroAPICoreOptions:
+    """Tests for the keyword-only core transport options forwarded to AuthAPI."""
+
+    def test_defaults_forwarded_to_auth_api(self):
+        """Test the default option values reach AuthAPI unchanged."""
+        api = EeroAPI()
+
+        assert api.auth._send_legacy_cookie is True
+        assert api.auth._accept_language == "en-US"
+        assert api.auth._get_retries == 0
+
+    def test_custom_values_forwarded_to_auth_api(self):
+        """Test explicit option values reach AuthAPI unchanged."""
+        api = EeroAPI(
+            send_legacy_cookie=False,
+            accept_language="fr-FR",
+            get_retries=3,
+        )
+
+        assert api.auth._send_legacy_cookie is False
+        assert api.auth._accept_language == "fr-FR"
+        assert api.auth._get_retries == 3
+
+
 class TestEeroAPISubAPIs:
     """Tests for sub-API types."""
 

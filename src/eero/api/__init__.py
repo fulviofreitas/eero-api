@@ -4,6 +4,7 @@ from typing import Optional
 
 from aiohttp import ClientSession
 
+from ..const import DEFAULT_ACCEPT_LANGUAGE
 from .ac_compat import ACCompatAPI
 from .auth import AuthAPI
 from .backup import BackupAPI
@@ -38,6 +39,10 @@ class EeroAPI:
         session: Optional[ClientSession] = None,
         cookie_file: Optional[str] = None,
         use_keyring: bool = True,
+        *,
+        send_legacy_cookie: bool = True,
+        accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        get_retries: int = 0,
     ) -> None:
         """Initialize the EeroAPI.
 
@@ -45,8 +50,28 @@ class EeroAPI:
             session: Optional aiohttp ClientSession to use for requests
             cookie_file: Optional path to a file for storing authentication cookies
             use_keyring: Whether to use keyring for secure token storage
+            send_legacy_cookie: When True (default), also send the session
+                token as the legacy ``s=<token>`` cookie, per request, on
+                requests to the configured API host. Exists for compatibility
+                with the eero mobile app for one major version and defaults
+                on; it is expected to be removed in a future major once the
+                cookie is confirmed unnecessary.
+            accept_language: Value sent as the ``X-Accept-Language`` header
+                on every request. Validated as printable ASCII with no
+                CR/LF.
+            get_retries: Number of additional attempts for GET requests that
+                fail with a transport error or a 5xx response. 0 (default)
+                disables retrying. Never applies to writes
+                (POST/PUT/DELETE/PATCH).
         """
-        self.auth = AuthAPI(session, cookie_file, use_keyring)
+        self.auth = AuthAPI(
+            session,
+            cookie_file,
+            use_keyring,
+            send_legacy_cookie=send_legacy_cookie,
+            accept_language=accept_language,
+            get_retries=get_retries,
+        )
         self.backup = BackupAPI(self.auth)
         self.dns = DnsAPI(self.auth)
         self.networks = NetworksAPI(self.auth)
