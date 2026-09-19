@@ -5,14 +5,50 @@ from typing import Final
 
 # API Endpoints
 API_HOST: Final[str] = "https://api-user.e2ro.com"
-API_VERSION: Final[str] = "2.2"
-API_ENDPOINT: Final[str] = f"{API_HOST}/{API_VERSION}"
+
+
+def api_endpoint(version: str) -> str:
+    """Build the base endpoint URL for a given API version.
+
+    This is the single place in the SDK that joins a version segment onto
+    the API host. All version-scoped endpoint constants below are derived
+    from this helper so there is exactly one URL-composition rule for
+    "host + version".
+
+    Args:
+        version: The API version segment, e.g. ``"2.2"`` or ``"2.3"``.
+
+    Returns:
+        The base endpoint URL for that version, e.g.
+        ``"https://api-user.e2ro.com/2.2"``.
+    """
+    return f"{API_HOST}/{version}"
+
+
+# Default API version used by most families (networks, eeros, profiles,
+# guest network, and the majority of resources).
+API_VERSION_DEFAULT: Final[str] = "2.2"
 
 # Device-mutation writes (pause/block/nickname/priority) are silently dropped on
 # API version 2.2: the backend accepts the PUT and returns 200 OK but the change
 # never persists server-side. Version 2.3 processes them correctly. Reads and
-# other resources continue to use API_ENDPOINT (2.2). See issue #102.
-DEVICE_UPDATE_ENDPOINT: Final[str] = f"{API_HOST}/2.3"
+# other resources continue to use the default version (2.2). See issue #102.
+API_VERSION_DEVICE_WRITES: Final[str] = "2.3"
+
+# The multi-static-IP family is only served on 2.3.
+API_VERSION_MULTISTATICIP: Final[str] = "2.3"
+
+# Secondary WAN configuration (network-level and per-device) is only served
+# on 2.3.
+API_VERSION_SECONDARY_WAN: Final[str] = "2.3"
+
+# API_VERSION is retained as an alias of API_VERSION_DEFAULT for backward
+# compatibility with existing imports; new code should prefer the explicit,
+# per-family constants above.
+API_VERSION: Final[str] = API_VERSION_DEFAULT
+
+API_ENDPOINT: Final[str] = api_endpoint(API_VERSION_DEFAULT)
+DEVICE_UPDATE_ENDPOINT: Final[str] = api_endpoint(API_VERSION_DEVICE_WRITES)
 LOGIN_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login"
 LOGIN_VERIFY_ENDPOINT: Final[str] = f"{API_ENDPOINT}/login/verify"
 LOGIN_RESEND_ENDPOINT: Final[str] = f"{LOGIN_ENDPOINT}/resend"
