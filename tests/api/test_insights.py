@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.insights import InsightsAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -111,4 +111,119 @@ class TestInsightsAPIGetInsights:
                 start="2026-07-21T00:00:00Z",
                 end="2026-07-22T00:00:00Z",
                 insight_type="adblock",
+            )
+
+
+@pytest.fixture
+def insights_api(mock_session):
+    """Create an InsightsAPI with mocked auth."""
+    auth_api = MagicMock()
+    auth_api.session = mock_session
+    auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+    return InsightsAPI(auth_api)
+
+
+_WINDOW = {"start": "2026-07-21T00:00:00Z", "end": "2026-07-22T00:00:00Z"}
+
+
+class TestInsightsAPIDevicesInsights:
+    """Tests for get_devices_insights (collection) and get_device_insights (single)."""
+
+    @pytest.mark.asyncio
+    async def test_get_devices_insights_builds_url_and_params(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_devices_insights(
+            "network_123", cadence="daily", insight_type="blocked", **_WINDOW
+        )
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "GET"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/insights/devices"
+        assert mock_session.request.call_args.kwargs["params"] == {
+            "start": _WINDOW["start"],
+            "end": _WINDOW["end"],
+            "cadence": "daily",
+            "insight_type": "blocked",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_devices_insights_invalid_cadence_raises(self, insights_api):
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_devices_insights(
+                "network_123", cadence="weekly", insight_type="blocked", **_WINDOW
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_device_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_device_insights(
+            "network_123", "aabbccddeeff", cadence="hourly", insight_type="inspected", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123/insights/devices/aabbccddeeff"
+        )
+
+
+class TestInsightsAPIProfilesInsights:
+    """Tests for get_profiles_insights (collection), get_profile_insights (single),
+    and get_profile_devices_insights."""
+
+    @pytest.mark.asyncio
+    async def test_get_profiles_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profiles_insights(
+            "network_123", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/insights/profiles"
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profile_insights(
+            "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123/insights/profiles/profile_001"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profile_devices_insights(
+            "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123"
+            "/insights/profiles/profile_001/devices"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_not_authenticated(self, insights_api):
+        insights_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+        with pytest.raises(EeroAuthenticationException):
+            await insights_api.get_profile_insights(
+                "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
             )

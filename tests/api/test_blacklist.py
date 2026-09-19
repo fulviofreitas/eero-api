@@ -75,15 +75,46 @@ class TestBlacklistAPIAddToBlacklist:
         assert "meta" in result
 
     @pytest.mark.asyncio
-    async def test_add_to_blacklist_sends_mac_payload(self, blacklist_api, mock_session):
-        """Test add_to_blacklist sends {mac: ...} payload (not device_id)."""
+    async def test_add_to_blacklist_sends_form_encoded_mac(self, blacklist_api, mock_session):
+        """Test add_to_blacklist sends a form-encoded mac field (the API's declared shape)."""
         mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
         mock_session.request.return_value = mock_response
 
-        await blacklist_api.add_to_blacklist("network_123", "AA:BB:CC:11:22:33")
+        await blacklist_api.add_to_blacklist("network_123", "aa:bb:cc:11:22:33")
 
         call_args = mock_session.request.call_args
-        assert call_args.kwargs["json"] == {"mac": "AA:BB:CC:11:22:33"}
+        assert call_args.kwargs["data"] == {"mac": "aa:bb:cc:11:22:33"}
+        assert "json" not in call_args.kwargs or call_args.kwargs["json"] is None
+
+    @pytest.mark.asyncio
+    async def test_add_to_blacklist_logs_uncharacterised_write_warning(
+        self, blacklist_api, mock_session, caplog
+    ):
+        """Test add_to_blacklist logs the standard unverified-write warning."""
+        import logging
+
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.blacklist"):
+            await blacklist_api.add_to_blacklist("network_123", "aa:bb:cc:11:22:33")
+
+        assert any("not been fully characterised" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_add_to_blacklist_prefers_parent_link(self, blacklist_api, mock_session):
+        """Test add_to_blacklist resolves the URL from the parent's device_blacklist link."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+        parent = {
+            "url": "/2.2/networks/network_123",
+            "resources": {"device_blacklist": "/2.3/networks/network_123/blacklist"},
+        }
+
+        await blacklist_api.add_to_blacklist("network_123", "aa:bb:cc:11:22:33", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/blacklist"
 
     @pytest.mark.asyncio
     async def test_add_to_blacklist_posts_to_correct_url(self, blacklist_api, mock_session):

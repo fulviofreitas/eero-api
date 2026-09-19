@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.devices import DevicesAPI
-from eero.exceptions import EeroAPIException, EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -159,10 +159,11 @@ class TestDevicesAPISetNickname:
 
 
 class TestDevicesAPIBlockDevice:
-    """Tests for block_device method (routes through /blacklist, not device PUT).
+    """Tests for block_device/unblock_device (delegate to BlacklistAPI).
 
-    The Eero cloud API silently ignores PUT /devices/{id} with {"blocked": bool}.
-    Blocking is managed via POST/DELETE on /blacklist (issue #109).
+    Blocking is managed via POST/DELETE on /blacklist (issue #109); these
+    two methods simply delegate to `eero.api.blacklist.BlacklistAPI` rather
+    than duplicating request building.
     """
 
     @pytest.fixture
@@ -173,111 +174,35 @@ class TestDevicesAPIBlockDevice:
         auth_api.get_auth_token = AsyncMock(return_value="auth_token")
         return DevicesAPI(auth_api)
 
-    @pytest.fixture
-    def device_response(self):
-        """Raw API response returned by get_device, including colon-format MAC."""
-        return {
-            "meta": {"code": 200},
-            "data": {
-                "url": "/2.2/networks/network_123/devices/device_abc",
-                "mac": "AA:BB:CC:11:22:33",
-                "nickname": "Test Device",
-                "connected": True,
-                "blocked": False,
-            },
-        }
-
     @pytest.mark.asyncio
-    async def test_block_device_fetches_device_first(
-        self, devices_api, mock_session, device_response
+    async def test_block_device_posts_form_encoded_mac_to_blacklist(
+        self, devices_api, mock_session
     ):
-        """Test block_device calls get_device to resolve the MAC before POSTing."""
-        get_device_response = create_mock_response(200, device_response)
+        """Test block_device form-POSTs the MAC to /blacklist (issue #109 shape)."""
         post_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.side_effect = [get_device_response, post_response]
+        mock_session.request.return_value = post_response
 
-        await devices_api.block_device("network_123", "device_abc", True)
-
-        # First call must be GET /devices/{id}
-        first_call_method, first_call_url = mock_session.request.call_args_list[0].args[:2]
-        assert first_call_method == "GET"
-        assert "devices/device_abc" in first_call_url
-
-    @pytest.mark.asyncio
-    async def test_block_device_posts_mac_to_blacklist(
-        self, devices_api, mock_session, device_response
-    ):
-        """Test blocking POSTs the colon-format MAC to /blacklist (issue #109)."""
-        get_device_response = create_mock_response(200, device_response)
-        post_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.side_effect = [get_device_response, post_response]
-
-        result = await devices_api.block_device("network_123", "device_abc", True)
+        result = await devices_api.block_device("network_123", "aa:bb:cc:11:22:33")
 
         assert "meta" in result
-        second_call = mock_session.request.call_args_list[1]
-        method, url = second_call.args[:2]
+        method, url = mock_session.request.call_args.args[:2]
         assert method == "POST"
         assert url.endswith("networks/network_123/blacklist")
-        assert second_call.kwargs["json"] == {"mac": "AA:BB:CC:11:22:33"}
-
-    @pytest.mark.asyncio
-    async def test_block_device_resolved_mac_is_colon_format(
-        self, devices_api, mock_session, device_response
-    ):
-        """Test that the MAC sent to /blacklist is in colon-separated format."""
-        get_device_response = create_mock_response(200, device_response)
-        post_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.side_effect = [get_device_response, post_response]
-
-        await devices_api.block_device("network_123", "device_abc", True)
-
-        second_call = mock_session.request.call_args_list[1]
-        sent_mac = second_call.kwargs["json"]["mac"]
-        # Colon-format: five colons, six two-char hex groups
-        assert sent_mac.count(":") == 5
-        assert sent_mac == "AA:BB:CC:11:22:33"
+        assert mock_session.request.call_args.kwargs["data"] == {"mac": "aa:bb:cc:11:22:33"}
 
     @pytest.mark.asyncio
     async def test_unblock_device_deletes_from_blacklist(self, devices_api, mock_session):
-        """Test unblocking DELETEs /blacklist/{device_id} without fetching the device."""
+        """Test unblock_device DELETEs /blacklist/{mac}."""
         delete_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
         mock_session.request.return_value = delete_response
 
-        result = await devices_api.block_device("network_123", "device_abc", False)
+        result = await devices_api.unblock_device("network_123", "aa:bb:cc:11:22:33")
 
         assert "meta" in result
         assert mock_session.request.call_count == 1
         method, url = mock_session.request.call_args.args[:2]
         assert method == "DELETE"
-        assert url.endswith("networks/network_123/blacklist/device_abc")
-
-    @pytest.mark.asyncio
-    async def test_unblock_does_not_call_get_device(self, devices_api, mock_session):
-        """Test unblock path skips the get_device lookup (no MAC resolution needed)."""
-        delete_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = delete_response
-
-        await devices_api.block_device("network_123", "device_abc", False)
-
-        # Only one HTTP call: DELETE /blacklist/{device_id}
-        assert mock_session.request.call_count == 1
-        method, _ = mock_session.request.call_args.args[:2]
-        assert method == "DELETE"
-
-    @pytest.mark.asyncio
-    async def test_block_device_returns_raw_response(
-        self, devices_api, mock_session, device_response
-    ):
-        """Test block_device returns the raw API response from the blacklist POST."""
-        get_device_response = create_mock_response(200, device_response)
-        post_resp_data = {"meta": {"code": 200}, "data": {"blacklisted": True}}
-        post_response = create_mock_response(200, post_resp_data)
-        mock_session.request.side_effect = [get_device_response, post_response]
-
-        result = await devices_api.block_device("network_123", "device_abc", True)
-
-        assert result["meta"]["code"] == 200
+        assert url.endswith("networks/network_123/blacklist/aa:bb:cc:11:22:33")
 
     @pytest.mark.asyncio
     async def test_block_device_not_authenticated(self, devices_api):
@@ -285,30 +210,190 @@ class TestDevicesAPIBlockDevice:
         devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
         with pytest.raises(EeroAuthenticationException):
-            await devices_api.block_device("network_123", "device_abc", True)
+            await devices_api.block_device("network_123", "aa:bb:cc:11:22:33")
 
     @pytest.mark.asyncio
-    async def test_block_device_raises_when_device_response_missing_mac(
+    async def test_unblock_device_not_authenticated(self, devices_api):
+        """Test unblock_device raises when not authenticated."""
+        devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await devices_api.unblock_device("network_123", "aa:bb:cc:11:22:33")
+
+
+class TestDevicesAPIUpdateDeviceViaLink:
+    """Tests for update_device_via_link (unverified, warns)."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_builds_template_url(self, devices_api, mock_session):
+        """Test the write targets the default-version device URL by default."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.update_device_via_link("network_123", "aabbccddeeff", nickname="New Name")
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/devices/aabbccddeeff"
+        assert mock_session.request.call_args.kwargs["json"] == {"nickname": "New Name"}
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_prefers_parent_self_url(self, devices_api, mock_session):
+        """Test the write prefers the device's own self_url from parent."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+        parent = {"url": "/2.3/networks/network_123/devices/aabbccddeeff"}
+
+        await devices_api.update_device_via_link(
+            "network_123", "aabbccddeeff", paused=True, parent=parent
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/aabbccddeeff"
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_only_sends_supplied_fields(
         self, devices_api, mock_session
     ):
-        """Test block(True) raises EeroAPIException(502) if get_device omits `mac`.
+        """Test omitted keyword args are not sent in the JSON body."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
 
-        Guards the documented Raises contract: without a MAC we can't build the
-        blacklist POST payload, so we must fail loudly instead of silently
-        misbehaving. The blacklist POST must NOT be attempted in this case.
-        """
-        malformed = {"meta": {"code": 200}, "data": {"nickname": "no-mac-device"}}
-        get_device_response = create_mock_response(200, malformed)
-        mock_session.request.return_value = get_device_response
+        await devices_api.update_device_via_link(
+            "network_123", "aabbccddeeff", profile="/2.2/networks/network_123/profiles/p_1"
+        )
 
-        with pytest.raises(EeroAPIException) as exc_info:
-            await devices_api.block_device("network_123", "device_abc", True)
+        payload = mock_session.request.call_args.kwargs["json"]
+        assert payload == {"profile": "/2.2/networks/network_123/profiles/p_1"}
 
-        assert exc_info.value.status_code == 502
-        assert "missing 'mac' field" in str(exc_info.value)
-        # Only the get_device call happened; no POST to /blacklist was attempted.
-        assert mock_session.request.call_count == 1
-        assert mock_session.request.call_args.args[0] == "GET"
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_not_authenticated(self, devices_api):
+        devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+        with pytest.raises(EeroAuthenticationException):
+            await devices_api.update_device_via_link("network_123", "aabbccddeeff")
+
+
+class TestDevicesAPISetDeviceType:
+    """Tests for set_device_type (unverified, warns)."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_set_device_type_sends_payload(self, devices_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.set_device_type("network_123", "aabbccddeeff", "gateway")
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/devices/aabbccddeeff"
+        assert mock_session.request.call_args.kwargs["json"] == {"device_type": "gateway"}
+
+
+class TestDevicesAPILabels:
+    """Tests for get_device_labels/set_device_labels (unverified writes)."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_get_device_labels_gets_labels_path(self, devices_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.get_device_labels("network_123", "aabbccddeeff")
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "GET"
+        assert url.endswith("networks/network_123/devices/aabbccddeeff/labels")
+
+    @pytest.mark.asyncio
+    async def test_set_device_labels_sends_query_params_not_body(self, devices_api, mock_session):
+        """Test labels are sent as query params on the PUT, not a JSON/form body."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.set_device_labels(
+            "network_123", "aabbccddeeff", make_label="Acme", model_label="X1"
+        )
+
+        call = mock_session.request.call_args
+        assert call.args[0] == "PUT"
+        assert call.kwargs["params"] == {"make_label": "Acme", "model_label": "X1"}
+        assert "json" not in call.kwargs
+        assert "data" not in call.kwargs
+
+
+class TestDevicesAPIGetDevicesQueryParams:
+    """Tests for the optional thread/proxied_node query params on get_devices."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("thread", "proxied_node", "expected"),
+        [
+            (True, None, {"thread": "true"}),
+            (False, None, {"thread": "false"}),
+            (None, True, {"proxied_node": "true"}),
+            (True, False, {"thread": "true", "proxied_node": "false"}),
+            (None, None, {}),
+        ],
+    )
+    async def test_get_devices_query_params(
+        self, devices_api, mock_session, thread, proxied_node, expected
+    ):
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": []}
+        )
+
+        await devices_api.get_devices("network_123", thread=thread, proxied_node=proxied_node)
+
+        params = mock_session.request.call_args.kwargs.get("params")
+        assert params == (expected or None)
+
+    @pytest.mark.asyncio
+    async def test_get_devices_prefers_parent_link(self, devices_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": []}
+        )
+        parent = {
+            "url": "/2.2/networks/network_123",
+            "resources": {"devices": "/2.3/networks/network_123/devices"},
+        }
+
+        await devices_api.get_devices("network_123", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices"
 
 
 class TestDevicesAPIPauseDevice:

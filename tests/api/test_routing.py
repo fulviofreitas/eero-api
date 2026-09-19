@@ -51,3 +51,27 @@ class TestRoutingAPIGetRouting:
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await routing_api.get_routing("network_123")
+
+    @pytest.mark.asyncio
+    async def test_get_routing_builds_default_version_template_url(self, routing_api, mock_session):
+        """Test the template fallback stays on the default (2.2) API version."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await routing_api.get_routing("network_123")
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/routing"
+
+    @pytest.mark.asyncio
+    async def test_get_routing_prefers_parent_routing_link(self, routing_api, mock_session):
+        """Test the network's routing link (served on 2.3) is preferred over the template."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        parent = {
+            "url": "/2.2/networks/network_123",
+            "resources": {"routing": "/2.3/networks/network_123/routing"},
+        }
+
+        await routing_api.get_routing("network_123", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/routing"

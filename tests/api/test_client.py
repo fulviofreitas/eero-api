@@ -7,11 +7,14 @@ Tests cover:
 - Context manager lifecycle
 """
 
+import inspect
 import time
+from typing import Any, Dict
 from unittest.mock import AsyncMock
 
 import pytest
 
+from eero.api import EeroAPI
 from eero.client import EeroClient
 from eero.exceptions import (
     EeroAuthenticationException,
@@ -343,7 +346,7 @@ class TestEeroClientReservationWrites:
 
         assert result == expected
         client._api.reservations.update_reservation.assert_awaited_once_with(
-            "network_123", "res_1", payload
+            "res_1", payload, network="network_123"
         )
 
     @pytest.mark.asyncio
@@ -852,3 +855,724 @@ class TestEeroClientOuicheck:
 
         with pytest.raises(EeroException, match="No network ID"):
             await client.get_ouicheck(serial="serial_example", version="1.0.0-example")
+
+
+# ========================== Domain-call signature binding ==========================
+#
+# Phase 3 facade rebuild: every wrapper on EeroClient forwards to a domain
+# method on EeroAPI. This table is the single source of truth for what each
+# wrapper forwards -- (dotted attribute path on a real EeroAPI instance,
+# positional args, keyword args) -- as it would be called with a fresh
+# cached parent envelope available. `inspect.signature(...).bind(...)`
+# against the REAL domain method catches a wrapper calling a method that no
+# longer exists, or with the wrong arity/keyword names, independent of any
+# mocking elsewhere in this file.
+
+_PLACEHOLDER_PARENT: Dict[str, Any] = {"meta": {"code": 200}, "data": {}}
+
+#: (dotted attribute path under EeroAPI, positional args, keyword args)
+DOMAIN_CALL_SHAPES = [
+    # eeros
+    ("eeros.get_eeros", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.get_eero", ("net", "eero"), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.reboot_eero", ("net", "eero"), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.get_led_status", ("net", "eero"), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.set_led", ("net", "eero", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.set_led_brightness", ("net", "eero", 50), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.set_location", ("net", "eero", "loc"), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.get_nightlight", ("net", "eero"), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "eeros.set_nightlight",
+        ("net", "eero"),
+        {
+            "enabled": True,
+            "brightness_percentage": 50,
+            "schedule": {},
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    ("eeros.get_connections", ("net", "eero"), {"parent": _PLACEHOLDER_PARENT}),
+    # networks
+    ("networks.get_networks", (), {}),
+    ("networks.get_network", ("net",), {}),
+    ("networks.get_premium_status", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("networks.set_network_name", ("net", "name"), {"parent": _PLACEHOLDER_PARENT}),
+    ("networks.set_network_password", ("net", "pwd"), {"parent": _PLACEHOLDER_PARENT}),
+    ("networks.clear_network_password", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("networks.get_guest_network", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "networks.set_guest_network",
+        ("net",),
+        {"enabled": True, "name": None, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("networks.set_guest_password", ("net", "pwd"), {}),
+    ("networks.clear_guest_password", ("net",), {}),
+    ("networks.run_speed_test", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "networks.get_speed_tests",
+        ("net",),
+        {
+            "limit": None,
+            "start_time": None,
+            "end_time": None,
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    # devices
+    (
+        "devices.get_devices",
+        ("net",),
+        {"thread": None, "proxied_node": None, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("devices.get_device", ("net", "dev"), {}),
+    ("devices.set_device_nickname", ("net", "dev", "nick"), {}),
+    ("devices.block_device", ("net", "dev"), {}),
+    ("devices.unblock_device", ("net", "dev"), {}),
+    ("devices.pause_device", ("net", "dev", True), {}),
+    (
+        "devices.update_device_via_link",
+        ("net", "dev"),
+        {
+            "nickname": None,
+            "paused": None,
+            "profile": None,
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    ("devices.set_device_type", ("net", "dev", "type"), {}),
+    ("devices.get_device_labels", ("net", "dev"), {}),
+    (
+        "devices.set_device_labels",
+        ("net", "dev"),
+        {
+            "make_label": None,
+            "model_label": None,
+            "version_label": None,
+            "type_label": None,
+        },
+    ),
+    # profiles
+    ("profiles.get_profiles", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("profiles.get_profile", ("net", "prof"), {}),
+    ("profiles.pause_profile", ("net", "prof", True), {}),
+    (
+        "profiles.create_profile",
+        ("net", "name"),
+        {"devices": None, "paused": None, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("profiles.rename_profile", ("net", "prof", "name"), {}),
+    ("profiles.delete_profile", ("net", "prof"), {}),
+    ("profiles.get_profile_devices", ("net", "prof"), {}),
+    ("profiles.set_profile_devices", ("net", "prof", []), {}),
+    # diagnostics
+    ("diagnostics.get_diagnostics", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "diagnostics.run_diagnostics",
+        ("net",),
+        {"device": None, "symptom": None, "parent": _PLACEHOLDER_PARENT},
+    ),
+    # insights
+    (
+        "insights.get_insights",
+        ("net",),
+        {"start": "s", "end": "e", "insight_type": "t", "cadence": "daily"},
+    ),
+    (
+        "insights.get_devices_insights",
+        ("net",),
+        {
+            "start": "s",
+            "end": "e",
+            "cadence": "daily",
+            "insight_type": "t",
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    (
+        "insights.get_device_insights",
+        ("net", "dev"),
+        {"start": "s", "end": "e", "cadence": "daily", "insight_type": "t"},
+    ),
+    (
+        "insights.get_profiles_insights",
+        ("net",),
+        {
+            "start": "s",
+            "end": "e",
+            "cadence": "daily",
+            "insight_type": "t",
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    (
+        "insights.get_profile_insights",
+        ("net", "prof"),
+        {"start": "s", "end": "e", "cadence": "daily", "insight_type": "t"},
+    ),
+    (
+        "insights.get_profile_devices_insights",
+        ("net", "prof"),
+        {"start": "s", "end": "e", "cadence": "daily", "insight_type": "t"},
+    ),
+    # routing / thread / support / blacklist
+    ("routing.get_routing", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("thread.get_thread", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("thread.set_thread_enabled", ("net", True), {}),
+    (
+        "thread.update_thread",
+        ("net",),
+        {"thread_enable": None, "enable_credential_syncing": None},
+    ),
+    ("thread.regenerate_thread_credentials", ("net",), {}),
+    ("support.get_support", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("blacklist.get_blacklist", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    # reservations / forwards
+    ("reservations.get_reservations", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("reservations.create_reservation", ("net", {}), {"parent": _PLACEHOLDER_PARENT}),
+    ("reservations.update_reservation", ("res", {}), {"network": "net"}),
+    ("reservations.delete_reservation", ("net", "res"), {"delete_forwards": True}),
+    ("forwards.get_forwards", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("forwards.create_forward", ("net", {}), {"parent": _PLACEHOLDER_PARENT}),
+    ("forwards.update_forward", ("fwd", {}), {"network": "net"}),
+    ("forwards.delete_forward", ("net", "fwd"), {}),
+    # transfer
+    ("transfer.get_transfer_stats", ("net", None), {"parent": _PLACEHOLDER_PARENT}),
+    # data usage
+    (
+        "data_usage.get_data_usage",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_breakdown",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": None, "timezone": None},
+    ),
+    (
+        "data_usage.get_devices_usage",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": None, "timezone": None, "profile_id": None},
+    ),
+    (
+        "data_usage.get_device_usage",
+        ("net", "mac"),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_eeros_summary",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_eero_usage",
+        ("net", "eero"),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_profile_usage",
+        ("net", "prof"),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_unprofiled_devices",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": None, "timezone": None},
+    ),
+    (
+        "data_usage.get_unprofiled_summary",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    ("data_usage.get_report_settings", ("net",), {}),
+    (
+        "data_usage.set_report_settings",
+        ("net",),
+        {"cadence": "daily", "notification_day": "monday"},
+    ),
+    # ac_compat / ouicheck / updates
+    ("ac_compat.get_ac_compat", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "ouicheck.get_ouicheck",
+        ("net",),
+        {"serial": "s", "version": "v", "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("updates.get_updates", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("updates.apply_update", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    # backup
+    ("backup.get_backup_internet", ("net",), {}),
+    ("backup.set_backup_internet", ("net", True), {}),
+    ("backup.get_cellular_backup_usage", ("net",), {}),
+    ("backup.get_cellular_backup_events", ("net",), {}),
+    # schedule
+    ("schedule.get_schedules", ("net", "prof"), {}),
+    (
+        "schedule.create_schedule",
+        ("net", "prof"),
+        {"name": "n", "days": [], "start": "s", "end": "e", "enabled": True},
+    ),
+    (
+        "schedule.update_schedule",
+        ({},),
+        {"name": None, "days": None, "start": None, "end": None, "enabled": None},
+    ),
+    ("schedule.delete_schedule", ({},), {}),
+    ("schedule.clear_profile_schedule", ("net", "prof"), {}),
+    ("schedule.enable_bedtime", ("net", "prof", "s", "e", None), {}),
+    # dns
+    ("dns.get_dns_settings", ("net",), {}),
+    ("dns.set_dns_caching", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("dns.set_custom_dns", ("net", []), {"parent": _PLACEHOLDER_PARENT}),
+    ("dns.set_custom_dns_ipv4", ("net", []), {"parent": _PLACEHOLDER_PARENT}),
+    ("dns.set_custom_dns_ipv6", ("net", []), {"parent": _PLACEHOLDER_PARENT}),
+    ("dns.clear_custom_dns", ("net", None), {"parent": _PLACEHOLDER_PARENT}),
+    ("dns.set_dns_mode", ("net", "auto", None), {"parent": _PLACEHOLDER_PARENT}),
+    # sqm
+    ("sqm.get_sqm_settings", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("sqm.set_sqm", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    # security
+    ("security.get_security_settings", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_wpa3", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_band_steering", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_upnp", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_ipv6", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "security.configure_security",
+        ("net",),
+        {
+            "wpa3": None,
+            "band_steering": None,
+            "upnp": None,
+            "ipv6": None,
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+]
+
+
+class TestDomainCallSignatureBinding:
+    """Every EeroClient wrapper's forwarded call binds against the real domain method.
+
+    This guards against a wrapper calling a method that no longer exists, or
+    calling an existing method with the wrong arity or keyword names -- a
+    class of bug a mocked ``assert_called_with`` test cannot catch, because
+    the mock never validates against the real signature.
+    """
+
+    @pytest.fixture
+    def api(self) -> EeroAPI:
+        """A real (unauthenticated, no I/O) EeroAPI instance to inspect."""
+        return EeroAPI()
+
+    @pytest.mark.parametrize("dotted_path, args, kwargs", DOMAIN_CALL_SHAPES)
+    def test_forwarded_call_binds_to_real_domain_signature(self, api, dotted_path, args, kwargs):
+        """Test the wrapper's forwarded (args, kwargs) shape binds to the live method."""
+        *attr_path, method_name = dotted_path.split(".")
+        target = api
+        for attr in attr_path:
+            target = getattr(target, attr)
+        method = getattr(target, method_name)
+
+        sig = inspect.signature(method)
+        sig.bind(*args, **kwargs)  # raises TypeError on any mismatch
+
+    def test_shape_table_covers_every_domain_module_used_by_the_client(self, api):
+        """Test the table above touches every domain API the client delegates to."""
+        exercised = {shape[0].split(".")[0] for shape in DOMAIN_CALL_SHAPES}
+        expected = {
+            "eeros",
+            "networks",
+            "devices",
+            "profiles",
+            "diagnostics",
+            "insights",
+            "routing",
+            "thread",
+            "support",
+            "blacklist",
+            "reservations",
+            "forwards",
+            "transfer",
+            "data_usage",
+            "ac_compat",
+            "ouicheck",
+            "updates",
+            "backup",
+            "schedule",
+            "dns",
+            "sqm",
+            "security",
+        }
+        assert expected <= exercised
+
+
+# ========================== Removed wrappers stay removed ==========================
+
+
+class TestRemovedWrappersAreAbsent:
+    """Wrappers for domain methods that no longer exist must not reappear.
+
+    Each of these was removed because the underlying domain method was
+    deleted, renamed, or had its request shape changed incompatibly during
+    the v2.0 raw-response migration.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # SQM: bandwidth/mode/auto variants never existed as real fields.
+            "set_sqm_enabled",
+            "configure_sqm",
+            # Backup: renamed/replaced by the backup-internet family.
+            "get_backup_network",
+            "get_backup_status",
+            "set_backup_network",
+            "configure_backup_network",
+            # Profiles: content-filter/block-list/blocked-applications were
+            # never real profile fields (silent no-ops).
+            "get_blocked_applications",
+            "set_blocked_applications",
+            # Schedule: replaced by the schedule sub-resource family.
+            "get_profile_schedule",
+            "set_profile_schedule",
+            # Devices: the three-argument block_device(id, blocked, net) form
+            # was replaced by separate block_device()/unblock_device().
+        ],
+    )
+    def test_wrapper_is_absent(self, name):
+        """Test the removed wrapper name is not an attribute of EeroClient."""
+        client = EeroClient()
+        assert not hasattr(client, name)
+
+    def test_block_device_no_longer_accepts_a_blocked_flag(self):
+        """Test block_device is the two-argument (device_id, network_id) form."""
+        client = EeroClient()
+        sig = inspect.signature(client.block_device)
+        with pytest.raises(TypeError):
+            sig.bind("device_id", True, network_id="network_123")
+        # The current two-argument form binds cleanly.
+        sig.bind("device_id", network_id="network_123")
+
+    def test_unblock_device_exists_as_its_own_wrapper(self):
+        """Test unblock_device is a distinct wrapper, not a block_device(False) call."""
+        client = EeroClient()
+        assert hasattr(client, "unblock_device")
+
+
+# ========================== Link-aware parent resolution ==========================
+
+
+class TestClientParentResolutionHelpers:
+    """Tests for the private cache-lookup helpers that build `parent=` kwargs."""
+
+    def test_network_parent_kwargs_empty_when_nothing_cached(self):
+        """Test the helper omits `parent` entirely when nothing is cached."""
+        client = EeroClient()
+
+        assert client._network_parent_kwargs("network_123") == {}
+
+    def test_network_parent_kwargs_returns_cached_envelope(self):
+        """Test the helper surfaces the fresh cached network envelope."""
+        client = EeroClient()
+        envelope = {"meta": {"code": 200}, "data": {"id": "network_123"}}
+        client._update_cache("network", "network_123", envelope)
+
+        assert client._network_parent_kwargs("network_123") == {"parent": envelope}
+
+    def test_network_parent_kwargs_ignores_expired_cache(self):
+        """Test a stale cached envelope is not surfaced as parent."""
+        client = EeroClient(cache_timeout=1)
+        envelope = {"meta": {"code": 200}, "data": {"id": "network_123"}}
+        client._cache["network"]["network_123"] = {
+            "data": envelope,
+            "timestamp": time.monotonic() - 120,
+        }
+
+        assert client._network_parent_kwargs("network_123") == {}
+
+    def test_network_parent_kwargs_scoped_to_the_right_network(self):
+        """Test caching one network's envelope does not leak into another's lookup."""
+        client = EeroClient()
+        client._update_cache("network", "network_123", {"data": {"id": "network_123"}})
+
+        assert client._network_parent_kwargs("network_456") == {}
+
+    def test_eero_parent_kwargs_empty_when_nothing_cached(self):
+        """Test the eero helper omits `parent` when the eeros list is not cached."""
+        client = EeroClient()
+
+        assert client._eero_parent_kwargs("network_123", "eero_1") == {}
+
+    def test_eero_parent_kwargs_matches_by_id(self):
+        """Test the eero helper finds an entry by its `id` field."""
+        client = EeroClient()
+        eero_entry = {"id": "eero_1", "url": "/2.2/networks/network_123/eeros/eero_1"}
+        response = {"meta": {"code": 200}, "data": [eero_entry]}
+        client._update_cache("eeros", "network_123_eeros", response)
+
+        assert client._eero_parent_kwargs("network_123", "eero_1") == {"parent": eero_entry}
+
+    def test_eero_parent_kwargs_matches_by_trailing_url_segment(self):
+        """Test the eero helper falls back to matching the trailing URL segment."""
+        client = EeroClient()
+        eero_entry = {"url": "/2.2/networks/network_123/eeros/eero_1"}
+        response = {"meta": {"code": 200}, "data": [eero_entry]}
+        client._update_cache("eeros", "network_123_eeros", response)
+
+        assert client._eero_parent_kwargs("network_123", "eero_1") == {"parent": eero_entry}
+
+    def test_eero_parent_kwargs_no_match_returns_empty(self):
+        """Test an eero ID absent from the cached list yields no parent."""
+        client = EeroClient()
+        response = {"meta": {"code": 200}, "data": [{"id": "eero_other"}]}
+        client._update_cache("eeros", "network_123_eeros", response)
+
+        assert client._eero_parent_kwargs("network_123", "eero_1") == {}
+
+    def test_device_parent_kwargs_returns_cached_device_envelope(self):
+        """Test the device helper surfaces a fresh single-device cache entry."""
+        client = EeroClient()
+        envelope = {"meta": {"code": 200}, "data": {"mac": "dev_1"}}
+        client._update_cache("devices", "network_123_dev_1", envelope)
+
+        assert client._device_parent_kwargs("network_123", "dev_1") == {"parent": envelope}
+
+    def test_device_parent_kwargs_empty_when_nothing_cached(self):
+        """Test the device helper omits `parent` when nothing is cached."""
+        client = EeroClient()
+
+        assert client._device_parent_kwargs("network_123", "dev_1") == {}
+
+    @pytest.mark.asyncio
+    async def test_get_eeros_forwards_parent_when_network_cached(self, mock_session):
+        """Test get_eeros passes the cached network envelope as parent."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        network_envelope = {"meta": {"code": 200}, "data": {"id": "network_123"}}
+        client._update_cache("network", "network_123", network_envelope)
+        client._api.eeros.get_eeros = AsyncMock(return_value={"meta": {"code": 200}, "data": []})
+
+        await client.get_eeros()
+
+        client._api.eeros.get_eeros.assert_awaited_once_with("network_123", parent=network_envelope)
+
+    @pytest.mark.asyncio
+    async def test_get_eeros_omits_parent_when_network_not_cached(self, mock_session):
+        """Test get_eeros omits `parent` entirely with a cold network cache."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.eeros.get_eeros = AsyncMock(return_value={"meta": {"code": 200}, "data": []})
+
+        await client.get_eeros()
+
+        client._api.eeros.get_eeros.assert_awaited_once_with("network_123")
+
+    @pytest.mark.asyncio
+    async def test_reboot_eero_forwards_matching_cached_eero_as_parent(self, mock_session):
+        """Test reboot_eero resolves parent from the cached eeros list."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        eero_entry = {"id": "eero_1", "url": "/2.2/networks/network_123/eeros/eero_1"}
+        client._update_cache(
+            "eeros", "network_123_eeros", {"meta": {"code": 200}, "data": [eero_entry]}
+        )
+        client._api.eeros.reboot_eero = AsyncMock(return_value={"meta": {"code": 200}, "data": {}})
+
+        await client.reboot_eero("eero_1")
+
+        client._api.eeros.reboot_eero.assert_awaited_once_with(
+            "network_123", "eero_1", parent=eero_entry
+        )
+
+
+# ========================== Cache invalidation for new write wrappers ==========================
+
+
+class TestNewWriteWrapperCacheInvalidation:
+    """Every new write wrapper evicts the cache bucket its resource lives in."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and every relevant domain call stubbed."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        ok = {"meta": {"code": 200}, "data": {}}
+        for path in (
+            "eeros.set_location",
+            "eeros.get_connections",
+            "networks.set_network_password",
+            "networks.clear_network_password",
+            "networks.set_guest_password",
+            "networks.clear_guest_password",
+            "sqm.set_sqm",
+            "backup.set_backup_internet",
+            "diagnostics.run_diagnostics",
+            "updates.apply_update",
+            "thread.set_thread_enabled",
+            "thread.update_thread",
+            "thread.regenerate_thread_credentials",
+            "devices.update_device_via_link",
+            "devices.set_device_type",
+            "devices.set_device_labels",
+            "profiles.create_profile",
+        ):
+            attr_path, method_name = path.rsplit(".", 1)
+            setattr(getattr(client._api, attr_path), method_name, AsyncMock(return_value=ok))
+        return client
+
+    def _seed_network_cache(self, client):
+        client._cache["network"]["network_123"] = {"data": {}, "timestamp": time.monotonic()}
+
+    def _seed_eeros_cache(self, client):
+        client._cache["eeros"]["network_123_eeros"] = {"data": [], "timestamp": time.monotonic()}
+
+    def _seed_profiles_cache(self, client):
+        client._cache["profiles"]["network_123_profiles"] = {
+            "data": [],
+            "timestamp": time.monotonic(),
+        }
+
+    def _seed_devices_cache(self, client, device_id="dev_1"):
+        client._cache["devices"][f"network_123_{device_id}"] = {
+            "data": {},
+            "timestamp": time.monotonic(),
+        }
+
+    @pytest.mark.asyncio
+    async def test_set_location_invalidates_eeros_cache(self, client):
+        """Test set_location evicts the eeros bucket."""
+        self._seed_eeros_cache(client)
+
+        await client.set_location("eero_1", "Kitchen")
+
+        assert "network_123_eeros" not in client._cache["eeros"]
+
+    @pytest.mark.asyncio
+    async def test_set_network_password_invalidates_network_cache(self, client):
+        """Test set_network_password evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.set_network_password("hunter2")
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_clear_network_password_invalidates_network_cache(self, client):
+        """Test clear_network_password evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.clear_network_password()
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_set_guest_password_invalidates_network_cache(self, client):
+        """Test set_guest_password evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.set_guest_password("guestpw")
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_clear_guest_password_invalidates_network_cache(self, client):
+        """Test clear_guest_password evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.clear_guest_password()
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_set_sqm_invalidates_network_cache(self, client):
+        """Test set_sqm evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.set_sqm(True)
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_set_backup_internet_invalidates_network_cache(self, client):
+        """Test set_backup_internet evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.set_backup_internet(True)
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_apply_update_invalidates_network_cache(self, client):
+        """Test apply_update evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.apply_update()
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_set_thread_enabled_invalidates_network_cache(self, client):
+        """Test set_thread_enabled evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.set_thread_enabled(True)
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_update_thread_invalidates_network_cache(self, client):
+        """Test update_thread evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.update_thread(thread_enable=True)
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_regenerate_thread_credentials_invalidates_network_cache(self, client):
+        """Test regenerate_thread_credentials evicts the network bucket."""
+        self._seed_network_cache(client)
+
+        await client.regenerate_thread_credentials()
+
+        assert "network_123" not in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_invalidates_device_cache(self, client):
+        """Test update_device_via_link evicts both the single and list device cache."""
+        self._seed_devices_cache(client)
+        client._cache["devices"]["network_123_devices"] = {
+            "data": [],
+            "timestamp": time.monotonic(),
+        }
+
+        await client.update_device_via_link("dev_1", nickname="New Name")
+
+        assert "network_123_dev_1" not in client._cache["devices"]
+        assert "network_123_devices" not in client._cache["devices"]
+
+    @pytest.mark.asyncio
+    async def test_set_device_type_invalidates_device_cache(self, client):
+        """Test set_device_type evicts the device cache."""
+        self._seed_devices_cache(client)
+
+        await client.set_device_type("dev_1", "computer")
+
+        assert "network_123_dev_1" not in client._cache["devices"]
+
+    @pytest.mark.asyncio
+    async def test_set_device_labels_invalidates_device_cache(self, client):
+        """Test set_device_labels evicts the device cache."""
+        self._seed_devices_cache(client)
+
+        await client.set_device_labels("dev_1", make_label="Acme")
+
+        assert "network_123_dev_1" not in client._cache["devices"]
+
+    @pytest.mark.asyncio
+    async def test_create_profile_invalidates_profiles_list_cache(self, client):
+        """Test create_profile evicts the profiles list cache."""
+        self._seed_profiles_cache(client)
+
+        await client.create_profile("New Profile")
+
+        assert "network_123_profiles" not in client._cache["profiles"]

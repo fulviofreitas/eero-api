@@ -51,3 +51,15 @@ class TestACCompatAPIGetACCompat:
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await ac_compat_api.get_ac_compat("network_123")
+
+    @pytest.mark.asyncio
+    async def test_get_ac_compat_prefers_parent_link(self, ac_compat_api, mock_session):
+        """Test get_ac_compat uses the network's published ac_compat link."""
+        mock_response = create_mock_response(200, api_success_response({}))
+        mock_session.request.return_value = mock_response
+        parent = {"resources": {"ac_compat": "/2.3/networks/network_123/ac_compat"}}
+
+        await ac_compat_api.get_ac_compat("network_123", parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/ac_compat")

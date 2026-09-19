@@ -2,20 +2,55 @@
 
 IMPORTANT: This module returns RAW responses from the Eero Cloud API.
 All data extraction, field mapping, and transformation must be done by downstream clients.
+
+In addition to the network-level `get_insights`, the API serves insights
+series scoped to a single device or profile (and their collections) at
+``networks/{id}/insights/devices``, ``.../insights/devices/{mac}``,
+``.../insights/profiles``, ``.../insights/profiles/{profile}``, and
+``.../insights/profiles/{profile}/devices``. All are live-verified reads
+that take ``start``, ``end``, ``cadence`` (``daily``/``hourly``), and
+``insight_type`` as query parameters.
 """
 
-import logging
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
-from ..const import API_ENDPOINT
+from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
+from ..logging import get_secure_logger
+from ._params import validate_cadence
+from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import resource_url, sub_resource_url
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_secure_logger(__name__)
 
 # Valid values for the `cadence` query parameter on GET /insights.
 INSIGHTS_CADENCES = ("hourly", "daily", "weekly")
+
+
+def _insights_params(*, start: str, end: str, cadence: str, insight_type: str) -> Dict[str, str]:
+    """Build the common query-parameter set for a device/profile insights read.
+
+    Args:
+        start: Window start, ISO 8601 timestamp.
+        end: Window end, ISO 8601 timestamp.
+        cadence: Bucket size, validated as ``"daily"`` or ``"hourly"``.
+        insight_type: Category to query, forwarded unchanged.
+
+    Returns:
+        The query-parameter dict.
+
+    Raises:
+        EeroValidationException: If ``cadence`` is not ``"daily"`` or
+            ``"hourly"``.
+    """
+    return {
+        "start": start,
+        "end": end,
+        "cadence": validate_cadence(cadence),
+        "insight_type": insight_type,
+    }
 
 
 class InsightsAPI(AuthenticatedAPI):
@@ -111,3 +146,200 @@ class InsightsAPI(AuthenticatedAPI):
             auth_token=auth_token,
             params=params,
         )
+
+    async def get_devices_insights(
+        self,
+        network: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Query insights series for every device on a network — raw response.
+
+        Args:
+            network: ID of the network to query.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size, ``"daily"`` or ``"hourly"``.
+            insight_type: Category to query, forwarded unchanged.
+            parent: The cached network envelope, if the caller has one.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = sub_resource_url(
+            network,
+            "networks/{id}/insights/devices",
+            link="insights_devices",
+            parent=as_envelope(parent),
+            version=API_VERSION_DEFAULT,
+        )
+        params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
+        _LOGGER.debug("Getting devices insights for network %s", network)
+        return await self.get(url, auth_token=auth_token, params=params)
+
+    async def get_device_insights(
+        self,
+        network: str,
+        mac: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query the insights series for a single device — raw response.
+
+        Args:
+            network: ID of the network the device belongs to.
+            mac: The device's bare MAC, path, or absolute URL.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size, ``"daily"`` or ``"hourly"``.
+            insight_type: Category to query, forwarded unchanged.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = resource_url(mac, f"networks/{network}/insights/devices/{{id}}")
+        params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
+        _LOGGER.debug("Getting insights for device %s in network %s", mac, network)
+        return await self.get(url, auth_token=auth_token, params=params)
+
+    async def get_profiles_insights(
+        self,
+        network: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Query insights series for every profile on a network — raw response.
+
+        Args:
+            network: ID of the network to query.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size, ``"daily"`` or ``"hourly"``.
+            insight_type: Category to query, forwarded unchanged.
+            parent: The cached network envelope, if the caller has one.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = sub_resource_url(
+            network,
+            "networks/{id}/insights/profiles",
+            link="insights_profiles",
+            parent=as_envelope(parent),
+            version=API_VERSION_DEFAULT,
+        )
+        params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
+        _LOGGER.debug("Getting profiles insights for network %s", network)
+        return await self.get(url, auth_token=auth_token, params=params)
+
+    async def get_profile_insights(
+        self,
+        network: str,
+        profile: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query the insights series for a single profile — raw response.
+
+        Args:
+            network: ID of the network the profile belongs to.
+            profile: The profile's bare ID, path, or absolute URL.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size, ``"daily"`` or ``"hourly"``.
+            insight_type: Category to query, forwarded unchanged.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = resource_url(profile, f"networks/{network}/insights/profiles/{{id}}")
+        params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
+        _LOGGER.debug("Getting insights for profile %s in network %s", profile, network)
+        return await self.get(url, auth_token=auth_token, params=params)
+
+    async def get_profile_devices_insights(
+        self,
+        network: str,
+        profile: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query insights series for the devices assigned to a profile — raw response.
+
+        Args:
+            network: ID of the network the profile belongs to.
+            profile: The profile's bare ID, path, or absolute URL.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size, ``"daily"`` or ``"hourly"``.
+            insight_type: Category to query, forwarded unchanged.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = resource_url(profile, f"networks/{network}/insights/profiles/{{id}}/devices")
+        params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
+        _LOGGER.debug("Getting devices insights for profile %s in network %s", profile, network)
+        return await self.get(url, auth_token=auth_token, params=params)

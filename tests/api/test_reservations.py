@@ -104,3 +104,77 @@ class TestReservationsAPIDeleteReservation:
         result = await reservations_api.delete_reservation("network_123", "reservation_id")
 
         assert "meta" in result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("delete_forwards", "expected_params"),
+        [
+            (True, {"delete_forwards": "true"}),
+            (False, {"delete_forwards": "false"}),
+            (None, None),
+        ],
+    )
+    async def test_delete_reservation_delete_forwards_query_param(
+        self, reservations_api, mock_session, delete_forwards, expected_params
+    ):
+        """Test the optional delete_forwards query parameter."""
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await reservations_api.delete_reservation(
+            "network_123", "reservation_id", delete_forwards=delete_forwards
+        )
+
+        assert mock_session.request.call_args.kwargs.get("params") == expected_params
+
+
+class TestReservationsAPIUpdateReservation:
+    """Tests for update_reservation method."""
+
+    @pytest.fixture
+    def reservations_api(self, mock_session):
+        """Create a ReservationsAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ReservationsAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_from_path_string(self, reservations_api, mock_session):
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await reservations_api.update_reservation(
+            "/2.2/networks/network_123/reservations/r_1", {"description": "printer"}
+        )
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/reservations/r_1"
+        assert mock_session.request.call_args.kwargs["json"] == {"description": "printer"}
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_from_envelope(self, reservations_api, mock_session):
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+        envelope = {"url": "/2.3/networks/network_123/reservations/r_1"}
+
+        await reservations_api.update_reservation(envelope, {"public_static_ip": True})
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/reservations/r_1"
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_bare_id_without_network_raises(self, reservations_api):
+        from eero.exceptions import EeroValidationException
+
+        with pytest.raises(EeroValidationException):
+            await reservations_api.update_reservation("r_1", {"description": "x"})
+
+    @pytest.mark.asyncio
+    async def test_update_reservation_not_authenticated(self, reservations_api):
+        reservations_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+        with pytest.raises(EeroAuthenticationException):
+            await reservations_api.update_reservation(
+                "/2.2/networks/network_123/reservations/r_1", {"description": "x"}
+            )

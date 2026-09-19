@@ -104,3 +104,65 @@ class TestForwardsAPIDeleteForward:
         result = await forwards_api.delete_forward("network_123", "forward_id")
 
         assert "meta" in result
+
+
+class TestForwardsAPIUpdateForward:
+    """Tests for update_forward method."""
+
+    @pytest.fixture
+    def forwards_api(self, mock_session):
+        """Create a ForwardsAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ForwardsAPI(auth_api)
+
+    @pytest.mark.asyncio
+    async def test_update_forward_from_path_string(self, forwards_api, mock_session):
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await forwards_api.update_forward(
+            "/2.2/networks/network_123/forwards/f_1", {"enabled": False}
+        )
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/forwards/f_1"
+        assert mock_session.request.call_args.kwargs["json"] == {"enabled": False}
+
+    @pytest.mark.asyncio
+    async def test_update_forward_from_envelope(self, forwards_api, mock_session):
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+        envelope = {"url": "/2.3/networks/network_123/forwards/f_1"}
+
+        await forwards_api.update_forward(envelope, {"enabled": True})
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/forwards/f_1"
+
+    @pytest.mark.asyncio
+    async def test_update_forward_from_bare_id_requires_network(self, forwards_api, mock_session):
+        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
+        mock_session.request.return_value = mock_response
+
+        await forwards_api.update_forward("f_1", {"enabled": True}, network="network_123")
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/forwards/f_1"
+
+    @pytest.mark.asyncio
+    async def test_update_forward_bare_id_without_network_raises(self, forwards_api):
+        from eero.exceptions import EeroValidationException
+
+        with pytest.raises(EeroValidationException):
+            await forwards_api.update_forward("f_1", {"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_update_forward_not_authenticated(self, forwards_api):
+        forwards_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+        with pytest.raises(EeroAuthenticationException):
+            await forwards_api.update_forward(
+                "/2.2/networks/network_123/forwards/f_1", {"enabled": True}
+            )

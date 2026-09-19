@@ -189,6 +189,110 @@ class EeroClient:
 
         raise EeroException("No network ID provided and no preferred network set")
 
+    # ==================== Link-aware parent resolution ====================
+    #
+    # These helpers are the single place the facade looks up a cached
+    # envelope to pass as ``parent=`` to a domain method, so that every
+    # wrapper below reuses one lookup instead of repeating it. They only
+    # ever READ the cache; the returned envelope is never mutated, and the
+    # v2.0 raw-response contract is preserved because the envelope itself is
+    # forwarded unchanged as a domain method's ``parent`` argument, not
+    # merged into anything this facade returns.
+
+    def _network_parent(self, network_id: str) -> Optional[Dict[str, Any]]:
+        """Return the cached network envelope for use as ``parent``, if fresh.
+
+        Args:
+            network_id: The resolved network ID to look up.
+
+        Returns:
+            The cached raw envelope (``{"meta": ..., "data": ...}``) for
+            ``network_id``, or ``None`` when nothing fresh is cached for it.
+        """
+        if not self._is_cache_valid("network", network_id):
+            return None
+        return self._get_from_cache("network", network_id)
+
+    def _network_parent_kwargs(self, network_id: str) -> Dict[str, Any]:
+        """Build a ``parent=`` kwarg dict from the cached network envelope.
+
+        Args:
+            network_id: The resolved network ID to look up.
+
+        Returns:
+            ``{"parent": <cached envelope>}`` when a fresh cached network
+            envelope is available, otherwise ``{}`` -- so unpacking this
+            into a domain call omits the ``parent`` keyword entirely rather
+            than passing ``parent=None``.
+        """
+        parent = self._network_parent(network_id)
+        return {"parent": parent} if parent is not None else {}
+
+    @staticmethod
+    def _find_by_id_or_url(envelopes: Any, resource_id: str) -> Optional[Dict[str, Any]]:
+        """Find an envelope in a list matching a bare ID by ``id`` or trailing ``url`` segment.
+
+        Args:
+            envelopes: The candidate list of raw envelopes (as returned in a
+                collection response's ``data`` field), or anything else --
+                non-lists yield no match.
+            resource_id: The bare ID being searched for.
+
+        Returns:
+            The matching envelope (read only; never mutated), or ``None``.
+        """
+        if not isinstance(envelopes, list):
+            return None
+        for entry in envelopes:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("id") == resource_id:
+                return entry
+            url = entry.get("url")
+            if isinstance(url, str) and url.rstrip("/").split("/")[-1] == resource_id:
+                return entry
+        return None
+
+    def _eero_parent_kwargs(self, network_id: str, eero_id: str) -> Dict[str, Any]:
+        """Build a ``parent=`` kwarg dict from the cached eeros list.
+
+        Looks up the cached ``get_eeros`` response for ``network_id`` (only
+        if still fresh) and finds the entry matching ``eero_id`` by its
+        ``id`` field or the trailing segment of its ``url``.
+
+        Args:
+            network_id: The resolved network ID the eero belongs to.
+            eero_id: A bare eero ID, API-returned path, or absolute URL.
+
+        Returns:
+            ``{"parent": <matching eero envelope>}`` when found, else ``{}``.
+        """
+        cache_key = f"{network_id}_eeros"
+        if not self._is_cache_valid("eeros", cache_key):
+            return {}
+        cached = self._get_from_cache("eeros", cache_key)
+        if not isinstance(cached, dict):
+            return {}
+        match = self._find_by_id_or_url(cached.get("data"), eero_id)
+        return {"parent": match} if match is not None else {}
+
+    def _device_parent_kwargs(self, network_id: str, device_id: str) -> Dict[str, Any]:
+        """Build a ``parent=`` kwarg dict from a cached single-device envelope.
+
+        Args:
+            network_id: The resolved network ID the device belongs to.
+            device_id: The device's bare MAC, path, or absolute URL.
+
+        Returns:
+            ``{"parent": <cached device envelope>}`` when a fresh cached
+            envelope exists for this exact device, else ``{}``.
+        """
+        cache_key = f"{network_id}_{device_id}"
+        if not self._is_cache_valid("devices", cache_key):
+            return {}
+        cached = self._get_from_cache("devices", cache_key)
+        return {"parent": cached} if cached is not None else {}
+
     # ==================== Authentication ====================
 
     async def login(self, user_identifier: str) -> bool:
@@ -378,6 +482,54 @@ class EeroClient:
         self._update_cache("network", network_id, response)
         return response
 
+    async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get premium status - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.networks.get_premium_status(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
+
+    async def set_network_name(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Set network name - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.set_network_name(
+            network_id, name, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_network_password(
+        self, password: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set the network's Wi-Fi password - returns raw Eero API response.
+
+        .. warning::
+            This write disconnects clients while it takes effect, and has
+            not been confirmed against a live network. Follow the
+            read-compare-skip discipline and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.set_network_password(
+            network_id, password, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def clear_network_password(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Clear the network's Wi-Fi password - returns raw Eero API response.
+
+        .. warning::
+            This write disconnects clients while it takes effect, and has
+            not been confirmed against a live network. Follow the
+            read-compare-skip discipline and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.clear_network_password(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
+
     # ==================== Eeros ====================
 
     async def get_eeros(
@@ -403,7 +555,9 @@ class EeroClient:
             if cached:
                 return cached
 
-        response = await self._api.eeros.get_eeros(network_id)
+        response = await self._api.eeros.get_eeros(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
         self._update_cache("eeros", cache_key, response)
         return response
 
@@ -427,7 +581,9 @@ class EeroClient:
             EeroException: If no network ID is available
         """
         network_id = await self._ensure_network_id(network_id)
-        return await self._api.eeros.get_eero(network_id, eero_id)
+        return await self._api.eeros.get_eero(
+            network_id, eero_id, **self._eero_parent_kwargs(network_id, eero_id)
+        )
 
     async def reboot_eero(self, eero_id: str, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Reboot an Eero device - returns raw Eero API response.
@@ -444,25 +600,64 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.eeros.reboot_eero(network_id, eero_id)
+        response = await self._api.eeros.reboot_eero(
+            network_id, eero_id, **self._eero_parent_kwargs(network_id, eero_id)
+        )
+        self._invalidate_eeros_cache(network_id)
+        return response
 
-        # Clear cache for eeros
+    def _invalidate_eeros_cache(self, network_id: str) -> None:
+        """Drop the cached eeros list for a network after a write to one of its eeros."""
         cache_key = f"{network_id}_eeros"
         if cache_key in self._cache.get("eeros", {}):
             del self._cache["eeros"][cache_key]
 
+    async def set_location(
+        self, eero_id: str, location: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set the descriptive location label for an Eero device - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network. Follow
+            the read-compare-skip discipline: read `get_eero` first, and
+            only issue this write when the stored location differs from the
+            desired one.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.eeros.set_location(
+            network_id, eero_id, location, **self._eero_parent_kwargs(network_id, eero_id)
+        )
+        self._invalidate_eeros_cache(network_id)
         return response
+
+    async def get_connections(
+        self, eero_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get an Eero device's client connections - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.eeros.get_connections(
+            network_id, eero_id, **self._eero_parent_kwargs(network_id, eero_id)
+        )
 
     # ==================== Devices ====================
 
     async def get_devices(
-        self, network_id: Optional[str] = None, refresh_cache: bool = False
+        self,
+        network_id: Optional[str] = None,
+        refresh_cache: bool = False,
+        *,
+        thread: Optional[bool] = None,
+        proxied_node: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Get list of connected devices - returns raw Eero API response.
 
         Args:
             network_id: ID of the network to get devices from (uses preferred if None)
             refresh_cache: Whether to refresh the cache
+            thread: When supplied, filters devices by Thread membership.
+                Bypasses the cache, since the cached list is unfiltered.
+            proxied_node: When supplied, filters devices by whether they are
+                a proxied node. Bypasses the cache, like ``thread``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": [...]}
@@ -471,15 +666,22 @@ class EeroClient:
             EeroException: If no network ID is available
         """
         network_id = await self._ensure_network_id(network_id)
+        filtered = thread is not None or proxied_node is not None
 
         cache_key = f"{network_id}_devices"
-        if not refresh_cache and self._is_cache_valid("devices", cache_key):
+        if not filtered and not refresh_cache and self._is_cache_valid("devices", cache_key):
             cached = self._get_from_cache("devices", cache_key)
             if cached:
                 return cached
 
-        response = await self._api.devices.get_devices(network_id)
-        self._update_cache("devices", cache_key, response)
+        response = await self._api.devices.get_devices(
+            network_id,
+            thread=thread,
+            proxied_node=proxied_node,
+            **self._network_parent_kwargs(network_id),
+        )
+        if not filtered:
+            self._update_cache("devices", cache_key, response)
         return response
 
     async def get_device(
@@ -536,20 +738,12 @@ class EeroClient:
         return response
 
     async def block_device(
-        self, device_id: str, blocked: bool, network_id: Optional[str] = None
+        self, device_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Block or unblock a device via the /blacklist endpoint.
-
-        As of the fix for issue #109, blocking is routed through the
-        ``/networks/{id}/blacklist`` resource rather than the device PUT
-        (which the Eero cloud silently no-ops). When ``blocked=True`` this
-        performs a GET (to resolve the canonical MAC) followed by a POST,
-        so the call is no longer atomic — a transient error on the lookup
-        surfaces as an exception before any state change occurs.
+        """Add a device to the network's block list - returns raw Eero API response.
 
         Args:
-            device_id: ID of the device
-            blocked: Whether to block or unblock the device
+            device_id: MAC address of the device to block.
             network_id: ID of the network (uses preferred if None)
 
         Returns:
@@ -557,9 +751,28 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.devices.block_device(network_id, device_id, blocked)
+        response = await self._api.devices.block_device(network_id, device_id)
 
-        # Clear device cache
+        self._invalidate_device_cache(network_id, device_id)
+
+        return response
+
+    async def unblock_device(
+        self, device_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Remove a device from the network's block list - returns raw Eero API response.
+
+        Args:
+            device_id: MAC address (or blacklist device ID) to unblock.
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
+        network_id = await self._ensure_network_id(network_id)
+
+        response = await self._api.devices.unblock_device(network_id, device_id)
+
         self._invalidate_device_cache(network_id, device_id)
 
         return response
@@ -584,6 +797,87 @@ class EeroClient:
         # Clear device cache
         self._invalidate_device_cache(network_id, device_id)
 
+        return response
+
+    async def update_device_via_link(
+        self,
+        device_id: str,
+        *,
+        nickname: Optional[str] = None,
+        paused: Optional[bool] = None,
+        profile: Optional[str] = None,
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update a device via its own URL - returns raw Eero API response.
+
+        .. warning::
+            Unlike `set_device_nickname`/`pause_device`, this path has not
+            been live-verified. Prefer `set_device_nickname` and
+            `pause_device` for those two fields. Follow the
+            read-compare-skip discipline for any write through this method:
+            read the device back afterwards and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id)
+        response = await self._api.devices.update_device_via_link(
+            network_id,
+            device_id,
+            nickname=nickname,
+            paused=paused,
+            profile=profile,
+            **self._device_parent_kwargs(network_id, device_id),
+        )
+        self._invalidate_device_cache(network_id, device_id)
+        return response
+
+    async def set_device_type(
+        self, device_id: str, device_type: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set a device's type - returns raw Eero API response.
+
+        .. warning::
+            This write has not been verified against a live network. Follow
+            the read-compare-skip discipline: read the device back
+            afterwards and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id)
+        response = await self._api.devices.set_device_type(network_id, device_id, device_type)
+        self._invalidate_device_cache(network_id, device_id)
+        return response
+
+    async def get_device_labels(
+        self, device_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get the hardware/manufacturer labels for a device - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id)
+        return await self._api.devices.get_device_labels(network_id, device_id)
+
+    async def set_device_labels(
+        self,
+        device_id: str,
+        *,
+        make_label: Optional[str] = None,
+        model_label: Optional[str] = None,
+        version_label: Optional[str] = None,
+        type_label: Optional[str] = None,
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Set the hardware/manufacturer labels for a device - returns raw Eero API response.
+
+        .. warning::
+            This write has not been verified against a live network. Follow
+            the read-compare-skip discipline: call `get_device_labels`
+            afterwards and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id)
+        response = await self._api.devices.set_device_labels(
+            network_id,
+            device_id,
+            make_label=make_label,
+            model_label=model_label,
+            version_label=version_label,
+            type_label=type_label,
+        )
+        self._invalidate_device_cache(network_id, device_id)
         return response
 
     def _invalidate_device_cache(self, network_id: str, device_id: str) -> None:
@@ -621,7 +915,9 @@ class EeroClient:
             if cached:
                 return cached
 
-        response = await self._api.profiles.get_profiles(network_id)
+        response = await self._api.profiles.get_profiles(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
         self._update_cache("profiles", cache_key, response)
         return response
 
@@ -694,11 +990,20 @@ class EeroClient:
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
 
-    async def create_profile(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
+    async def create_profile(
+        self,
+        name: str,
+        *,
+        devices: Optional[List[str]] = None,
+        paused: Optional[bool] = None,
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Create a new profile on the network - returns raw Eero API response.
 
         Args:
             name: Name for the new profile
+            devices: Optional list of device URLs to assign at creation time.
+            paused: Optional initial paused state.
             network_id: ID of the network (uses preferred if None)
 
         Returns:
@@ -706,7 +1011,13 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.profiles.create_profile(network_id, name)
+        response = await self._api.profiles.create_profile(
+            network_id,
+            name,
+            devices=devices,
+            paused=paused,
+            **self._network_parent_kwargs(network_id),
+        )
 
         self._invalidate_profiles_list_cache(network_id)
 
@@ -759,19 +1070,26 @@ class EeroClient:
 
     # ==================== Guest Network ====================
 
+    async def get_guest_network(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get guest network configuration - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.networks.get_guest_network(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
+
     async def set_guest_network(
         self,
         enabled: bool,
         name: Optional[str] = None,
-        password: Optional[str] = None,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Enable or disable the guest network - returns raw Eero API response.
 
+        Use `set_guest_password` to set the guest network's password.
+
         Args:
             enabled: Whether to enable or disable the guest network
             name: Optional new name for the guest network
-            password: Optional new password for the guest network
             network_id: ID of the network (uses preferred if None)
 
         Returns:
@@ -779,12 +1097,44 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.networks.set_guest_network(network_id, enabled, name, password)
+        response = await self._api.networks.set_guest_network(
+            network_id,
+            enabled=enabled,
+            name=name,
+            **self._network_parent_kwargs(network_id),
+        )
 
         # Clear network cache
-        if network_id in self._cache.get("network", {}):
-            del self._cache["network"][network_id]
+        self._invalidate_network_cache(network_id)
 
+        return response
+
+    async def set_guest_password(
+        self, password: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set the guest network's password - returns raw Eero API response.
+
+        .. warning::
+            This write disconnects guest clients while it takes effect, and
+            has not been confirmed against a live network. Follow the
+            read-compare-skip discipline and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.set_guest_password(network_id, password)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def clear_guest_password(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Clear the guest network's password - returns raw Eero API response.
+
+        .. warning::
+            This write disconnects guest clients while it takes effect, and
+            has not been confirmed against a live network. Follow the
+            read-compare-skip discipline and do not retry on failure.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.clear_guest_password(network_id)
+        self._invalidate_network_cache(network_id)
         return response
 
     # ==================== Speed Test ====================
@@ -800,13 +1150,32 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        response = await self._api.networks.run_speed_test(network_id)
+        response = await self._api.networks.run_speed_test(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
         # Clear network cache
-        if network_id in self._cache.get("network", {}):
-            del self._cache["network"][network_id]
+        self._invalidate_network_cache(network_id)
 
         return response
+
+    async def get_speed_tests(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get past speed test results - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.networks.get_speed_tests(
+            network_id,
+            limit=limit,
+            start_time=start_time,
+            end_time=end_time,
+            **self._network_parent_kwargs(network_id),
+        )
 
     # ==================== Network Settings ====================
 
@@ -831,12 +1200,31 @@ class EeroClient:
     async def get_diagnostics(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get network diagnostics - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.diagnostics.get_diagnostics(network_id)
+        return await self._api.diagnostics.get_diagnostics(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
-    async def run_diagnostics(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Run network diagnostics - returns raw Eero API response."""
+    async def run_diagnostics(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        device: Optional[str] = None,
+        symptom: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Run network diagnostics - returns raw Eero API response.
+
+        .. warning::
+            The request body shape has not been confirmed against a live
+            network. Follow the read-compare-skip discipline where
+            applicable, and do not retry on failure.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.diagnostics.run_diagnostics(network_id)
+        return await self._api.diagnostics.run_diagnostics(
+            network_id,
+            device=device,
+            symptom=symptom,
+            **self._network_parent_kwargs(network_id),
+        )
 
     async def get_insights(
         self,
@@ -873,37 +1261,207 @@ class EeroClient:
             cadence=cadence,
         )
 
+    async def get_devices_insights(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query insights series for every device on a network - raw response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.insights.get_devices_insights(
+            network_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            insight_type=insight_type,
+            **self._network_parent_kwargs(network_id),
+        )
+
+    async def get_device_insights(
+        self,
+        device_id: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query the insights series for a single device - raw response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.insights.get_device_insights(
+            network_id,
+            device_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            insight_type=insight_type,
+        )
+
+    async def get_profiles_insights(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query insights series for every profile on a network - raw response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.insights.get_profiles_insights(
+            network_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            insight_type=insight_type,
+            **self._network_parent_kwargs(network_id),
+        )
+
+    async def get_profile_insights(
+        self,
+        profile_id: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query the insights series for a single profile - raw response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.insights.get_profile_insights(
+            network_id,
+            profile_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            insight_type=insight_type,
+        )
+
+    async def get_profile_devices_insights(
+        self,
+        profile_id: str,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        insight_type: str,
+    ) -> Dict[str, Any]:
+        """Query insights series for the devices assigned to a profile - raw response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.insights.get_profile_devices_insights(
+            network_id,
+            profile_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            insight_type=insight_type,
+        )
+
     async def get_routing(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get network routing - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.routing.get_routing(network_id)
+        return await self._api.routing.get_routing(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_thread(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get Thread status - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.thread.get_thread(network_id)
+        return await self._api.thread.get_thread(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
+
+    async def set_thread_enabled(
+        self, enabled: bool, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Enable or disable Thread - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network. Follow
+            the read-compare-skip discipline: read `get_thread` first, and
+            only issue this write when the stored value differs from the
+            desired one.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.thread.set_thread_enabled(network_id, enabled)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def update_thread(
+        self,
+        *,
+        thread_enable: Optional[bool] = None,
+        enable_credential_syncing: Optional[bool] = None,
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update Thread configuration - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network. Follow
+            the read-compare-skip discipline: read `get_thread` first, and
+            only issue this write when the stored configuration differs from
+            the desired one.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.thread.update_thread(
+            network_id,
+            thread_enable=thread_enable,
+            enable_credential_syncing=enable_credential_syncing,
+        )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def regenerate_thread_credentials(
+        self, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Regenerate Thread network credentials - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network. The
+            response is documented to carry a ``network`` key of unknown
+            shape -- this method returns it unmodified.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.thread.regenerate_thread_credentials(network_id)
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def get_support(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get support info - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.support.get_support(network_id)
+        return await self._api.support.get_support(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_blacklist(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get device blacklist - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.blacklist.get_blacklist(network_id)
+        return await self._api.blacklist.get_blacklist(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_reservations(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get DHCP reservations - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.reservations.get_reservations(network_id)
+        return await self._api.reservations.get_reservations(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def create_reservation(
         self, reservation_data: Dict[str, Any], network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a DHCP reservation - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.reservations.create_reservation(network_id, reservation_data)
+        return await self._api.reservations.create_reservation(
+            network_id, reservation_data, **self._network_parent_kwargs(network_id)
+        )
 
     async def update_reservation(
         self,
@@ -914,27 +1472,48 @@ class EeroClient:
         """Update a DHCP reservation - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.reservations.update_reservation(
-            network_id, reservation_id, reservation_data
+            reservation_id, reservation_data, network=network_id
         )
 
     async def delete_reservation(
-        self, reservation_id: str, network_id: Optional[str] = None
+        self,
+        reservation_id: str,
+        network_id: Optional[str] = None,
+        *,
+        delete_forwards: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Delete a DHCP reservation - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.reservations.delete_reservation(network_id, reservation_id)
+        kwargs: Dict[str, Any] = {}
+        if delete_forwards is not None:
+            kwargs["delete_forwards"] = delete_forwards
+        return await self._api.reservations.delete_reservation(network_id, reservation_id, **kwargs)
 
     async def get_forwards(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get port forwards - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.forwards.get_forwards(network_id)
+        return await self._api.forwards.get_forwards(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def create_forward(
         self, forward_data: Dict[str, Any], network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a port forward - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.forwards.create_forward(network_id, forward_data)
+        return await self._api.forwards.create_forward(
+            network_id, forward_data, **self._network_parent_kwargs(network_id)
+        )
+
+    async def update_forward(
+        self,
+        forward_id: str,
+        forward_data: Dict[str, Any],
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update a port forward - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.forwards.update_forward(forward_id, forward_data, network=network_id)
 
     async def delete_forward(
         self, forward_id: str, network_id: Optional[str] = None
@@ -948,7 +1527,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Get transfer statistics - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.transfer.get_transfer_stats(network_id, device_id)
+        return await self._api.transfer.get_transfer_stats(
+            network_id, device_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_data_usage(
         self,
@@ -1173,7 +1754,9 @@ class EeroClient:
     async def get_ac_compat(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get AC compatibility - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.ac_compat.get_ac_compat(network_id)
+        return await self._api.ac_compat.get_ac_compat(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_ouicheck(
         self,
@@ -1191,26 +1774,33 @@ class EeroClient:
                 being checked.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.ouicheck.get_ouicheck(network_id, serial=serial, version=version)
+        return await self._api.ouicheck.get_ouicheck(
+            network_id, serial=serial, version=version, **self._network_parent_kwargs(network_id)
+        )
 
     async def get_updates(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get update info - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.updates.get_updates(network_id)
+        return await self._api.updates.get_updates(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
-    async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get premium status - returns raw Eero API response."""
+    async def apply_update(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Apply a pending update - returns raw Eero API response.
+
+        .. warning::
+            This is a reboot-class write: applying an update reboots every
+            node on the network, and its request/response shape has not
+            been confirmed against a live network. Follow the
+            read-compare-skip discipline: read `get_updates` first, and only
+            issue this write when an update is actually pending. Never
+            retry on failure.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.networks.get_premium_status(network_id)
-
-    async def set_network_name(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Set network name - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.networks.set_network_name(network_id, name)
-
-        if network_id in self._cache.get("network", {}):
-            del self._cache["network"][network_id]
-
+        response = await self._api.updates.apply_update(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
         return response
 
     # ==================== LED & Nightlight ====================
@@ -1220,19 +1810,19 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Get LED status - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.eeros.get_led_status(network_id, eero_id)
+        return await self._api.eeros.get_led_status(
+            network_id, eero_id, **self._eero_parent_kwargs(network_id, eero_id)
+        )
 
     async def set_led(
         self, eero_id: str, enabled: bool, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Set LED on/off - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.eeros.set_led(network_id, eero_id, enabled)
-
-        cache_key = f"{network_id}_eeros"
-        if cache_key in self._cache.get("eeros", {}):
-            del self._cache["eeros"][cache_key]
-
+        response = await self._api.eeros.set_led(
+            network_id, eero_id, enabled, **self._eero_parent_kwargs(network_id, eero_id)
+        )
+        self._invalidate_eeros_cache(network_id)
         return response
 
     async def set_led_brightness(
@@ -1240,98 +1830,190 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set LED brightness - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.eeros.set_led_brightness(network_id, eero_id, brightness)
+        response = await self._api.eeros.set_led_brightness(
+            network_id, eero_id, brightness, **self._eero_parent_kwargs(network_id, eero_id)
+        )
+        self._invalidate_eeros_cache(network_id)
+        return response
 
     async def get_nightlight(
         self, eero_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Get nightlight settings - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.eeros.get_nightlight(network_id, eero_id)
+        return await self._api.eeros.get_nightlight(
+            network_id, eero_id, **self._eero_parent_kwargs(network_id, eero_id)
+        )
 
     async def set_nightlight(
         self,
         eero_id: str,
         enabled: Optional[bool] = None,
-        brightness: Optional[int] = None,
-        schedule_enabled: Optional[bool] = None,
-        schedule_on: Optional[str] = None,
-        schedule_off: Optional[str] = None,
-        ambient_light_enabled: Optional[bool] = None,
+        brightness_percentage: Optional[int] = None,
+        schedule: Optional[Dict[str, Any]] = None,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Set nightlight settings - returns raw Eero API response."""
+        """Set nightlight settings - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network.
+            Follow the read-compare-skip discipline: read `get_nightlight`
+            first, and only issue this write when the stored settings
+            differ from the desired ones.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.eeros.set_nightlight(
             network_id,
             eero_id,
             enabled=enabled,
-            brightness=brightness,
-            schedule_enabled=schedule_enabled,
-            schedule_on=schedule_on,
-            schedule_off=schedule_off,
-            ambient_light_enabled=ambient_light_enabled,
+            brightness_percentage=brightness_percentage,
+            schedule=schedule,
+            **self._eero_parent_kwargs(network_id, eero_id),
         )
-
-        cache_key = f"{network_id}_eeros"
-        if cache_key in self._cache.get("eeros", {}):
-            del self._cache["eeros"][cache_key]
-
+        self._invalidate_eeros_cache(network_id)
         return response
 
-    # ==================== Backup Network ====================
-
-    async def get_backup_network(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get backup network config - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.backup.get_backup_network(network_id)
-
-    async def get_backup_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get backup status - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.backup.get_backup_status(network_id)
-
-    async def set_backup_network(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Enable/disable backup network - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.backup.set_backup_network(network_id, enabled)
-
-    async def configure_backup_network(
+    async def set_nightlight_brightness(
         self,
-        enabled: Optional[bool] = None,
-        phone_number: Optional[str] = None,
+        eero_id: str,
+        brightness_percentage: int,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure backup network - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.backup.configure_backup_network(
-            network_id, enabled=enabled, phone_number=phone_number
+        """Set nightlight brightness - returns raw Eero API response.
+
+        Convenience wrapper around `set_nightlight` for just the brightness
+        field.
+        """
+        return await self.set_nightlight(
+            eero_id, brightness_percentage=brightness_percentage, network_id=network_id
         )
+
+    async def set_nightlight_schedule(
+        self,
+        eero_id: str,
+        schedule: Dict[str, Any],
+        network_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Set nightlight schedule - returns raw Eero API response.
+
+        Convenience wrapper around `set_nightlight` for just the schedule
+        field.
+        """
+        return await self.set_nightlight(eero_id, schedule=schedule, network_id=network_id)
+
+    # ==================== Backup Internet ====================
+
+    async def get_backup_internet(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get backup internet configuration - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.backup.get_backup_internet(network_id)
+
+    async def set_backup_internet(
+        self, enabled: bool, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Enable or disable backup internet - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network. Follow
+            the read-compare-skip discipline: read `get_backup_internet`
+            first, and only issue this write when the stored value differs
+            from the desired one.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.backup.set_backup_internet(network_id, enabled)
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def get_cellular_backup_usage(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get cellular backup data usage - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.backup.get_cellular_backup_usage(network_id)
+
+    async def get_cellular_backup_events(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get cellular backup events - returns raw Eero API response."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.backup.get_cellular_backup_events(network_id)
 
     # ==================== Schedule ====================
 
-    async def get_profile_schedule(
+    async def get_schedules(
         self, profile_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get profile schedule - returns raw Eero API response."""
+        """Get the scheduled pauses for a profile - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.schedule.get_profile_schedule(network_id, profile_id)
+        return await self._api.schedule.get_schedules(network_id, profile_id)
 
-    async def set_profile_schedule(
+    async def create_schedule(
         self,
         profile_id: str,
-        time_blocks: List[Dict],
+        *,
+        name: str,
+        days: List[str],
+        start: str,
+        end: str,
+        enabled: bool = True,
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Set profile schedule - returns raw Eero API response."""
+        """Create a scheduled pause for a profile - returns raw Eero API response.
+
+        .. warning::
+            This write has not been verified against a live network. Follow
+            the read-compare-skip discipline: read `get_schedules` first,
+            and do not retry a failed write.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.schedule.set_profile_schedule(
-            network_id, profile_id, time_blocks
+        return await self._api.schedule.create_schedule(
+            network_id, profile_id, name=name, days=days, start=start, end=end, enabled=enabled
         )
-        self._invalidate_profile_cache(network_id, profile_id)
-        return response
+
+    async def update_schedule(
+        self,
+        schedule: Any,
+        *,
+        name: Optional[str] = None,
+        days: Optional[List[str]] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Update a scheduled pause via its own URL - returns raw Eero API response.
+
+        .. warning::
+            This write has not been verified against a live network. Follow
+            the read-compare-skip discipline and do not retry on failure.
+
+        Args:
+            schedule: The pause's own path/absolute URL (as returned by
+                `get_schedules`/`create_schedule`), or its cached envelope.
+            name: New name, or ``None`` to omit.
+            days: New days list, or ``None`` to omit.
+            start: New start time, or ``None`` to omit.
+            end: New end time, or ``None`` to omit.
+            enabled: New enabled state, or ``None`` to omit.
+        """
+        return await self._api.schedule.update_schedule(
+            schedule, name=name, days=days, start=start, end=end, enabled=enabled
+        )
+
+    async def delete_schedule(self, schedule: Any) -> Dict[str, Any]:
+        """Delete a scheduled pause via its own URL - returns raw Eero API response.
+
+        Args:
+            schedule: The pause's own path/absolute URL, or its cached
+                envelope.
+        """
+        return await self._api.schedule.delete_schedule(schedule)
+
+    async def clear_profile_schedule(
+        self, profile_id: str, network_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Delete every scheduled pause currently set on a profile.
+
+        Returns:
+            A list of the raw API responses from each individual DELETE.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.schedule.clear_profile_schedule(network_id, profile_id)
 
     async def enable_bedtime(
         self,
@@ -1346,13 +2028,6 @@ class EeroClient:
         return await self._api.schedule.enable_bedtime(
             network_id, profile_id, start_time, end_time, days
         )
-
-    async def clear_profile_schedule(
-        self, profile_id: str, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Clear profile schedule - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.schedule.clear_profile_schedule(network_id, profile_id)
 
     # ==================== DNS ====================
 
@@ -1375,7 +2050,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set DNS caching - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_dns_caching(network_id, enabled)
+        response = await self._api.dns.set_dns_caching(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1384,7 +2061,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set custom DNS from a mixed IPv4/IPv6 list - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_custom_dns(network_id, dns_servers)
+        response = await self._api.dns.set_custom_dns(
+            network_id, dns_servers, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1393,7 +2072,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set IPv4 custom DNS, leaving IPv6 untouched - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_custom_dns_ipv4(network_id, dns_servers)
+        response = await self._api.dns.set_custom_dns_ipv4(
+            network_id, dns_servers, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1402,7 +2083,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set IPv6 custom DNS, leaving IPv4 untouched - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_custom_dns_ipv6(network_id, dns_servers)
+        response = await self._api.dns.set_custom_dns_ipv6(
+            network_id, dns_servers, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1415,7 +2098,9 @@ class EeroClient:
         family="ipv4" or "ipv6" to clear one family only.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.clear_custom_dns(network_id, family)
+        response = await self._api.dns.clear_custom_dns(
+            network_id, family, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1427,7 +2112,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set DNS mode - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.dns.set_dns_mode(network_id, mode, custom_servers)
+        response = await self._api.dns.set_dns_mode(
+            network_id, mode, custom_servers, **self._network_parent_kwargs(network_id)
+        )
         self._invalidate_network_cache(network_id)
         return response
 
@@ -1436,25 +2123,27 @@ class EeroClient:
     async def get_sqm_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get SQM settings - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.sqm.get_sqm_settings(network_id)
+        return await self._api.sqm.get_sqm_settings(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
-    async def set_sqm_enabled(
-        self, enabled: bool, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Enable/disable SQM - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.sqm.set_sqm_enabled(network_id, enabled)
+    async def set_sqm(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Enable or disable SQM (Smart Queue Management) - returns raw Eero API response.
 
-    async def configure_sqm(
-        self,
-        enabled: bool,
-        upload_mbps: Optional[int] = None,
-        download_mbps: Optional[int] = None,
-        network_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Configure SQM - returns raw Eero API response."""
+        .. warning::
+            This is a settings-class write: it has not been confirmed
+            against a live network, and -- like other writes to this
+            endpoint -- may trigger a mesh reboot. Follow the
+            read-compare-skip discipline: read `get_sqm_settings` first, and
+            only issue this write when the stored value differs from the
+            desired one. Never retry on failure.
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.sqm.configure_sqm(network_id, enabled, upload_mbps, download_mbps)
+        response = await self._api.sqm.set_sqm(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     # ==================== Device Priority ====================
 
@@ -1470,29 +2159,47 @@ class EeroClient:
     async def get_security_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get security settings - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.get_security_settings(network_id)
+        return await self._api.security.get_security_settings(
+            network_id, **self._network_parent_kwargs(network_id)
+        )
 
     async def set_wpa3(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set WPA3 - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.set_wpa3(network_id, enabled)
+        response = await self._api.security.set_wpa3(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def set_band_steering(
         self, enabled: bool, network_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Set band steering - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.set_band_steering(network_id, enabled)
+        response = await self._api.security.set_band_steering(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def set_upnp(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set UPnP - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.set_upnp(network_id, enabled)
+        response = await self._api.security.set_upnp(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def set_ipv6(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Set IPv6 - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.set_ipv6(network_id, enabled)
+        response = await self._api.security.set_ipv6(
+            network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def configure_security(
         self,
@@ -1504,35 +2211,15 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Configure security - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.security.configure_security(
+        response = await self._api.security.configure_security(
             network_id,
             wpa3=wpa3,
             band_steering=band_steering,
             upnp=upnp,
             ipv6=ipv6,
+            **self._network_parent_kwargs(network_id),
         )
-
-    # ==================== Blocked Applications ====================
-
-    async def get_blocked_applications(
-        self, profile_id: str, network_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Get blocked applications - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        return await self._api.profiles.get_blocked_applications(network_id, profile_id)
-
-    async def set_blocked_applications(
-        self,
-        profile_id: str,
-        applications: List[str],
-        network_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Set blocked applications - returns raw Eero API response."""
-        network_id = await self._ensure_network_id(network_id, auto_discover=False)
-        response = await self._api.profiles.set_blocked_applications(
-            network_id, profile_id, applications
-        )
-        self._invalidate_profile_cache(network_id, profile_id)
+        self._invalidate_network_cache(network_id)
         return response
 
     # ==================== Profile Devices ====================

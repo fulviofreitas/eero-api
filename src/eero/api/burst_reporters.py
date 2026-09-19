@@ -5,12 +5,14 @@ All data extraction, field mapping, and transformation must be done by downstrea
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import sub_resource_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,13 +33,24 @@ class BurstReportersAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def create_burst_reporter(
-        self, network_id: str, reporter_data: Dict[str, Any]
+        self,
+        network_id: str,
+        reporter_data: Dict[str, Any],
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create a burst reporter - returns raw Eero API response.
 
+        POSTs to the network's ``burst_reporters`` link.
+
         Args:
-            network_id: ID of the network
-            reporter_data: Burst reporter data
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            reporter_data: Burst reporter data, forwarded to the API
+                unchanged.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``burst_reporters`` link
+                is used instead of the default template. Read only; never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -50,9 +63,15 @@ class BurstReportersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
+        url = sub_resource_url(
+            network_id,
+            "networks/{id}/burst_reporters",
+            link="burst_reporters",
+            parent=as_envelope(parent),
+        )
         _LOGGER.debug("Creating burst reporter for network %s: %s", network_id, reporter_data)
         return await self.post(
-            f"networks/{network_id}/burst_reporters",
+            url,
             auth_token=auth_token,
             json=reporter_data,
         )

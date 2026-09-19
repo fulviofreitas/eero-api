@@ -10,30 +10,35 @@ bucket size of the returned series (``"daily"`` or ``"hourly"``). None of these
 endpoints accept a request body; the API rejects a body-bearing GET with a 400.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
-from ..exceptions import EeroAuthenticationException, EeroValidationException
+from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import CADENCE_VALUES, resolve_network_url, validate_cadence
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 
 _LOGGER = get_secure_logger(__name__)
 
 #: Valid values for the `cadence` query parameter across the data-usage family.
-DATA_USAGE_CADENCES = ("daily", "hourly")
+#: Retained as an alias of the shared constant for backward compatibility.
+DATA_USAGE_CADENCES = CADENCE_VALUES
 
 #: Valid values for the `cadence` field in the data-usage report settings body.
-REPORT_SETTINGS_CADENCES = ("daily", "hourly")
+REPORT_SETTINGS_CADENCES = CADENCE_VALUES
 
 
 def _validate_cadence(cadence: Optional[str]) -> str:
     """Validate a `cadence` value against the API's two accepted buckets.
 
+    Thin wrapper around the shared `eero.api._params.validate_cadence` kept
+    for this module's internal call sites; ``None`` is rejected here since
+    callers for whom cadence is optional must not reach this function with
+    ``None``.
+
     Args:
-        cadence: Candidate cadence value. ``None`` is rejected -- callers for
-            whom cadence is optional must not reach this function with
-            ``None``.
+        cadence: Candidate cadence value.
 
     Returns:
         The validated cadence, unchanged.
@@ -41,12 +46,7 @@ def _validate_cadence(cadence: Optional[str]) -> str:
     Raises:
         EeroValidationException: If ``cadence`` is not ``"daily"`` or ``"hourly"``.
     """
-    if cadence not in DATA_USAGE_CADENCES:
-        raise EeroValidationException(
-            "cadence",
-            f"must be one of {DATA_USAGE_CADENCES}, got {cadence!r}",
-        )
-    return cadence
+    return validate_cadence(cadence)  # type: ignore[arg-type]
 
 
 class DataUsageAPI(AuthenticatedAPI):
@@ -67,7 +67,7 @@ class DataUsageAPI(AuthenticatedAPI):
     async def _get_usage(
         self,
         path: str,
-        network_id: str,
+        network: str,
         *,
         start: str,
         end: str,
@@ -75,13 +75,14 @@ class DataUsageAPI(AuthenticatedAPI):
         timezone: Optional[str],
         extra_params: Optional[Dict[str, str]] = None,
         cadence_required: bool = False,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Issue a single data-usage GET, shared by every read in this module.
 
         Args:
             path: The endpoint path segment appended after ``data_usage``
                 (empty string for the top-level resource).
-            network_id: ID of the network to query.
+            network: The network's bare ID, path, or absolute URL.
             start: Window start, ISO 8601 timestamp.
             end: Window end, ISO 8601 timestamp.
             cadence: Bucket size, one of ``"daily"``/``"hourly"``, or ``None``
@@ -91,6 +92,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 (e.g. ``profile_id``), merged in after the common ones.
             cadence_required: When True, the API requires ``cadence`` on this
                 endpoint -- a ``None`` value is rejected rather than omitted.
+            parent: The cached network envelope, if the caller has one.
+                Preferred over ``network`` to resolve the base URL when
+                supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -113,12 +117,9 @@ class DataUsageAPI(AuthenticatedAPI):
         if extra_params:
             params.update(extra_params)
 
-        url = (
-            f"networks/{network_id}/data_usage/{path}"
-            if path
-            else f"networks/{network_id}/data_usage"
-        )
-        _LOGGER.debug("Getting data usage (%s) for network %s", path or "root", network_id)
+        base_url = resolve_network_url(network, parent)
+        url = f"{base_url}/data_usage/{path}" if path else f"{base_url}/data_usage"
+        _LOGGER.debug("Getting data usage (%s) for network %s", path or "root", network)
         return await self.get(url, auth_token=auth_token, params=params)
 
     async def get_data_usage(
@@ -129,6 +130,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get network-level data usage - returns raw Eero API response.
 
@@ -143,6 +145,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name applied to the bucketing.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -159,6 +162,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
@@ -170,6 +174,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get a data usage breakdown - returns raw Eero API response.
 
@@ -180,6 +185,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Optional bucket size, ``"daily"`` or ``"hourly"``.
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -190,7 +196,13 @@ class DataUsageAPI(AuthenticatedAPI):
             EeroAPIException: If the API returns an error.
         """
         return await self._get_usage(
-            "breakdown", network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            "breakdown",
+            network_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            parent=parent,
         )
 
     async def get_devices_usage(
@@ -202,6 +214,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
         profile_id: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get per-device data usage - returns raw Eero API response.
 
@@ -212,6 +225,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Optional bucket size, ``"daily"`` or ``"hourly"``.
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
             profile_id: Optional profile ID to scope the results to devices
                 on a single profile. Omitted from the request when ``None``.
 
@@ -231,6 +245,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             extra_params=extra_params,
         )
 
@@ -243,6 +258,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single device - returns raw Eero API response.
 
@@ -257,6 +273,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -273,6 +290,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
@@ -284,6 +302,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage across all Eero devices - returns raw Eero API response.
 
@@ -297,6 +316,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -313,6 +333,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
@@ -325,6 +346,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single Eero device - returns raw Eero API response.
 
@@ -339,6 +361,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -355,6 +378,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
@@ -367,6 +391,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single profile - returns raw Eero API response.
 
@@ -381,6 +406,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -397,6 +423,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
@@ -408,6 +435,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get data usage for devices not assigned to a profile - returns raw Eero API response.
 
@@ -418,6 +446,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Optional bucket size, ``"daily"`` or ``"hourly"``.
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -434,6 +463,7 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
         )
 
     async def get_unprofiled_summary(
@@ -444,6 +474,7 @@ class DataUsageAPI(AuthenticatedAPI):
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage for unprofiled devices - returns raw Eero API response.
 
@@ -457,6 +488,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -473,14 +505,20 @@ class DataUsageAPI(AuthenticatedAPI):
             end=end,
             cadence=cadence,
             timezone=timezone,
+            parent=parent,
             cadence_required=True,
         )
 
-    async def get_report_settings(self, network_id: str) -> Dict[str, Any]:
+    async def get_report_settings(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Get the data usage report settings for a network - returns raw Eero API response.
 
         Args:
-            network_id: ID of the network.
+            network_id: The network's bare ID, path, or absolute URL.
+            parent: The cached network envelope, if the caller has one.
+                Preferred over `network_id` to resolve the base URL when
+                supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -493,11 +531,9 @@ class DataUsageAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
+        url = f"{resolve_network_url(network_id, parent)}/data_usage/report_settings"
         _LOGGER.debug("Getting data usage report settings for network %s", network_id)
-        return await self.get(
-            f"networks/{network_id}/data_usage/report_settings",
-            auth_token=auth_token,
-        )
+        return await self.get(url, auth_token=auth_token)
 
     async def set_report_settings(
         self,
@@ -505,6 +541,7 @@ class DataUsageAPI(AuthenticatedAPI):
         *,
         cadence: str,
         notification_day: str,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Set the data usage report settings for a network - returns raw Eero API response.
 
@@ -519,11 +556,14 @@ class DataUsageAPI(AuthenticatedAPI):
             resolving it.
 
         Args:
-            network_id: ID of the network.
+            network_id: The network's bare ID, path, or absolute URL.
             cadence: Report cadence, ``"daily"`` or ``"hourly"``.
             notification_day: Day value for the report notification, as
                 accepted by the API (forwarded unchanged; the SDK does not
                 interpret or validate its format).
+            parent: The cached network envelope, if the caller has one.
+                Preferred over `network_id` to resolve the base URL when
+                supplied. Never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -546,9 +586,6 @@ class DataUsageAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
+        url = f"{resolve_network_url(network_id, parent)}/data_usage/report_settings"
         payload = {"cadence": cadence, "notification_day": notification_day}
-        return await self.put(
-            f"networks/{network_id}/data_usage/report_settings",
-            auth_token=auth_token,
-            json=payload,
-        )
+        return await self.put(url, auth_token=auth_token, json=payload)

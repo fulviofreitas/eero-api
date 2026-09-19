@@ -5,12 +5,14 @@ All data extraction, field mapping, and transformation must be done by downstrea
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import resource_url, sub_resource_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,13 +33,25 @@ class TransferAPI(AuthenticatedAPI):
         super().__init__(auth_api, API_ENDPOINT)
 
     async def get_transfer_stats(
-        self, network_id: str, device_id: Optional[str] = None
+        self,
+        network_id: str,
+        device_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Get transfer statistics - returns raw Eero API response.
 
+        With no ``device_id``, GETs the network's ``transfer`` link. With a
+        ``device_id``, GETs the literal per-device transfer path (not a
+        published link).
+
         Args:
-            network_id: ID of the network to get stats from
-            device_id: Optional device ID to get stats for
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            device_id: Optional device ID to get stats for.
+            parent: The network's own cached envelope, if the caller has
+                one; used only when ``device_id`` is omitted, to prefer the
+                network's published ``transfer`` link. Read only; never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -56,9 +70,14 @@ class TransferAPI(AuthenticatedAPI):
                 device_id,
                 network_id,
             )
-            path = f"networks/{network_id}/devices/{device_id}/transfer"
+            url = resource_url(network_id, f"networks/{{id}}/devices/{device_id}/transfer")
         else:
             _LOGGER.debug("Getting transfer stats for network %s", network_id)
-            path = f"networks/{network_id}/transfer"
+            url = sub_resource_url(
+                network_id,
+                "networks/{id}/transfer",
+                link="transfer",
+                parent=as_envelope(parent),
+            )
 
-        return await self.get(path, auth_token=auth_token)
+        return await self.get(url, auth_token=auth_token)

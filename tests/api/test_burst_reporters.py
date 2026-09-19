@@ -50,3 +50,29 @@ class TestBurstReportersAPICreateReporter:
 
         with pytest.raises(EeroAuthenticationException):
             await burst_api.create_burst_reporter("network_123", {})
+
+    @pytest.mark.asyncio
+    async def test_create_burst_reporter_uses_default_template(self, burst_api, mock_session):
+        """Test create_burst_reporter builds the URL from the template with no parent."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await burst_api.create_burst_reporter("network_123", {"type": "burst"})
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.2/networks/network_123/burst_reporters")
+        assert call_args.kwargs["json"] == {"type": "burst"}
+
+    @pytest.mark.asyncio
+    async def test_create_burst_reporter_prefers_parent_link(self, burst_api, mock_session):
+        """Test create_burst_reporter uses the network's published burst_reporters link."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+        parent = {"resources": {"burst_reporters": "/2.3/networks/network_123/burst_reporters"}}
+
+        await burst_api.create_burst_reporter("network_123", {"type": "burst"}, parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/burst_reporters")

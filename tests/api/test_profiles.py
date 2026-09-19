@@ -136,148 +136,32 @@ class TestProfilesAPIPauseProfile:
             await profiles_api.pause_profile("network_123", "profile_001", True)
 
 
-class TestProfilesAPIContentFilter:
-    """Tests for content filter management."""
+class TestProfilesAPIRemovedContentFilterSurface:
+    """Content filtering/block-list/blocked-apps are not profile fields.
+
+    Live-verified: writing them here was a silent no-op. This class guards
+    against their reintroduction; the DNS-policy family serves this
+    functionality instead.
+    """
 
     @pytest.fixture
     def profiles_api(self, mock_session):
-        """Create a ProfilesAPI with mocked auth."""
         auth_api = MagicMock()
         auth_api.session = mock_session
         auth_api.get_auth_token = AsyncMock(return_value="auth_token")
         return ProfilesAPI(auth_api)
 
-    @pytest.mark.asyncio
-    async def test_update_content_filter_returns_raw_response(self, profiles_api, mock_session):
-        """Test updating content filter returns raw response."""
-        expected_response = {"meta": {"code": 200}, "data": {}}
-        mock_response = create_mock_response(200, expected_response)
-        mock_session.request.return_value = mock_response
-
-        result = await profiles_api.update_profile_content_filter(
-            "network_123",
-            "profile_001",
-            {"safe_search": True, "block_adult": True},
-        )
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["content_filter"]["safe_search"] is True
-        assert payload["content_filter"]["block_adult"] is True
-
-    @pytest.mark.asyncio
-    async def test_update_content_filter_not_authenticated(self, profiles_api):
-        """Test update_profile_content_filter raises when not authenticated."""
-        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await profiles_api.update_profile_content_filter(
-                "network_123", "profile_001", {"safe_search": True}
-            )
-
-
-class TestProfilesAPIBlockList:
-    """Tests for custom block/allow list management."""
-
-    @pytest.fixture
-    def profiles_api(self, mock_session):
-        """Create a ProfilesAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return ProfilesAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_update_block_list_returns_raw_response(self, profiles_api, mock_session):
-        """Test updating custom block list returns raw response."""
-        expected_response = {"meta": {"code": 200}, "data": {}}
-        mock_response = create_mock_response(200, expected_response)
-        mock_session.request.return_value = mock_response
-
-        result = await profiles_api.update_profile_block_list(
-            "network_123",
-            "profile_001",
-            ["example.com", "badsite.com"],
-            block=True,
-        )
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["custom_block_list"] == ["example.com", "badsite.com"]
-
-    @pytest.mark.asyncio
-    async def test_update_block_list_not_authenticated(self, profiles_api):
-        """Test update_profile_block_list raises when not authenticated."""
-        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await profiles_api.update_profile_block_list(
-                "network_123", "profile_001", ["example.com"]
-            )
-
-
-class TestProfilesAPIBlockedApplications:
-    """Tests for blocked applications management (Eero Plus)."""
-
-    @pytest.fixture
-    def profiles_api(self, mock_session):
-        """Create a ProfilesAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return ProfilesAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_get_blocked_applications_returns_raw_response(self, profiles_api, mock_session):
-        """Test getting blocked applications returns raw response."""
-        profile_data = {
-            "name": "Kids",
-            "premium_dns": {
-                "blocked_applications": ["youtube", "tiktok", "fortnite"],
-            },
-        }
-        expected_response = api_success_response(profile_data)
-        mock_response = create_mock_response(200, expected_response)
-        mock_session.request.return_value = mock_response
-
-        result = await profiles_api.get_blocked_applications("network_123", "profile_001")
-
-        assert "meta" in result
-        assert "data" in result
-
-    @pytest.mark.asyncio
-    async def test_get_blocked_applications_not_authenticated(self, profiles_api):
-        """Test get_blocked_applications raises when not authenticated."""
-        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await profiles_api.get_blocked_applications("network_123", "profile_001")
-
-    @pytest.mark.asyncio
-    async def test_set_blocked_applications_returns_raw_response(self, profiles_api, mock_session):
-        """Test setting blocked applications returns raw response."""
-        expected_response = {"meta": {"code": 200}, "data": {}}
-        mock_response = create_mock_response(200, expected_response)
-        mock_session.request.return_value = mock_response
-
-        result = await profiles_api.set_blocked_applications(
-            "network_123", "profile_001", ["youtube", "netflix"]
-        )
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["blocked_applications"] == ["youtube", "netflix"]
-
-    @pytest.mark.asyncio
-    async def test_set_blocked_applications_not_authenticated(self, profiles_api):
-        """Test set_blocked_applications raises when not authenticated."""
-        profiles_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await profiles_api.set_blocked_applications("network_123", "profile_001", ["youtube"])
+    @pytest.mark.parametrize(
+        "method_name",
+        [
+            "update_profile_content_filter",
+            "update_profile_block_list",
+            "get_blocked_applications",
+            "set_blocked_applications",
+        ],
+    )
+    def test_method_no_longer_exists(self, profiles_api, method_name):
+        assert not hasattr(profiles_api, method_name)
 
 
 class TestProfilesAPIDeviceManagement:
@@ -401,6 +285,45 @@ class TestProfilesAPICreateProfile:
 
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await profiles_api.create_profile("network_123", "Kids")
+
+    @pytest.mark.asyncio
+    async def test_create_profile_includes_devices_and_paused_when_supplied(
+        self, profiles_api, mock_session
+    ):
+        """Test devices/paused are included only when explicitly supplied."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"name": "Kids"})
+        )
+
+        await profiles_api.create_profile(
+            "network_123",
+            "Kids",
+            devices=["/2.2/networks/network_123/devices/device_abc"],
+            paused=True,
+        )
+
+        payload = mock_session.request.call_args.kwargs["json"]
+        assert payload == {
+            "name": "Kids",
+            "devices": [{"url": "/2.2/networks/network_123/devices/device_abc"}],
+            "paused": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_profile_prefers_parent_profiles_link(self, profiles_api, mock_session):
+        """Test create_profile resolves the URL from the parent's profiles link."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"name": "Kids"})
+        )
+        parent = {
+            "url": "/2.2/networks/network_123",
+            "resources": {"profiles": "/2.3/networks/network_123/profiles"},
+        }
+
+        await profiles_api.create_profile("network_123", "Kids", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/profiles"
 
 
 class TestProfilesAPIRenameProfile:
