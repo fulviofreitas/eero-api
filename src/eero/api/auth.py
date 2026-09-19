@@ -1,30 +1,55 @@
-"""Authentication API for Eero."""
+"""Authentication API for Eero.
 
-from datetime import datetime, timedelta
-from typing import Optional
+Implements the login -> verify -> authenticated-request -> refresh -> logout
+lifecycle against the eero cloud API. All requests go through the shared
+transport in ``base.py`` (``BaseAPI.post`` / ``RequestEncoding``); this
+module never constructs headers, cookies, URLs, or body encodings directly.
+"""
 
-import aiohttp
+from __future__ import annotations
+
+import asyncio
+from typing import Final, Optional
+
 from aiohttp import ClientSession
 
 from ..const import (
     API_ENDPOINT,
+    DEFAULT_ACCEPT_LANGUAGE,
     LOGIN_ENDPOINT,
+    LOGIN_REFRESH_ENDPOINT,
+    LOGIN_RESEND_ENDPOINT,
     LOGIN_VERIFY_ENDPOINT,
+    LOGOUT_COOKIE_FIELD_NAME,
     LOGOUT_ENDPOINT,
-    REFRESH_ENDPOINTS,
-    SESSION_TOKEN_KEY,
+    SESSION_COOKIE_PREFIX,
 )
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
     EeroNetworkException,
+    EeroTimeoutException,
     EeroValidationException,
 )
 from ..logging import get_secure_logger
 from .auth_storage import AuthCredentials, CredentialStorage, create_storage
-from .base import BaseAPI
+from .base import BaseAPI, RequestEncoding
 
 _LOGGER = get_secure_logger(__name__)
+
+# The single-flight refresh guard waits this long for an in-flight refresh
+# before giving up and letting the waiting caller fail with its own original
+# authentication error. Matches BaseAPI._request's default total timeout, so
+# a waiter never outlives the request that would have triggered its own
+# refresh anyway.
+_SESSION_REFRESH_GUARD_TIMEOUT_SECONDS: Final[float] = 30.0
+
+# The one error_code that must NOT clear stored credentials on a 401 from
+# the refresh endpoint -- the session is mid-verification, not gone. Every
+# other 401 error_code (including "error.session.expired" / "error.session.
+# invalid" / "error.session.revoked", and one absent entirely) is terminal
+# and clears credentials (see _do_refresh).
+_SESSION_REFRESH_NON_TERMINAL_ERROR_CODE: Final[str] = "error.verification.required"
 
 
 class AuthAPI(BaseAPI):
@@ -35,6 +60,10 @@ class AuthAPI(BaseAPI):
         session: Optional[ClientSession] = None,
         cookie_file: Optional[str] = None,
         use_keyring: bool = True,
+        *,
+        send_legacy_cookie: bool = True,
+        accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        get_retries: int = 0,
     ) -> None:
         """Initialize the AuthAPI.
 
@@ -42,24 +71,36 @@ class AuthAPI(BaseAPI):
             session: Optional aiohttp ClientSession to use for requests
             cookie_file: Optional path to a file for storing authentication cookies
             use_keyring: Whether to use keyring for secure token storage
+            send_legacy_cookie: See ``BaseAPI.__init__``.
+            accept_language: See ``BaseAPI.__init__``.
+            get_retries: See ``BaseAPI.__init__``.
         """
-        super().__init__(session, cookie_file, API_ENDPOINT)
+        super().__init__(
+            session,
+            cookie_file,
+            API_ENDPOINT,
+            send_legacy_cookie=send_legacy_cookie,
+            accept_language=accept_language,
+            get_retries=get_retries,
+        )
         self._storage: CredentialStorage = create_storage(use_keyring, cookie_file)
         self._credentials = AuthCredentials()
         self._login_in_progress = False
+        # Single-flight guard for refresh_session(): the future for the
+        # currently in-flight refresh, or None when no refresh is running.
+        self._refresh_future: "Optional[asyncio.Future[bool]]" = None
 
     @property
     def is_authenticated(self) -> bool:
-        """Check if the client is authenticated.
+        """Check whether a session token is present.
+
+        There is no client-side session expiry -- the server is the sole
+        authority on session validity, signalled via 401 responses.
 
         Returns:
-            True if authenticated, False otherwise
+            True if a session token is present, False otherwise
         """
-        if self._credentials.has_valid_session():
-            return True
-        if self._credentials.session_id:
-            _LOGGER.debug("Session expired")
-        return False
+        return bool(self._credentials.session_id)
 
     async def __aenter__(self) -> "AuthAPI":
         """Enter async context manager."""
@@ -75,11 +116,6 @@ class AuthAPI(BaseAPI):
         """Load authentication credentials from storage."""
         self._credentials = await self._storage.load()
 
-        # Set session cookie if we have a valid session
-        if self._credentials.session_id and not self._credentials.is_session_expired():
-            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-            _LOGGER.debug("Loaded session cookie from storage")
-
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
         await self._storage.save(self._credentials)
@@ -91,10 +127,11 @@ class AuthAPI(BaseAPI):
             user_identifier: Email address or phone number for the Eero account
 
         Returns:
-            True if login request was successful
+            True if a session token was received, False otherwise
 
         Raises:
-            EeroAuthenticationException: If login fails
+            EeroAuthenticationException: If the login request itself fails
+                (e.g. the identifier is rejected)
             EeroNetworkException: If there's a network error
         """
         # Clear any previous authentication data
@@ -105,42 +142,29 @@ class AuthAPI(BaseAPI):
         await self._save_credentials()
 
         try:
-            # Clear cookies to ensure fresh login
-            self.session.cookie_jar.clear()
-
             _LOGGER.debug("Starting login process")
 
             response = await self.post(
                 LOGIN_ENDPOINT,
-                json={"login": user_identifier},
+                data={"login": user_identifier},
             )
 
             # Extract user_token from API response and store as session_id
-            # (it becomes the session token after verification)
+            # (it becomes the session token once verify() succeeds).
             user_token = response.get("data", {}).get("user_token")
-            if user_token:
-                _LOGGER.debug("User token received")
-            else:
-                _LOGGER.debug("User token not received")
-
             if not user_token:
-                _LOGGER.error("Login failed: No user token received")
+                _LOGGER.debug("Login response did not include a session token")
                 return False
 
-            # Store as session_id (will be validated after verify_login)
             self._credentials.session_id = user_token
-
-            # Save the token (session_expiry is None until verified)
             await self._save_credentials()
 
             return True
         except EeroAPIException as err:
             _LOGGER.error("Login failed: %s", err)
-            raise EeroAuthenticationException(f"Login failed: {err}") from err
-        except aiohttp.ClientError as err:
-            error_msg = f"Network error during login: {err}"
-            _LOGGER.error(error_msg)
-            raise EeroNetworkException(error_msg) from err
+            raise EeroAuthenticationException(
+                f"Login failed: {err}", envelope=err.envelope, error_code=err.error_code
+            ) from err
 
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.
@@ -152,62 +176,50 @@ class AuthAPI(BaseAPI):
             True if verification was successful
 
         Raises:
-            EeroAuthenticationException: If verification fails
+            EeroAuthenticationException: If verification fails (an incorrect
+                code surfaces here with the response envelope and error_code
+                attached)
             EeroNetworkException: If there's a network error
         """
         if not self._credentials.session_id:
             raise EeroAuthenticationException("No session token available. Login first.")
 
         try:
-            # Log the verification attempt (sensitive data masked)
             _LOGGER.debug("Starting verification process")
             _LOGGER.debug("Verification code: [REDACTED]")
 
-            # Set the session token as a cookie for verification
-            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-
-            # Make the verification request
             await self.post(
                 LOGIN_VERIFY_ENDPOINT,
                 auth_token=self._credentials.session_id,
-                json={"code": verification_code},
+                data={"code": verification_code},
             )
 
-            # Session ID is already set from login, now it's validated
+            # The response carries the user object, not a new token -- the
+            # session_id set during login() is what's now verified.
             self._login_in_progress = False
-
-            # Set expiry to 30 days from now (typical session length)
-            self._credentials.session_expiry = datetime.now().replace(microsecond=0) + timedelta(
-                days=30
-            )
-
-            # Update session cookie for future requests
-            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-            _LOGGER.debug("Session cookie updated successfully")
             await self._save_credentials()
             return True
 
+        except EeroAuthenticationException as err:
+            # A wrong code (or any other verification failure) surfaces here
+            # as a 401 from the transport, already carrying the envelope and
+            # error_code -- no further wrapping needed.
+            _LOGGER.error("Verification failed: %s", err)
+            raise
         except EeroAPIException as err:
-            # Check for specific error codes
-            if getattr(err, "status_code", 0) == 401:
-                _LOGGER.error("Verification code incorrect")
-                raise EeroAuthenticationException("Verification code incorrect") from err
-            else:
-                _LOGGER.error("Verification failed: %s", err)
-                raise EeroAuthenticationException(f"Verification failed: {err}") from err
-        except aiohttp.ClientError as err:
-            error_msg = f"Network error during verification: {err}"
-            _LOGGER.error(error_msg)
-            raise EeroNetworkException(error_msg) from err
+            _LOGGER.error("Verification failed: %s", err)
+            raise EeroAuthenticationException(
+                f"Verification failed: {err}", envelope=err.envelope, error_code=err.error_code
+            ) from err
 
     async def resend_verification_code(self) -> bool:
         """Resend the verification code.
 
         Returns:
-            True if resend was successful
+            True if resend was successful, False on any API-level failure
 
         Raises:
-            EeroAuthenticationException: If resend fails
+            EeroAuthenticationException: If no session token is available
             EeroNetworkException: If there's a network error
         """
         if not self._credentials.session_id:
@@ -216,25 +228,17 @@ class AuthAPI(BaseAPI):
         try:
             _LOGGER.debug("Resending verification code")
 
-            # Set the session token as a cookie
-            self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-
-            # Make the resend request
             await self.post(
-                f"{LOGIN_ENDPOINT}/resend",
+                LOGIN_RESEND_ENDPOINT,
                 auth_token=self._credentials.session_id,
                 json={},
             )
 
-            _LOGGER.info("Verification code resent successfully")
+            _LOGGER.debug("Verification code resent successfully")
             return True
         except EeroAPIException as err:
             _LOGGER.error("Failed to resend verification code: %s", err)
             return False
-        except aiohttp.ClientError as err:
-            error_msg = f"Network error during resend: {err}"
-            _LOGGER.error(error_msg)
-            raise EeroNetworkException(error_msg) from err
 
     async def logout(self) -> bool:
         """Log out from the Eero API.
@@ -249,11 +253,13 @@ class AuthAPI(BaseAPI):
             _LOGGER.warning("Attempted to logout when not authenticated")
             return False
 
+        session_id = self._credentials.session_id
+
         try:
             await self.post(
                 LOGOUT_ENDPOINT,
-                auth_token=self._credentials.session_id,
-                json={},  # Empty payload for logout
+                auth_token=session_id,
+                data={LOGOUT_COOKIE_FIELD_NAME: f"{SESSION_COOKIE_PREFIX}{session_id}"},
             )
             _LOGGER.debug("Logout API call succeeded")
         except EeroAuthenticationException:
@@ -262,102 +268,118 @@ class AuthAPI(BaseAPI):
         except EeroAPIException as err:
             _LOGGER.warning("Logout API call failed: %s", err)
             # Still clear local credentials even if server call failed
-        except aiohttp.ClientError as err:
-            _LOGGER.warning("Network error during logout: %s", err)
-            # Still clear local credentials even if network failed
+        except (EeroNetworkException, EeroTimeoutException) as err:
+            _LOGGER.warning("Logout API call failed: %s", err)
+            # Still clear local credentials even if the request never reached
+            # the server -- the whole point of logging out locally.
 
         # Always clear local credentials regardless of API response
         self._credentials.clear_all()
-
-        # Clear cookies
-        self.session.cookie_jar.clear()
-
-        # Update storage
         await self._save_credentials()
         return True
 
     async def refresh_session(self) -> bool:
-        """Refresh the session using the refresh token.
+        """Refresh the current session, coalescing concurrent callers.
 
-        Attempts each endpoint in REFRESH_ENDPOINTS in order.  A 404 response
-        means that particular path is not present on the server; the next
-        endpoint is tried.  Any other API error (401, 403, 5xx, …) is treated
-        as a definitive failure and causes credentials to be cleared
-        immediately without trying further endpoints.
+        The API's refresh endpoint reuses the existing session
+        token -- there is no separate refresh token. A successful refresh
+        response carries a token in its body, but per SDK policy this value
+        is intentionally ignored: the current session token remains the one
+        in use.
+
+        Concurrent callers (e.g. several domain APIs each hitting a
+        server-driven ``error.session.refresh`` signal at once) share a
+        single in-flight refresh: the first caller performs the request,
+        later callers await its outcome instead of issuing their own. A
+        caller that has waited longer than the guard timeout gives up and
+        returns False, which causes its own original authentication error
+        to be raised by the transport rather than fabricating a new one.
 
         Returns:
-            True if session refresh was successful
+            True if session refresh was successful (HTTP 200), False on any
+            API error.
 
         Raises:
-            EeroAuthenticationException: If no refresh token is available
+            EeroAuthenticationException: If no session token is available to
+                refresh
             EeroNetworkException: If there's a network error
         """
-        if not self._credentials.refresh_token:
-            raise EeroAuthenticationException("No refresh token available")
-
-        try:
-            for endpoint in REFRESH_ENDPOINTS:
-                try:
-                    response = await self.post(
-                        endpoint,
-                        json={"refresh_token": self._credentials.refresh_token},
-                    )
-                except EeroAPIException as err:
-                    if err.status_code == 404:
-                        _LOGGER.debug(
-                            "Refresh endpoint not available on server, trying next: %s",
-                            endpoint,
-                        )
-                        continue
-                    # Non-404 API error (e.g. 401, 403, 5xx) — treat as terminal.
-                    _LOGGER.error("Session refresh failed: %s", err)
-                    self._credentials.clear_all()
-                    await self._save_credentials()
-                    return False
-
-                response_data = response.get("data", {})
-                self._credentials.session_id = response_data.get(SESSION_TOKEN_KEY)
-                self._credentials.refresh_token = response_data.get("refresh_token")
-
-                # Set expiry to 30 days from now
-                self._credentials.session_expiry = datetime.now().replace(
-                    microsecond=0
-                ) + timedelta(days=30)
-
-                # Update session cookie for future requests
-                if self._credentials.session_id:
-                    self.session.cookie_jar.update_cookies({"s": self._credentials.session_id})
-                    await self._save_credentials()
-                    return True
+        existing_future = self._refresh_future
+        if existing_future is not None and not existing_future.done():
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(existing_future),
+                    timeout=_SESSION_REFRESH_GUARD_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Timed out waiting for an in-flight session refresh")
                 return False
 
-            # All endpoints returned 404 — no accepted refresh path found.
-            _LOGGER.error("Session refresh failed: no refresh endpoint was accepted by the server")
+        future: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._refresh_future = future
+        try:
+            result = await self._do_refresh()
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        else:
+            future.set_result(result)
+            return result
+        finally:
+            if self._refresh_future is future:
+                self._refresh_future = None
+
+    async def _do_refresh(self) -> bool:
+        """Perform the actual refresh request. Only called by the single-flight leader.
+
+        Returns:
+            True on HTTP 200, False on any API-level error.
+
+        Raises:
+            EeroAuthenticationException: If no session token is available
+            EeroNetworkException: If there's a network error
+        """
+        if not self._credentials.session_id:
+            raise EeroAuthenticationException("No session token available. Login first.")
+
+        try:
+            await self.post(
+                LOGIN_REFRESH_ENDPOINT,
+                auth_token=self._credentials.session_id,
+                encoding=RequestEncoding.EMPTY_JSON_STRING,
+            )
+        except EeroAuthenticationException as err:
+            if err.error_code == _SESSION_REFRESH_NON_TERMINAL_ERROR_CODE:
+                # The session is mid-verification, not gone -- retaining
+                # credentials lets the caller finish verify() and retry.
+                _LOGGER.debug("Session refresh blocked pending verification")
+                return False
+            _LOGGER.debug(
+                "Session refresh failed with a terminal authentication error (%s); "
+                "clearing credentials",
+                err.error_code or "no error_code",
+            )
             self._credentials.clear_all()
             await self._save_credentials()
             return False
-        except aiohttp.ClientError as err:
-            raise EeroNetworkException(f"Network error during session refresh: {err}") from err
+        except EeroAPIException as err:
+            _LOGGER.debug("Session refresh failed: %s", err)
+            return False
+
+        _LOGGER.debug("Session refreshed; server-issued token ignored per SDK policy")
+        return True
 
     async def ensure_authenticated(self) -> bool:
-        """Ensure the client is authenticated, refreshing if necessary.
+        """Report whether a session token is currently present.
+
+        There is no client-driven refresh-on-expiry path -- refreshes are
+        exclusively server-driven (see ``BaseAPI._request``'s handling of the
+        ``error.session.refresh`` signal).
 
         Returns:
             True if authenticated, False otherwise
         """
-        if not self.is_authenticated:
-            return False
-
-        # Check if session needs refresh
-        if (
-            self._credentials.session_expiry
-            and datetime.now() > self._credentials.session_expiry
-            and self._credentials.refresh_token
-        ):
-            _LOGGER.debug("Session expired, attempting to refresh")
-            return await self.refresh_session()
-
-        return True
+        return self.is_authenticated
 
     async def get_auth_token(self) -> Optional[str]:
         """Get the current authentication token.
@@ -365,7 +387,7 @@ class AuthAPI(BaseAPI):
         Returns:
             Current authentication token or None
         """
-        if await self.ensure_authenticated():
+        if self.is_authenticated:
             return self._credentials.session_id
         return None
 
@@ -373,14 +395,11 @@ class AuthAPI(BaseAPI):
         """Clear all authentication data including stored credentials.
 
         This completely removes all authentication data from storage,
-        including session tokens and refresh tokens.
+        including the session token.
         """
         # Clear in-memory credentials
         self._credentials.clear_all()
         self._login_in_progress = False
-
-        # Clear cookies
-        self.session.cookie_jar.clear()
 
         # Delete stored credentials entirely (removes file/keyring entry)
         await self._storage.clear()
@@ -394,12 +413,9 @@ class AuthAPI(BaseAPI):
         is supplied externally (e.g. from a secret manager, environment
         variable, or test fixture).
 
-        The token is written to the in-memory AuthCredentials, persisted via
-        the configured storage backend, and installed into the aiohttp
-        cookie jar as ``s=<token>`` so the very next request is authenticated.
-
         Args:
-            token: The opaque session-cookie value (the ``s=`` cookie).
+            token: The opaque session token (the value the API expects as
+                the ``s=`` cookie / ``X-User-Token`` header).
 
         Raises:
             EeroValidationException: If the token is empty or non-string.
@@ -408,26 +424,18 @@ class AuthAPI(BaseAPI):
             raise EeroValidationException("token", "must be a non-empty string")
 
         self._credentials.session_id = token
-        self._credentials.session_expiry = datetime.now().replace(microsecond=0) + timedelta(
-            days=30
-        )
-
-        self.session.cookie_jar.update_cookies({"s": token})
         await self._save_credentials()
 
         _LOGGER.debug("Session token injected externally")
 
     async def clear_session_token(self) -> None:
-        """Clear the active session token from cookie jar, in-memory creds, and storage.
+        """Clear the active session token from in-memory credentials and storage.
 
         This is a narrower counterpart to ``clear_auth_data``: it removes the
         session token but does not touch any other persisted state beyond
         what is implied by re-saving credentials after clearing.
         """
         self._credentials.session_id = None
-        self._credentials.session_expiry = None
-
-        self.session.cookie_jar.clear()
         await self._save_credentials()
 
         _LOGGER.debug("Session token cleared")

@@ -1,9 +1,16 @@
 """Credential storage backends for Eero authentication.
 
-This module provides storage backends for persisting authentication tokens:
+This module provides storage backends for persisting the session token:
 - KeyringStorage: Uses OS keyring for secure credential storage
 - FileStorage: Uses JSON file with restricted permissions
 - MemoryStorage: In-memory only, no persistence (for testing/ephemeral use)
+- ChainedStorage: Tries a primary backend, falling back to a secondary one
+
+v2.0 credential schema: the only value ever persisted is the session token
+itself (as ``session_id``). There is no client-observable session expiry and
+no client-held refresh token -- refreshing a session reuses the current
+session token (see ``AuthAPI.refresh_session``). Records written before this
+schema existed are migrated in place the first time they are loaded.
 """
 
 import json
@@ -12,83 +19,74 @@ import os
 import stat
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 import keyring
+
+from ..const import CREDENTIAL_SCHEMA_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class AuthCredentials:
-    """Container for authentication credentials.
-
-    Auth-only credential storage:
-    - session_id: The auth token (used as 's' cookie for API requests)
-    - refresh_token: Optional token for refreshing expired sessions
-    - session_expiry: When the session expires
+    """Container for the session token.
 
     Note: User preferences (like preferred_network_id) should be managed
-    by the CLI application, not stored with auth credentials.
+    by the consuming application, not stored with auth credentials.
     """
 
     session_id: Optional[str] = None
-    refresh_token: Optional[str] = None
-    session_expiry: Optional[datetime] = None
 
-    def is_session_expired(self) -> bool:
-        """Check if the session has expired."""
-        if self.session_expiry is None:
-            return True
-        return datetime.now() > self.session_expiry
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to the persisted record shape.
 
-    def has_valid_session(self) -> bool:
-        """Check if we have a valid, non-expired session."""
-        return bool(self.session_id and not self.is_session_expired())
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for serialization."""
+        Returns:
+            A dictionary with the session token and the current
+            ``schema_version`` marker.
+        """
         return {
             "session_id": self.session_id,
-            "refresh_token": self.refresh_token,
-            "session_expiry": (self.session_expiry.isoformat() if self.session_expiry else None),
+            "schema_version": CREDENTIAL_SCHEMA_VERSION,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "AuthCredentials":
-        """Create from dictionary.
+    def from_dict(cls, data: Dict[str, Any]) -> "AuthCredentials":
+        """Create from an already-current (``schema_version`` present) record.
 
-        Handles backward compatibility with old cookie files that had
-        user_token instead of session_id.
+        Args:
+            data: A previously-persisted record carrying ``schema_version``.
+
+        Returns:
+            The corresponding ``AuthCredentials``.
         """
-        expiry = data.get("session_expiry")
-        session_expiry = None
-        if expiry:
-            try:
-                session_expiry = datetime.fromisoformat(expiry)
-            except ValueError:
-                _LOGGER.warning("Invalid session_expiry date format in stored credentials")
-
-        # Backward compatibility: use user_token if session_id not present
-        session_id = data.get("session_id") or data.get("user_token")
-
-        return cls(
-            session_id=session_id,
-            refresh_token=data.get("refresh_token"),
-            session_expiry=session_expiry,
-        )
-
-    def clear_session(self) -> None:
-        """Clear session-related credentials."""
-        self.session_id = None
-        self.session_expiry = None
+        return cls(session_id=data.get("session_id"))
 
     def clear_all(self) -> None:
-        """Clear all credentials."""
+        """Clear the stored session token."""
         self.session_id = None
-        self.refresh_token = None
-        self.session_expiry = None
+
+
+def _parse_stored_record(data: Dict[str, Any]) -> Tuple[AuthCredentials, bool]:
+    """Parse a raw stored credential record, migrating legacy shapes.
+
+    A record written before the ``schema_version`` marker existed may carry
+    a legacy ``user_token`` field instead of ``session_id``, alongside
+    now-unsupported fields such as ``refresh_token`` / ``session_expiry``.
+    Those extra fields are dropped -- only the token itself is retained.
+
+    Args:
+        data: The raw JSON-decoded record.
+
+    Returns:
+        A tuple of ``(credentials, migrated)`` where ``migrated`` is True
+        when the record predated the ``schema_version`` marker and required
+        conversion to the current shape.
+    """
+    if "schema_version" in data:
+        return AuthCredentials.from_dict(data), False
+    session_id = data.get("session_id") or data.get("user_token")
+    return AuthCredentials(session_id=session_id), True
 
 
 class CredentialStorage(ABC):
@@ -99,7 +97,7 @@ class CredentialStorage(ABC):
         """Load credentials from storage.
 
         Returns:
-            AuthCredentials instance (may have None values if not found)
+            AuthCredentials instance (``session_id`` is None if not found)
         """
         pass
 
@@ -125,17 +123,15 @@ class KeyringStorage(CredentialStorage):
     ACCOUNT_NAME = "auth-tokens"
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from keyring."""
+        """Load credentials from keyring, migrating a legacy record in place."""
         try:
             token_data = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
             if token_data:
                 data = json.loads(token_data)
-                credentials = AuthCredentials.from_dict(data)
+                credentials, migrated = _parse_stored_record(data)
 
-                # Clear expired sessions
-                if credentials.is_session_expired() and credentials.session_id:
-                    _LOGGER.debug("Session expired, clearing from keyring")
-                    credentials.clear_session()
+                if migrated:
+                    _LOGGER.debug("Migrated legacy credential record in keyring storage")
                     await self.save(credentials)
 
                 return credentials
@@ -183,7 +179,7 @@ class FileStorage(CredentialStorage):
         return self._file_path
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from file."""
+        """Load credentials from file, migrating a legacy record in place."""
         try:
             if not os.path.exists(self._file_path):
                 _LOGGER.debug("Cookie file not found: %s", self._file_path)
@@ -191,15 +187,14 @@ class FileStorage(CredentialStorage):
 
             with open(self._file_path, "r") as f:
                 data = json.load(f)
-                credentials = AuthCredentials.from_dict(data)
 
-                # Clear expired sessions
-                if credentials.is_session_expired() and credentials.session_id:
-                    _LOGGER.debug("Session expired, clearing from file")
-                    credentials.clear_session()
-                    await self.save(credentials)
+            credentials, migrated = _parse_stored_record(data)
 
-                return credentials
+            if migrated:
+                _LOGGER.debug("Migrated legacy credential record in file storage")
+                await self.save(credentials)
+
+            return credentials
 
         except (FileNotFoundError, json.JSONDecodeError) as e:
             _LOGGER.debug("Error loading cookie file: %s", e)
@@ -264,7 +259,10 @@ class MemoryStorage(CredentialStorage):
 class ChainedStorage(CredentialStorage):
     """Storage that tries multiple backends in order.
 
-    Useful for trying keyring first, then falling back to file storage.
+    Useful for trying keyring first, then falling back to file storage. Each
+    underlying backend performs its own legacy-record migration on load (see
+    ``KeyringStorage.load`` / ``FileStorage.load``); this class only decides
+    which backend's result to use and keeps them in sync.
     """
 
     def __init__(self, primary: CredentialStorage, fallback: CredentialStorage) -> None:
