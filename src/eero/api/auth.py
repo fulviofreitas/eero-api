@@ -9,7 +9,7 @@ module never constructs headers, cookies, URLs, or body encodings directly.
 from __future__ import annotations
 
 import asyncio
-from typing import Final, Optional
+from typing import Final, FrozenSet, Optional
 
 from aiohttp import ClientSession
 
@@ -24,6 +24,7 @@ from ..const import (
     LOGOUT_ENDPOINT,
     SESSION_COOKIE_PREFIX,
 )
+from ..errors import ErrorGroup, classify_error_code
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
@@ -44,12 +45,13 @@ _LOGGER = get_secure_logger(__name__)
 # refresh anyway.
 _SESSION_REFRESH_GUARD_TIMEOUT_SECONDS: Final[float] = 30.0
 
-# The one error_code that must NOT clear stored credentials on a 401 from
-# the refresh endpoint -- the session is mid-verification, not gone. Every
-# other 401 error_code (including "error.session.expired" / "error.session.
-# invalid" / "error.session.revoked", and one absent entirely) is terminal
-# and clears credentials (see _do_refresh).
-_SESSION_REFRESH_NON_TERMINAL_ERROR_CODE: Final[str] = "error.verification.required"
+# Credentials are cleared on a 401 from the refresh endpoint only when the
+# error_code falls in the catalogue's Session group (a terminal, "your
+# session is really gone" signal) or is absent/unrecognised. Every other
+# recognised 401 error_code -- notably the verification/login-state group,
+# where the token is mid-verification rather than gone -- leaves stored
+# credentials untouched so the caller can finish verify() and retry.
+_CREDENTIAL_CLEARING_GROUPS: Final[FrozenSet[ErrorGroup]] = frozenset({ErrorGroup.SESSION})
 
 
 class AuthAPI(BaseAPI):
@@ -349,10 +351,18 @@ class AuthAPI(BaseAPI):
                 encoding=RequestEncoding.EMPTY_JSON_STRING,
             )
         except EeroAuthenticationException as err:
-            if err.error_code == _SESSION_REFRESH_NON_TERMINAL_ERROR_CODE:
-                # The session is mid-verification, not gone -- retaining
-                # credentials lets the caller finish verify() and retry.
-                _LOGGER.debug("Session refresh blocked pending verification")
+            group = classify_error_code(err.error_code)
+            if group not in _CREDENTIAL_CLEARING_GROUPS and group is not None:
+                # A recognised, non-Session error_code (e.g. the
+                # verification/login-state group, or the session-refresh
+                # signal itself) means the session is mid-verification or
+                # otherwise not gone -- retaining credentials lets the
+                # caller finish verify() and retry.
+                _LOGGER.debug(
+                    "Session refresh blocked by a non-terminal authentication error (%s); "
+                    "retaining credentials",
+                    err.error_code,
+                )
                 return False
             _LOGGER.debug(
                 "Session refresh failed with a terminal authentication error (%s); "

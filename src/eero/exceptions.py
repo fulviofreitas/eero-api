@@ -95,35 +95,246 @@ class EeroTimeoutException(EeroException):
     pass
 
 
-class EeroNotFoundException(EeroException):
-    """Exception raised when a resource is not found."""
+class EeroAccessDeniedException(EeroAPIException):
+    """Exception raised when the API denies access to a resource (HTTP 403).
 
-    def __init__(self, resource_type: str, resource_id: str):
-        self.resource_type = resource_type
-        self.resource_id = resource_id
-        super().__init__(f"{resource_type} '{resource_id}' not found")
+    Distinct from :class:`EeroAuthenticationException`: the caller is
+    authenticated, but not permitted to perform the operation.
+    ``is_auth_error()`` (inherited from :class:`EeroAPIException`) is False
+    for this exception, since it is only ever raised for a 403.
+    """
+
+    pass
+
+
+class EeroClientBlockedException(EeroAPIException):
+    """Exception raised when the API rejects requests from this client version."""
+
+    pass
+
+
+class EeroNotFoundException(EeroException):
+    """Exception raised when a resource is not found.
+
+    Constructed either directly, with a known resource type and ID (the
+    original, backward-compatible shape), or via :meth:`from_response` when
+    the transport receives an HTTP 404 with no way to know the resource type
+    or ID up front (for example a network-scoped path, or a 404 carrying a
+    free-text sentence instead of a catalogue error string).
+    """
+
+    def __init__(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            resource_type: The kind of resource that was not found (e.g.
+                ``"network"``, ``"device"``).
+            resource_id: The identifier that was looked up.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+        """
+        self.resource_type: Optional[str] = resource_type
+        self.resource_id: Optional[str] = resource_id
+        super().__init__(
+            f"{resource_type} '{resource_id}' not found",
+            envelope=envelope,
+            error_code=error_code,
+        )
+
+    @classmethod
+    def from_response(
+        cls,
+        message: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ) -> "EeroNotFoundException":
+        """Build a 404 exception when no resource type/ID is known up front.
+
+        Args:
+            message: A pre-built, human-readable message describing the 404.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+
+        Returns:
+            An :class:`EeroNotFoundException` with ``resource_type`` and
+            ``resource_id`` set to ``None``.
+        """
+        instance = cls.__new__(cls)
+        instance.resource_type = None
+        instance.resource_id = None
+        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        return instance
 
 
 class EeroPremiumRequiredException(EeroException):
     """Exception raised when a feature requires Eero Plus subscription."""
 
-    def __init__(self, feature: str = "This feature"):
+    def __init__(
+        self,
+        feature: str = "This feature",
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            feature: The name of the gated feature.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+        """
         self.feature = feature
-        super().__init__(f"{feature} requires an Eero Plus subscription")
+        super().__init__(
+            f"{feature} requires an Eero Plus subscription",
+            envelope=envelope,
+            error_code=error_code,
+        )
+
+    @classmethod
+    def from_response(
+        cls,
+        message: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ) -> "EeroPremiumRequiredException":
+        """Build a premium-required exception directly from an API response.
+
+        Args:
+            message: A pre-built, human-readable message from the transport.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+
+        Returns:
+            An :class:`EeroPremiumRequiredException` with ``feature`` set to
+            the generic default, since the transport has no per-feature
+            context at classification time.
+        """
+        instance = cls.__new__(cls)
+        instance.feature = "This feature"
+        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        return instance
 
 
 class EeroFeatureUnavailableException(EeroException):
     """Exception raised when a feature is not available on the device."""
 
-    def __init__(self, feature: str, reason: str = "not supported on this device"):
+    def __init__(
+        self,
+        feature: str,
+        reason: str = "not supported on this device",
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            feature: The name of the unavailable feature.
+            reason: A short explanation of why it is unavailable.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+        """
         self.feature = feature
         self.reason = reason
-        super().__init__(f"{feature} is {reason}")
+        super().__init__(f"{feature} is {reason}", envelope=envelope, error_code=error_code)
+
+    @classmethod
+    def from_response(
+        cls,
+        message: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ) -> "EeroFeatureUnavailableException":
+        """Build a feature-unavailable exception directly from an API response.
+
+        Args:
+            message: A pre-built, human-readable message from the transport.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+
+        Returns:
+            An :class:`EeroFeatureUnavailableException` with ``feature`` and
+            ``reason`` derived from ``error_code`` (or a generic fallback)
+            since the transport has no per-feature context at classification
+            time.
+        """
+        instance = cls.__new__(cls)
+        instance.feature = error_code or "feature"
+        instance.reason = message
+        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        return instance
 
 
 class EeroValidationException(EeroException):
-    """Exception raised for validation errors."""
+    """Exception raised for validation errors.
 
-    def __init__(self, field: str, message: str):
+    Constructed either directly, with a known field name (the original,
+    client-side-validation shape used throughout the SDK), or via
+    :meth:`from_response` for a validation error reported by the API itself.
+    """
+
+    def __init__(
+        self,
+        field: str,
+        message: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            field: The name of the field that failed validation.
+            message: A description of the validation failure.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+        """
         self.field = field
-        super().__init__(f"Validation error for '{field}': {message}")
+        super().__init__(
+            f"Validation error for '{field}': {message}",
+            envelope=envelope,
+            error_code=error_code,
+        )
+
+    @classmethod
+    def from_response(
+        cls,
+        message: str,
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ) -> "EeroValidationException":
+        """Build a validation exception directly from an API response.
+
+        Args:
+            message: A pre-built, human-readable message from the transport.
+            envelope: The raw, unmodified response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]``, or
+                ``None``.
+
+        Returns:
+            An :class:`EeroValidationException` with ``field`` set to
+            ``"request"``, since the transport has no per-field context at
+            classification time.
+        """
+        instance = cls.__new__(cls)
+        instance.field = "request"
+        EeroException.__init__(instance, message, envelope=envelope, error_code=error_code)
+        return instance

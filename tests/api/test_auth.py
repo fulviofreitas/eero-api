@@ -580,9 +580,13 @@ class TestAuthAPISessionRefresh:
         "error_code,should_clear",
         [
             ("error.verification.required", False),
+            ("error.verification.invalid", False),
+            ("error.login.unknown", False),
+            ("error.session.refresh", False),
             ("error.session.expired", True),
             ("error.session.invalid", True),
             ("error.session.revoked", True),
+            ("error.something_unrecognised", True),
             (None, True),
         ],
     )
@@ -590,7 +594,12 @@ class TestAuthAPISessionRefresh:
     async def test_refresh_session_credential_clearing_matrix(
         self, api_with_session, error_code, should_clear
     ):
-        """Test refresh_session clears credentials on any 401 except error.verification.required."""
+        """Credentials clear only for the catalogue's Session group or an unrecognised/absent code.
+
+        The verification/login-state group and the session-refresh signal
+        itself both leave stored credentials untouched -- the session is
+        mid-verification or merely due for a refresh, not gone.
+        """
         api_with_session._credentials.session_id = "sess_token"
         err = EeroAuthenticationException("unauthorized", error_code=error_code)
 

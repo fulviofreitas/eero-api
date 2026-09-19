@@ -3,11 +3,17 @@
 from .api import EeroAPI
 from .api.base import id_from_url
 from .client import EeroClient
+from .errors import ErrorGroup, classify_error_code, exception_for_error
 from .exceptions import (
+    EeroAccessDeniedException,
     EeroAPIException,
     EeroAuthenticationException,
+    EeroClientBlockedException,
     EeroException,
+    EeroFeatureUnavailableException,
     EeroNetworkException,
+    EeroNotFoundException,
+    EeroPremiumRequiredException,
     EeroRateLimitException,
     EeroTimeoutException,
     EeroValidationException,
@@ -18,12 +24,21 @@ __all__ = [
     "EeroAPI",
     "EeroClient",
     "EeroException",
+    "EeroAccessDeniedException",
     "EeroAPIException",
     "EeroAuthenticationException",
+    "EeroClientBlockedException",
+    "EeroFeatureUnavailableException",
     "EeroNetworkException",
+    "EeroNotFoundException",
+    "EeroPremiumRequiredException",
     "EeroRateLimitException",
     "EeroTimeoutException",
     "EeroValidationException",
+    # Error catalogue
+    "ErrorGroup",
+    "classify_error_code",
+    "exception_for_error",
     # URL / ID utilities
     "id_from_url",
     # Secure logging utilities

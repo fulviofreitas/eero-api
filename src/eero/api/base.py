@@ -21,11 +21,11 @@ from ..const import (
     GET_RETRY_DELAY_SECONDS,
     MAX_RESPONSE_BYTES,
 )
+from ..errors import exception_for_error
 from ..exceptions import (
     EeroAPIException,
     EeroAuthenticationException,
     EeroNetworkException,
-    EeroRateLimitException,
     EeroTimeoutException,
     EeroValidationException,
 )
@@ -473,10 +473,21 @@ class BaseAPI:
 
         Raises:
             EeroValidationException: If more than one body carrier is
-                supplied, or a header value is invalid.
-            EeroAuthenticationException: If authentication fails.
-            EeroAPIException: If the API returns an error.
-            EeroRateLimitException: If rate limited.
+                supplied, a header value is invalid, or the API reports a
+                recognised validation error (HTTP 400).
+            EeroAuthenticationException: If authentication fails (HTTP 401).
+            EeroAccessDeniedException: If the API denies access (HTTP 403
+                with a recognised access-denied error).
+            EeroNotFoundException: If the resource is not found (HTTP 404).
+            EeroPremiumRequiredException: If the API reports the feature
+                requires an Eero Plus subscription, on any HTTP status.
+            EeroFeatureUnavailableException: If the API reports the feature
+                is unavailable, on any HTTP status.
+            EeroClientBlockedException: If the API rejects this client
+                version, on any HTTP status.
+            EeroAPIException: If the API returns any other error.
+            EeroRateLimitException: If rate limited (HTTP 429, or a
+                recognised rate-limit error on another status).
             EeroNetworkException: If there's a network error.
             EeroTimeoutException: If the request times out.
         """
@@ -657,7 +668,7 @@ class BaseAPI:
                     # Use debug level for 404s to reduce noise in CLI output
                     _LOGGER.debug("Resource not found at %s", url)
                     _log_error_body(_LOGGER.debug, "Resource not found", response_text, envelope)
-                    raise EeroAPIException(
+                    raise exception_for_error(
                         response.status,
                         f"Resource not found: {_error_body_summary(response_text, envelope)}. "
                         f"URL: {url}",
@@ -666,14 +677,21 @@ class BaseAPI:
                     )
                 elif response.status == 429:
                     _log_error_body(_LOGGER.debug, "Rate limited", response_text, envelope)
-                    raise EeroRateLimitException(
-                        "Rate limit exceeded", envelope=envelope, error_code=error_code
+                    raise exception_for_error(
+                        response.status,
+                        "Rate limit exceeded",
+                        envelope=envelope,
+                        error_code=error_code,
                     )
                 else:
+                    # Single classification point for every other non-2xx,
+                    # non-3xx, non-401/404/429 status: see
+                    # eero.errors.exception_for_error for the full precedence
+                    # rules (status-independent groups, then status code).
                     _log_error_body(
                         _LOGGER.error, f"API error {response.status}", response_text, envelope
                     )
-                    raise EeroAPIException(
+                    raise exception_for_error(
                         response.status,
                         _error_body_summary(response_text, envelope),
                         envelope=envelope,

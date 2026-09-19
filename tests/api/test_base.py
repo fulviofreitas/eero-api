@@ -21,9 +21,14 @@ import pytest
 from eero.api.base import AuthenticatedAPI, BaseAPI, RequestEncoding, build_request_headers
 from eero.const import DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
 from eero.exceptions import (
+    EeroAccessDeniedException,
     EeroAPIException,
     EeroAuthenticationException,
+    EeroClientBlockedException,
+    EeroFeatureUnavailableException,
     EeroNetworkException,
+    EeroNotFoundException,
+    EeroPremiumRequiredException,
     EeroRateLimitException,
     EeroTimeoutException,
     EeroValidationException,
@@ -254,15 +259,16 @@ class TestBaseAPIErrorHandling:
             await api_with_session.get("/endpoint")
 
     @pytest.mark.asyncio
-    async def test_404_raises_api_exception(self, api_with_session, mock_session):
-        """Test that 404 status raises EeroAPIException."""
+    async def test_404_raises_not_found_exception(self, api_with_session, mock_session):
+        """Test that 404 status raises EeroNotFoundException, regardless of body."""
         mock_response = create_mock_response(404, None, "Not found")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAPIException) as exc_info:
+        with pytest.raises(EeroNotFoundException) as exc_info:
             await api_with_session.get("/endpoint")
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.resource_type is None
+        assert exc_info.value.resource_id is None
 
     @pytest.mark.asyncio
     async def test_429_raises_rate_limit_exception(self, api_with_session, mock_session):
@@ -1265,7 +1271,14 @@ class TestGetRetryPolicy:
         api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=3)
         mock_session.request.return_value = create_mock_response(status, None, "error")
 
-        with pytest.raises((EeroAPIException, EeroAuthenticationException, EeroRateLimitException)):
+        with pytest.raises(
+            (
+                EeroAPIException,
+                EeroAuthenticationException,
+                EeroRateLimitException,
+                EeroNotFoundException,
+            )
+        ):
             await api.get("/endpoint")
 
         assert mock_session.request.call_count == 1
@@ -1283,10 +1296,22 @@ class TestEnvelopeAttachment:
 
     @pytest.mark.asyncio
     async def test_api_exception_carries_envelope_and_error_code(self, api, mock_session):
+        body = {"meta": {"code": 500, "error": "error.something_unrecognised"}, "data": None}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == "error.something_unrecognised"
+
+    @pytest.mark.asyncio
+    async def test_not_found_exception_carries_envelope_and_error_code(self, api, mock_session):
+        """A 404 with an unrecognised meta.error still carries envelope/error_code."""
         body = {"meta": {"code": 404, "error": "error.not_found"}, "data": None}
         mock_session.request.return_value = create_mock_response(404, body)
 
-        with pytest.raises(EeroAPIException) as exc_info:
+        with pytest.raises(EeroNotFoundException) as exc_info:
             await api.get("/endpoint")
 
         assert exc_info.value.envelope == body
@@ -1325,3 +1350,161 @@ class TestEnvelopeAttachment:
 
         assert exc_info.value.envelope == body
         assert exc_info.value.error_code == "error.rate_limit"
+
+
+# ========================== Error Catalogue Classification Tests ==========================
+
+
+class TestErrorCatalogueClassification:
+    """Tests that the transport picks the right SDK exception per catalogue group.
+
+    One representative status/error_code pair per group in
+    ``eero.errors``, plus the status-only fallbacks (free-text 404, 404 with
+    no meta.error at all) and case-insensitive matching.
+    """
+
+    @pytest.fixture
+    def api(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.parametrize(
+        "status_code,error_code,expected_class",
+        [
+            (401, "error.session.expired", EeroAuthenticationException),
+            (401, "error.session.invalid", EeroAuthenticationException),
+            (401, "error.session.revoked", EeroAuthenticationException),
+            (401, "error.session.refresh", EeroAuthenticationException),
+            (401, "error.verification.required", EeroAuthenticationException),
+            (401, "error.verification.invalid", EeroAuthenticationException),
+            (401, "error.login.unknown", EeroAuthenticationException),
+            (403, "error.access.denied", EeroAccessDeniedException),
+            (404, "error.network.not.found", EeroNotFoundException),
+            (404, "error.eero.no_serial_found", EeroNotFoundException),
+            (429, "error.rate.limit", EeroRateLimitException),
+            (500, "error.rate.limit", EeroRateLimitException),
+            (400, "error.form.errors", EeroValidationException),
+            (400, "error.reservation.ip.invalid", EeroValidationException),
+            (402, "error.premium.user_not_subscribed", EeroPremiumRequiredException),
+            (403, "error.partner.unavailable", EeroPremiumRequiredException),
+            (400, "error.eero.offline", EeroFeatureUnavailableException),
+            (403, "error.network.unavailable", EeroFeatureUnavailableException),
+            (400, "error.app.version.blocked", EeroClientBlockedException),
+            (500, "error.reservation.failed", EeroAPIException),
+            (500, "error.stripe.card.declined", EeroAPIException),
+            (500, "encryptme.error.email.exists", EeroAPIException),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_error_code_maps_to_expected_exception_class(
+        self, api, mock_session, status_code, error_code, expected_class
+    ):
+        """Each catalogue group's representative error_code raises the right class."""
+        body = {"meta": {"code": status_code, "error": error_code}}
+        mock_session.request.return_value = create_mock_response(status_code, body)
+
+        with pytest.raises(expected_class) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == error_code
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_matching(self, api, mock_session):
+        """A catalogue string is matched regardless of case."""
+        body = {"meta": {"code": 403, "error": "ERROR.ACCESS.DENIED"}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.error_code == "ERROR.ACCESS.DENIED"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_trimmed_matching(self, api, mock_session):
+        """A catalogue string is matched even with surrounding whitespace."""
+        body = {"meta": {"code": 403, "error": "  error.access.denied  "}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException):
+            await api.get("/endpoint")
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_error_code_does_not_change_status_based_class(
+        self, api, mock_session
+    ):
+        """An unrecognised meta.error never changes the class chosen by status."""
+        body = {"meta": {"code": 500, "error": "error.something_never_seen_before"}}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "error.something_never_seen_before"
+
+    @pytest.mark.asyncio
+    async def test_404_with_free_text_sentence_raises_not_found(self, api, mock_session):
+        """A 404 whose meta.error is a free-text sentence still raises EeroNotFoundException."""
+        body = {"meta": {"code": 404, "error": "No parameters were given to check."}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.error_code == "No parameters were given to check."
+
+    @pytest.mark.asyncio
+    async def test_404_with_no_meta_error_raises_not_found(self, api, mock_session):
+        """A 404 with no meta.error at all (e.g. an unknown network) still raises EeroNotFoundException."""
+        body = {"meta": {"code": 404}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_404_with_no_body_raises_not_found(self, api, mock_session):
+        """A 404 with a completely empty/non-JSON body still raises EeroNotFoundException."""
+        mock_session.request.return_value = create_mock_response(404, None, body_bytes=b"")
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope is None
+        assert exc_info.value.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_403_without_access_denied_string_stays_api_exception(self, api, mock_session):
+        """A 403 without the recognised access-denied string stays a plain EeroAPIException."""
+        mock_session.request.return_value = create_mock_response(403, None, "Forbidden")
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.status_code == 403
+        assert not isinstance(exc_info.value, EeroAccessDeniedException)
+
+    @pytest.mark.asyncio
+    async def test_access_denied_is_not_an_auth_error(self, api, mock_session):
+        """EeroAccessDeniedException.is_auth_error() is False -- it is not a 401."""
+        body = {"meta": {"code": 403, "error": "error.access.denied"}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.is_auth_error() is False
+
+    @pytest.mark.asyncio
+    async def test_not_found_is_not_an_auth_error(self, api, mock_session):
+        """EeroNotFoundException.is_auth_error() is False -- the base default."""
+        mock_session.request.return_value = create_mock_response(404, None, "")
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.is_auth_error() is False
