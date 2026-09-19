@@ -678,7 +678,8 @@ class BaseAPI:
                     # eero.errors.exception_for_error for the full precedence
                     # rules (401 short-circuit, status-independent groups,
                     # then status code).
-                    _LOGGER.error("API error %s for %s %s", response.status, method, url)
+                    _LOGGER.error("API error %s on %s request", response.status, method)
+                    _LOGGER.debug("API error %s for %s %s", response.status, method, url)
                     _log_error_body(
                         _LOGGER.debug, f"API error {response.status}", response_text, envelope
                     )

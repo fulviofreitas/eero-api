@@ -481,7 +481,13 @@ class TestChainedStorageSingleWriterInvariant:
     async def test_load_clears_fallback_after_promoting_into_primary(self):
         """A record found only in the fallback is promoted, then removed from the fallback."""
         primary = AsyncMock()
-        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        # First load: primary empty; second load: the read-back after promotion.
+        primary.load = AsyncMock(
+            side_effect=[
+                AuthCredentials(session_id=None),
+                AuthCredentials(session_id="fallback_token"),
+            ]
+        )
         primary.save = AsyncMock()
 
         fallback = AsyncMock()
@@ -495,6 +501,25 @@ class TestChainedStorageSingleWriterInvariant:
         assert result.session_id == "fallback_token"
         primary.save.assert_awaited_once_with(AuthCredentials(session_id="fallback_token"))
         fallback.clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_load_keeps_fallback_when_primary_did_not_retain_the_record(self):
+        """If the primary write silently failed, the fallback copy is not destroyed."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        primary.save = AsyncMock()
+
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="fallback_token"))
+        fallback.clear = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        result = await storage.load()
+
+        assert result.session_id == "fallback_token"
+        primary.save.assert_awaited_once()
+        fallback.clear.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_load_does_not_touch_fallback_when_primary_already_has_a_token(self):
@@ -1335,7 +1360,13 @@ class TestCredentialMigration:
         invariant, ChainedStorage then clears the fallback file so the
         primary is the sole remaining owner of the live record.
         """
-        mock_keyring.get_password.return_value = None
+        # A working keyring: what is set can be read back (the promotion is
+        # only trusted, and the fallback only cleared, after that read-back).
+        stored: dict[str, str] = {}
+        mock_keyring.set_password.side_effect = lambda service, account, value: stored.__setitem__(
+            "record", value
+        )
+        mock_keyring.get_password.side_effect = lambda service, account: stored.get("record")
         cookie_file = tmp_path / "cookies.json"
         cookie_file.write_text(json.dumps(legacy_session_data))
 

@@ -308,8 +308,16 @@ class ChainedStorage(CredentialStorage):
         if credentials.session_id:
             # Migrate to primary storage, then remove the now-duplicate
             # fallback copy so the primary is the sole owner going forward.
+            # The fallback is cleared only once a read-back proves the
+            # primary holds the record; backends swallow their own write
+            # errors, so without the read-back a failed primary write would
+            # destroy the only surviving copy.
             await self._primary.save(credentials)
-            await self._fallback.clear()
+            promoted = await self._primary.load()
+            if promoted.session_id == credentials.session_id:
+                await self._fallback.clear()
+            else:
+                _LOGGER.debug("Primary storage did not retain the promoted record; fallback kept")
 
         return credentials
 
