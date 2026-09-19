@@ -20,9 +20,9 @@ Welcome! Everything you need to master the Eero API Python client.
 | Page | What you'll learn |
 |------|-------------------|
 | **[📄 Raw Response Format](Raw-Response-Format)** | The `{"meta": ..., "data": ...}` envelope |
-| **[🎯 Network Targeting](Network-Targeting)** | Passing `network_id` correctly |
+| **[🎯 Network Targeting](Network-Targeting)** | Passing `network_id` correctly; IDs, paths, URLs and `parent=` links |
 | **[🚨 Error Handling](Error-Handling)** | The `EeroException` hierarchy |
-| **[⚡ Caching and Rate Limits](Caching-and-Rate-Limits)** | TTL cache & the ~100 req/min ceiling |
+| **[⚡ Caching and Rate Limits](Caching-and-Rate-Limits)** | TTL cache, the ~100 req/min ceiling, and which writes may reboot the mesh |
 
 ### Reference
 
@@ -122,7 +122,8 @@ This project is a modern revamp of the original [eero-client](https://github.com
 **What's new:**
 - Full async/await with `aiohttp`
 - Raw JSON passthrough — no Pydantic models, no data transformation
-- 23 domain-specific APIs + AuthAPI (24 API classes total) covering the Eero Cloud API surface the API still serves
+- 37 domain-specific APIs + AuthAPI (38 API classes total) covering the Eero Cloud API surface the API still serves — including, since v8.0.0, entitlements, events, permissions, notifications, DNS policies, members and invites, account profile, DHCP and connection mode, per-band WPA3, power saving, dynamic DNS, backup access points, subnets, and multi-static IP / secondary WAN
+- Link-driven requests — every resource argument accepts a bare ID, an API path, or an absolute API-host URL, and the SDK follows the `resources` links the API publishes instead of hardcoding paths (see [Network Targeting](Network-Targeting))
 - Secure credential storage — OS keyring, with an owner-only (`0600`) file fallback
 
 ---

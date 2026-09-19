@@ -1,6 +1,6 @@
 # 💡 Examples
 
-Ten complete, runnable scripts covering the workflows people actually build against this SDK.
+Complete, runnable scripts covering the workflows people actually build against this SDK.
 
 ---
 
@@ -249,7 +249,7 @@ asyncio.run(main())
 
 ## Reserve a DHCP Address and Open a Port Forward
 
-The v6.1.0/v6.2.0 features — created, then listed, then cleaned up. Reservations and forwards never auto-discover a network, so `network_id` must be explicit.
+Created, then listed, then cleaned up. Reservations and forwards never auto-discover a network, so `network_id` must be explicit. A reservation body has exactly `description`, `ip`, `mac`, `public_static_ip`; a forward body has exactly `client_port`, `description`, `enabled`, `gateway_port`, `ip`, `protocol` — the SDK passes both through unchanged.
 
 ```python
 """Reserve a DHCP address and open a port forward, then list and clean both up."""
@@ -280,8 +280,15 @@ async def main() -> None:
             return
         network_id = id_from_url(networks[0]["url"])
 
-        reservation_data = {"device_id": "device_042", "ip_address": "192.168.4.200"}
-        forward_data = {"device_id": "device_042", "port": 8080, "protocol": "tcp"}
+        reservation_data = {"mac": "<mac>", "ip": "192.168.4.200", "description": "NAS"}
+        forward_data = {
+            "ip": "192.168.4.200",
+            "client_port": 8080,
+            "gateway_port": 8080,
+            "protocol": "tcp",
+            "enabled": True,
+            "description": "web",
+        }
 
         try:
             await client.create_reservation(reservation_data, network_id=network_id)
@@ -295,15 +302,17 @@ async def main() -> None:
         print(f"Reservations: {len(reservations)}  Forwards: {len(forwards)}")
 
         # Clean up: find what we just created by the fields we set, then delete it.
+        # delete_forwards=True asks the API to drop forwards that reference the
+        # reservation's IP as well, so the forward below may already be gone.
         for reservation in reservations:
-            if reservation.get("ip_address") == reservation_data["ip_address"]:
+            if reservation.get("ip") == reservation_data["ip"]:
                 await client.delete_reservation(
-                    id_from_url(reservation["url"]), network_id=network_id
+                    id_from_url(reservation["url"]), network_id=network_id, delete_forwards=True
                 )
                 break
 
-        for forward in forwards:
-            if forward.get("port") == forward_data["port"]:
+        for forward in (await client.get_forwards(network_id=network_id)).get("data", []):
+            if forward.get("gateway_port") == forward_data["gateway_port"]:
                 await client.delete_forward(id_from_url(forward["url"]), network_id=network_id)
                 break
 
@@ -421,33 +430,40 @@ asyncio.run(main())
 
 ## Guest Network Rotation
 
-Read the guest network config, set a new password, and confirm the change took.
+Read the guest network config, enable it if needed, set a new password, and read it back.
+The password is its own resource (`set_guest_password`), separate from the enable/name write.
+Both writes are unverified and disconnect guest clients while they take effect.
 
 ```python
-"""Read the guest network config, rotate its password, and confirm the change."""
+"""Read the guest network config, rotate its password, and read the result back."""
 
 import asyncio
 import secrets
 
-from eero import EeroClient, EeroException
+from eero import EeroClient, EeroException, id_from_url
 
 
 async def main() -> None:
     async with EeroClient() as client:
-        network = await client.get_network(refresh_cache=True)
-        guest = network.get("data", {}).get("guest_network", {})
+        network = await client.get_network(refresh_cache=True)   # cached; becomes parent= below
+        network_id = id_from_url(network["data"]["url"])
+
+        guest = (await client.get_guest_network(network_id=network_id)).get("data", {})
         print(f"Guest network {guest.get('name', '(unnamed)')} enabled={guest.get('enabled', False)}")
 
-        new_password = secrets.token_urlsafe(12)
         try:
-            await client.set_guest_network(enabled=True, password=new_password)
+            if not guest.get("enabled"):
+                # Read-compare-skip: only write when the state differs.
+                await client.set_guest_network(enabled=True, network_id=network_id)
+
+            await client.set_guest_password(secrets.token_urlsafe(12), network_id=network_id)
         except EeroException as err:
             print(f"Failed to rotate guest password: {err}")
             return
 
-        updated = await client.get_network(refresh_cache=True)
-        updated_guest = updated.get("data", {}).get("guest_network", {})
-        print(f"Rotated. Guest network now enabled={updated_guest.get('enabled', False)}")
+        # A 200 proves the request was accepted, not that the change settled — read back.
+        updated = (await client.get_guest_network(network_id=network_id)).get("data", {})
+        print(f"Rotated. Guest network now enabled={updated.get('enabled', False)}")
 
 
 asyncio.run(main())
@@ -568,6 +584,368 @@ to restore, with no need to stash the addresses client-side.
 
 ---
 
+## Read-Compare-Skip for a Settings-Class Write
+
+Every settings-class write (SQM, DHCP, connection mode, MLO, per-band WPA3, and the rest listed
+in [Python API — Writes and safety](Python-API#writes-and-safety)) may reboot the entire mesh,
+and every one of them is unverified against a live network. The only safe shape for automation
+is: read, compare, write only on a difference, never retry, and don't expect the read-back to
+reflect the change immediately.
+
+```python
+"""Enable SQM only if it is not already enabled — the pattern for every settings-class write."""
+
+import asyncio
+
+from eero import EeroClient, EeroException
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        network = await client.get_network(network_id="<network-id>", refresh_cache=True)
+        current = network.get("data", {}).get("sqm")
+
+        if current is True:
+            print("SQM already enabled — skipping the write (no reboot).")
+            return
+
+        try:
+            # Logs one WARNING (unverified, settings-class), then PUTs ?sqm=true to the
+            # network's settings link. Never wrap this in a retry loop: a burst of writes
+            # queues a burst of reboots.
+            await client.set_sqm(True, network_id="<network-id>")
+        except EeroException as err:
+            print(f"Write rejected: {err.error_code or err}")
+            return
+
+        print("Accepted. The change — and any reboot — lands minutes later; check back then.")
+
+
+asyncio.run(main())
+```
+
+---
+
+## Data Usage Breakdown
+
+Per-category usage for the last seven days. The data-usage reads take query parameters only,
+are never cached, and never auto-discover a network.
+
+```python
+"""Print the network's data-usage breakdown for the last seven days."""
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from eero import EeroClient, EeroException, id_from_url
+
+
+def as_list(response: dict, key: str | None = None) -> list:
+    """See Raw Response Format — the networks list has several shapes."""
+    data = response.get("data") or {}
+    if isinstance(data, list):
+        return data
+    items = data.get(key) if key else None
+    if items is None:
+        items = data.get("data") or []
+    if isinstance(items, dict):
+        items = items.get("data") or []
+    return items if isinstance(items, list) else []
+
+
+async def main() -> None:
+    end = datetime.now(timezone.utc).replace(microsecond=0)
+    start = end - timedelta(days=7)
+
+    async with EeroClient() as client:
+        networks = as_list(await client.get_networks(), "networks")
+        network_id = id_from_url(networks[0]["url"])
+
+        try:
+            breakdown = await client.get_data_usage_breakdown(
+                network_id=network_id,
+                start=start.isoformat().replace("+00:00", "Z"),
+                end=end.isoformat().replace("+00:00", "Z"),
+                cadence="daily",       # optional here; omitted from the request when None
+                timezone="UTC",
+            )
+        except EeroException as err:
+            print(f"Breakdown failed: {err.error_code or err}")
+            return
+
+        # The envelope is returned unmodified; walk whatever the API put under data.
+        data = breakdown.get("data", {})
+        for key, value in (data.items() if isinstance(data, dict) else enumerate(data)):
+            print(f"{key}: {value}")
+
+
+asyncio.run(main())
+```
+
+---
+
+## Insights Per Device
+
+Which devices had the most blocked requests this week — the per-device insights series, then
+the single-device series for the top one.
+
+```python
+"""Rank devices by blocked-request insights, then drill into the top device."""
+
+import asyncio
+
+from eero import EeroClient, EeroPremiumRequiredException, id_from_url
+
+
+def as_list(response: dict, key: str | None = None) -> list:
+    data = response.get("data") or {}
+    if isinstance(data, list):
+        return data
+    items = data.get(key) if key else None
+    if items is None:
+        items = data.get("data") or []
+    if isinstance(items, dict):
+        items = items.get("data") or []
+    return items if isinstance(items, list) else []
+
+
+async def main() -> None:
+    window = {"start": "2026-07-01T00:00:00Z", "end": "2026-07-08T00:00:00Z", "cadence": "daily", "insight_type": "blocked"}
+
+    async with EeroClient() as client:
+        networks = as_list(await client.get_networks(), "networks")
+        network_id = id_from_url(networks[0]["url"])
+
+        try:
+            per_device = await client.get_devices_insights(network_id=network_id, **window)
+        except EeroPremiumRequiredException:
+            print("Insights need an active subscription on this network.")
+            return
+
+        # The envelope is returned unmodified — print whatever the API put under data.
+        print("all devices:", per_device.get("data"))
+
+        # Drill into one device by MAC, taken from the device list rather than guessed.
+        devices = (await client.get_devices(network_id=network_id)).get("data", [])
+        for device in devices[:3]:
+            mac = device.get("mac")
+            if not mac:
+                continue
+            detail = await client.get_device_insights(mac, network_id=network_id, **window)
+            print(device.get("nickname") or mac, "->", detail.get("data"))
+
+
+asyncio.run(main())
+```
+
+---
+
+## Speed-Test History
+
+Run a speed test, then list the recent history the API keeps for the network.
+
+```python
+"""Trigger a speed test and print the recent history."""
+
+import asyncio
+
+from eero import EeroClient, EeroException, id_from_url
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        network = await client.get_network(network_id="<network-id>", refresh_cache=True)
+        network_id = id_from_url(network["data"]["url"])
+
+        try:
+            await client.run_speed_test(network_id=network_id)   # POST "" to the speedtest link
+        except EeroException as err:
+            print(f"Could not start a speed test: {err.error_code or err}")
+
+        # GET on the same speedtest link; limit / startTime / endTime are optional query params.
+        history = await client.get_speed_tests(network_id=network_id, limit=10)
+        data = history.get("data", [])
+        for result in data if isinstance(data, list) else [data]:
+            down = result.get("down", {})
+            up = result.get("up", {})
+            print(f"down {down.get('value')} up {up.get('value')} {down.get('units', 'Mbps')}  ({result})")
+
+
+asyncio.run(main())
+```
+
+---
+
+## Channel Utilisation Panel
+
+One day of 5 GHz channel utilisation at 15-minute granularity — the raw series for a dashboard
+panel. `band` must be one of the API's declared values and `granularity` an integer.
+
+```python
+"""Fetch a day of channel-utilisation samples per band."""
+
+import asyncio
+
+from eero import EeroClient, EeroValidationException
+from eero.api.events import CHANNEL_UTILIZATION_BANDS
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        for band in CHANNEL_UTILIZATION_BANDS:
+            try:
+                util = await client.get_channel_utilization(
+                    "<network-id>",                       # network_id is the only positional here
+                    start="2026-07-01T00:00:00Z",
+                    end="2026-07-02T00:00:00Z",
+                    band=band,
+                    granularity=15,                       # minutes per sample; strings are rejected
+                )
+            except EeroValidationException as err:
+                print(f"{band}: rejected locally — {err}")
+                continue
+
+            print(band, util.get("data"))
+
+
+asyncio.run(main())
+```
+
+---
+
+## Entitlements
+
+What the network is entitled to, what it would be upsold, and what its eero models can do.
+The SDK returns these envelopes as-is — deciding whether a feature is "on" is your job.
+
+```python
+"""Dump the network's entitlement, upsell, and model-capability envelopes."""
+
+import asyncio
+import json
+
+from eero import EeroClient
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        features = await client.get_entitlement_features(network_id="<network-id>")
+        upsell = await client.get_upsell_features(network_id="<network-id>")
+        capabilities = await client.get_model_capabilities(network_id="<network-id>")   # bare ID only: sent as ?networkId=
+        customer = await client.get_premium_customer()                                  # account-level
+
+        for label, envelope in (("features", features), ("upsell", upsell), ("capabilities", capabilities), ("customer", customer)):
+            print(f"== {label}")
+            print(json.dumps(envelope.get("data"), indent=2)[:2000])
+
+
+asyncio.run(main())
+```
+
+---
+
+## Events
+
+Fetch a page of the network's app events, then print the latest network scan. `page_size` and
+`timestamp` are the two optional query parameters the API accepts on this endpoint —
+`timestamp` is the pagination cursor, whose value you take from the previous page's data.
+
+```python
+"""Fetch a page of app events and print the network scan."""
+
+import asyncio
+import json
+
+from eero import EeroClient
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        page = await client.get_app_events(network_id="<network-id>", page_size=25)
+        print(json.dumps(page.get("data"), indent=2)[:4000])
+
+        # To fetch the next page, pass the cursor value from this page's data as timestamp=:
+        # await client.get_app_events(network_id="<network-id>", page_size=25, timestamp="<cursor>")
+
+        scan = await client.get_network_scan(network_id="<network-id>")
+        print("network scan:", scan.get("data"))
+
+
+asyncio.run(main())
+```
+
+---
+
+## Permissions and Members
+
+Check what the current session is allowed to do before attempting writes, and list who else is
+on the network.
+
+```python
+"""Print the caller's permissions and the network's members."""
+
+import asyncio
+
+from eero import EeroAccessDeniedException, EeroClient
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        perms = (await client.get_permissions(network_id="<network-id>")).get("data", {})
+        print("role:", perms.get("role"))
+        for capability, allowed in (perms.get("permissions") or {}).items():
+            print(f"  {capability}: {allowed}")
+
+        members = (await client.get_members(network_id="<network-id>")).get("data", {})
+        for member in members.get("members", []):
+            print("member:", member)
+
+        try:
+            invites = await client.get_invites(network_id="<network-id>")   # unverified read; 403 on some accounts
+            print("invites:", invites.get("data"))
+        except EeroAccessDeniedException:
+            print("This account may not read invites.")
+
+
+asyncio.run(main())
+```
+
+---
+
+## Notifications
+
+Read the per-event notification toggles, turn one off only if it is on, and drain the unread
+flag.
+
+```python
+"""Read notification settings, conditionally change one, and mark everything read."""
+
+import asyncio
+
+from eero import EeroClient
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        settings = (await client.get_notification_settings(network_id="<network-id>")).get("data", {})
+        print(settings)
+
+        # Unverified write — read-compare-skip. Keys keep their dots; the body is sent as-is.
+        if settings.get("device.new") is True:
+            await client.set_notification_settings({"device.new": False}, network_id="<network-id>")
+
+        unread = (await client.has_unread_notifications(network_id="<network-id>")).get("data", {})
+        if unread.get("has_unread"):
+            history = await client.get_notification_history(network_id="<network-id>")
+            print("history:", history.get("data"))
+            await client.mark_notifications_read(network_id="<network-id>")   # POST ""; unverified
+
+
+asyncio.run(main())
+```
+
+---
+
 ## Working With Multiple Networks
 
 Iterate every network on the account, passing `network_id=` explicitly rather than relying on auto-discovery or the preferred-network default.
@@ -621,5 +999,6 @@ Want a finished tool instead of a script? The [eeroctl](https://github.com/fulvi
 - [Raw Response Format](Raw-Response-Format) — the `{"meta": ..., "data": ...}` envelope
 - [Network Targeting](Network-Targeting) — passing `network_id` correctly
 - [Error Handling](Error-Handling) — the `EeroException` hierarchy
-- [Caching and Rate Limits](Caching-and-Rate-Limits) — TTL cache & the ~100 req/min ceiling
+- [Caching and Rate Limits](Caching-and-Rate-Limits) — TTL cache, the ~100 req/min ceiling, and which writes may reboot the mesh
+- [API Reference](API-Reference) — every method with its verb, path, and verified/unverified status
 - [Authentication](Authentication) — the OTP login flow in detail

@@ -320,27 +320,34 @@ Note the asymmetry (`custom.ips` vs `custom`), and that IPv6 addresses read back
 
 ## v7.x → v8.0.0
 
-**What broke**: Three groups of changes landed together. First, ten symbols that either never
+**What broke**: Five groups of changes landed together. First, ten symbols that either never
 worked against the current API, or that the API stopped serving outright, are gone (this
 section). Second, the session transport, refresh flow, credential record, retry policy, and
 error model (new exception classes, `envelope` / `error_code`) changed — see
 [Session transport and authentication](#session-transport-and-authentication) and the
 subsections that follow it, in particular [Error classes and attributes](#error-classes-and-attributes). Third, `get_data_usage` and `get_ouicheck` now take the
 parameters the API actually requires — see [`get_data_usage`](#get_data_usage-and-the-data-usage-family)
-and [`get_ouicheck`](#get_ouicheck).
+and [`get_ouicheck`](#get_ouicheck). Fourth, every domain method resolves its URL through the
+links the API publishes, and a further set of writes were re-pointed to the request forms the
+API declares — several of them replacing methods that could never have worked; see
+[Resource links and `parent=`](#resource-links-and-parent) and
+[Writes now use the forms the API declares](#writes-now-use-the-forms-the-api-declares). Fifth,
+fourteen new domain modules were added — additive, but the section
+[New families and what they replace](#new-families-and-what-they-replace) notes where they take
+over from a removed method.
 
 There is no deprecation window for this release — every removed call now raises
-`AttributeError` (or, for `configure_security(thread=...)`, `TypeError`) instead of the previous
-no-op or 404.
+`AttributeError` (or, for a removed keyword such as `configure_security(thread=...)` or
+`set_guest_network(password=...)`, `TypeError`) instead of the previous no-op or 404.
 
 | Removed | If you called it | Do this instead |
 |---|---|---|
-| `DevicesAPI.set_device_priority` / `EeroClient.set_device_priority` | Remove the call — it never changed anything server-side | Use SQM: `client.set_sqm_enabled(True)` / `client.configure_sqm(enabled=True, upload_mbps=..., download_mbps=...)` |
+| `DevicesAPI.set_device_priority` / `EeroClient.set_device_priority` | Remove the call — it never changed anything server-side | Use SQM: `client.set_sqm(True)` (a single on/off toggle — the API declares no bandwidth fields) |
 | `ActivityAPI` (module) / `client.get_activity*` (all five methods) | Remove the call — it always raised `EeroAPIException` (404) | Use `client.get_insights(start=..., end=..., insight_type=...)` for category/adblock/inspected data, or `client.get_data_usage(...)` for bandwidth per client or node |
 | `DnsAPI.set_ipv6_dns` / `EeroClient.set_ipv6_dns` | Replace with the method matching what you actually wanted | For the IPv6 connectivity toggle: `client.set_ipv6(enabled)`. For IPv6 DNS servers: `client.set_custom_dns_ipv6(servers)` |
 | `InsightsAPI.run_insights` | Remove the call — the API has no such operation | None |
 | `OUICheckAPI.run_ouicheck` | Remove the call — the API has no such operation | None |
-| `SecurityAPI.set_thread`, `EeroClient.set_thread_enabled`, `configure_security(thread=...)` | Remove the call/argument — the API does not accept this field | None yet; Thread write support is planned for a future release |
+| `SecurityAPI.set_thread`, `configure_security(thread=...)` | Remove the call/argument — the API does not accept a `thread` field on the settings write | `client.set_thread_enabled(enabled)` — same facade name, now a JSON `{"enabled": bool}` PUT to `networks/{id}/thread` via `ThreadAPI` (unverified write); also `update_thread(...)` and `regenerate_thread_credentials()` |
 | `SettingsAPI` (module) / `EeroClient.get_settings` | Replace with a network read | `client.get_network()` — the same fields live on the network envelope |
 | `PasswordAPI` (module) / `EeroClient.get_password` | Replace with a network read | `client.get_network()` — the network envelope carries the same fields |
 | `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | Remove the call — the endpoint returns 404 | None; the resource is POST-only — `client._api.burst_reporters.create_burst_reporter(...)` remains available |
@@ -349,9 +356,10 @@ no-op or 404.
 # Before (v7.x) — silent no-op
 await client.set_device_priority(device_id, prioritized=True)
 
-# After (v8.0.0+) — use SQM
-await client.set_sqm_enabled(True)
-await client.configure_sqm(enabled=True, upload_mbps=20, download_mbps=200)
+# After (v8.0.0+) — use SQM (read first; this is a settings-class write)
+sqm = (await client.get_sqm_settings())["data"].get("sqm")
+if sqm is not True:
+    await client.set_sqm(True)
 ```
 
 ```python
@@ -385,12 +393,153 @@ Checklist:
 - [ ] Grep for `set_ipv6_dns(` and `client._api.dns.set_ipv6_dns` — split into `set_ipv6` and/or
       `set_custom_dns_ipv6` depending on intent.
 - [ ] Grep for `run_insights(` and `run_ouicheck(` — remove; no replacement exists.
-- [ ] Grep for `set_thread(`, `set_thread_enabled(`, and `configure_security(` calls passing
-      `thread=` — remove the argument.
+- [ ] Grep for `set_thread(` and `configure_security(` calls passing `thread=` — remove the
+      argument. `client.set_thread_enabled(` still exists but is now a different, unverified
+      write to the Thread resource; read `get_thread()` first and skip when unchanged.
 - [ ] Grep for `get_settings(` and `client._api.settings` — replace with `get_network()`.
 - [ ] Grep for `get_password(` and `client._api.password` — replace with `get_network()`.
 - [ ] Grep for `get_burst_reporters(` and `client._api.burst_reporters.get_burst_reporters` —
       remove; `create_burst_reporter` is unaffected.
+
+### Resource links and `parent=`
+
+Every domain method now resolves its URL through the links the API publishes rather than a
+hardcoded path. Two things follow for callers:
+
+1. **Every resource argument is polymorphic.** Wherever a method took a bare `network_id` /
+   `eero_id` / `device_id` / `profile_id`, it now also accepts the resource's API path (the
+   `url` value from its envelope, e.g. `/2.2/networks/<network-id>`) or that path joined onto
+   the API host. Existing bare-ID calls keep working unchanged. A URL on any other host or
+   scheme raises `EeroValidationException` before a request is made.
+2. **Every domain method gained a keyword-only `parent=`.** Pass the envelope you already hold
+   and the method uses the link the API published on it (`resources.settings`,
+   `resources.led_action`, the resource's own `url`, …) instead of a template. `EeroClient`
+   passes its cached network / eero / device envelopes automatically, so facade callers get
+   this without changing anything.
+
+Because `parent=` is keyword-only and optional, no existing positional call breaks. The one
+behavioural difference you may notice: through `EeroClient`, a network-scoped call made while a
+fresh `get_network()` result is cached goes to the link the API published for that network,
+which can be on a different version than before (`routing` is served on `2.3`, for example).
+
+Two `EeroClient` reads changed shape to match: `get_devices()` gained keyword-only
+`thread=` / `proxied_node=` filters (sent as query parameters; a filtered call bypasses the
+cache), and `delete_reservation()` gained keyword-only `delete_forwards=`.
+
+The helpers are exported from the package root — `resolve_link`, `self_url`, `resource_url`,
+`sub_resource_url`, `join_api_path` — and `eero.const` gained `api_endpoint(version)`,
+`API_VERSION_DEFAULT`, `API_VERSION_DEVICE_WRITES`, `API_VERSION_MULTISTATICIP`, and
+`API_VERSION_SECONDARY_WAN` (`API_VERSION`, `API_ENDPOINT`, `DEVICE_UPDATE_ENDPOINT` remain as
+aliases). Full description: [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
+
+### Writes now use the forms the API declares
+
+A set of existing writes were re-pointed to the path, encoding, and field names the API
+declares for the operation. Several of the old writes could not have applied — the API accepts
+unrecognised JSON keys with a 200 and discards them — so "it returned 200 before" is not
+evidence that your call site worked. **Every re-pointed write is unverified against a live
+network and logs one `WARNING` before the request**; see
+[Writes and safety](Python-API#writes-and-safety) for the discipline this implies.
+
+| Write | Before (v7.x) | After (v8.0.0) |
+|---|---|---|
+| `set_led(eero_id, enabled)` | JSON `{"led_on": bool}` PUT to the eero's own URL — **verified to change nothing**. Any caller who "successfully" set the LED through the SDK never did | Form-encoded `led_on=true|false` PUT to the eero's `led_action` link. Unverified; a later live check is pending |
+| `set_led_brightness(eero_id, brightness)` | JSON PUT to the eero's own URL | Form-encoded `led_brightness=<int>` PUT to the `led_action` link. Unverified |
+| `set_location(eero_id, location)` | *(new on `EeroClient`)* | Form-encoded `location=` PUT to the eero's own URL. Unverified |
+| `set_network_name(name)` | JSON `{"name": ...}` PUT to `settings` | Form-encoded `name=` PUT to the network's `settings` link. Disconnects clients while it takes effect; the form shape is unverified |
+| `set_network_password(password)` / `clear_network_password()` | *(new)* | Form-encoded `password=` PUT / DELETE on the network's `password` link. Disconnects clients; unverified |
+| `set_guest_network(enabled, name=, password=)` | One JSON PUT carrying the password | `set_guest_network(*, enabled, name=None)` — form-encoded PUT to the `guestnetwork` link with `enabled` and, when given, `name`. **`password=` is gone** — use `set_guest_password(password)` / `clear_guest_password()` (form PUT / DELETE on the *guest network's* `password` link). Unverified |
+| `block_device(device_id, blocked)` | One method toggling both directions | `block_device(mac)` sends a form-encoded `mac` to `POST networks/{id}/blacklist`; `unblock_device(mac)` is a separate `DELETE networks/{id}/blacklist/{mac}`. The form encoding is unverified (a JSON body was verified in the past); the DELETE is verified |
+| `set_sqm_enabled` / `configure_sqm` / `set_sqm_bandwidth` / `set_sqm_auto` | JSON bodies with bandwidth / mode fields the API never declared | **Removed.** `set_sqm(enabled)` — PUT with no body to the `settings` link, value in the `sqm` query parameter. Settings-class: may reboot the mesh |
+| `reboot_network()`, `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `apply_update` is new on `EeroClient` and reboots every node |
+| `set_nightlight(...)` | JSON PUT to the eero's own URL with `brightness`, `schedule_enabled`, `schedule_on`, `schedule_off`, `ambient_light_enabled` | JSON PUT to the nightlight sub-resource (`data.nightlight.url`) with only `enabled`, `brightness_percentage`, `schedule` — the fields the API declares. `set_nightlight_schedule(schedule)` forwards the schedule object unchanged; `set_nightlight_brightness(brightness_percentage)`. Raises `EeroFeatureUnavailableException` on an eero without a nightlight |
+| `run_diagnostics()` | Empty POST | JSON POST with whichever of `device=` / `symptom=` you supply (an empty object otherwise). Additive |
+| Thread writes | `SecurityAPI.set_thread` wrote a `thread` field the settings endpoint ignores | `set_thread_enabled(enabled)` (JSON `{"enabled": bool}`), `update_thread(*, thread_enable=, enable_credential_syncing=)`, `regenerate_thread_credentials()` (`""` POST) — all to the literal `networks/{id}/thread` path |
+| `get_backup_network` / `get_backup_status` / `set_backup_network` / `configure_backup_network` | Fields (`phone_number`) the API never declared | **Removed.** `get_backup_internet()`, `set_backup_internet(enabled)` (JSON `{"backup_internet_enabled": bool}`), `get_cellular_backup_usage()`, `get_cellular_backup_events()` |
+| `get_profile_schedule` / `set_profile_schedule(time_blocks)` | Wrote a `schedule` array onto the profile — not a profile field | **Removed.** Schedules are sub-resources: `get_schedules(profile_id)`, `create_schedule(profile_id, *, name, days, start, end, enabled=True)`, `update_schedule(schedule, *, ...)`, `delete_schedule(schedule)` (both take the pause's own path/URL or envelope), `clear_profile_schedule(profile_id)` (one DELETE per pause, returns a list of responses). `enable_bedtime` / `set_weekday_bedtime` / `set_weekend_bedtime` now create one pause each |
+| `update_profile_content_filter` / `update_profile_block_list` / `get_blocked_applications` / `set_blocked_applications` | Wrote fields a profile does not have — silent no-ops | **Removed.** Use the DNS-policies family (below) |
+| `DevicesAPI.*(network_id, device_id, ...)` | Parameter named `device_id` | Parameter named `mac`; positional calls unaffected. `EeroClient` wrappers keep `device_id` |
+| `set_device_nickname` / `pause_device` | 2.3 JSON PUT (verified) | Unchanged — still the verified 2.3 write. New alongside it: `update_device_via_link(device_id, *, nickname=, paused=, profile=)` — a JSON PUT of those fields to the device's own URL on the default version, **unverified**; prefer the two verified methods for nickname/pause |
+| `update_reservation(reservation_id, data)` / `update_forward(forward_id, data)` | Built the URL from `network_id` + ID | Domain signatures are now `update_reservation(reservation, data, *, network=None)` / `update_forward(forward, data, *, network=None)` — `reservation` / `forward` may be a bare ID (then `network=` is required), the resource's path/URL, or its envelope. `EeroClient` wrappers keep `(id, data, network_id=None)` |
+
+Added on `EeroClient` in the same change, all unverified writes unless marked: `set_device_type`,
+`get_device_labels` (read), `set_device_labels` (labels go as query parameters on the PUT),
+`get_connections` (read), `get_speed_tests(*, limit=, start_time=, end_time=)` (read),
+`get_guest_network` (read), `get_devices_insights` / `get_device_insights` /
+`get_profiles_insights` / `get_profile_insights` / `get_profile_devices_insights` (verified
+reads), `create_profile(name, *, devices=None, paused=None)` (additive keywords).
+
+```python
+# Before (v7.x)
+await client.set_guest_network(enabled=True, name="Guest", password="<new-password>")
+await client.block_device("<mac>", blocked=True)
+await client.block_device("<mac>", blocked=False)
+await client.set_profile_schedule("<profile-id>", time_blocks=[...])
+await client.set_nightlight("<eero-id>", brightness=30, schedule_on="22:00", schedule_off="06:00")
+
+# After (v8.0.0+)
+await client.set_guest_network(enabled=True, name="Guest")
+await client.set_guest_password("<new-password>")
+await client.block_device("<mac>")
+await client.unblock_device("<mac>")
+await client.create_schedule("<profile-id>", name="Bedtime", days=["monday"], start="22:00", end="06:00")
+await client.set_nightlight("<eero-id>", brightness_percentage=30, schedule={...})
+```
+
+### New families and what they replace
+
+Fourteen domain modules were added (each with `EeroClient` wrappers): `entitlements`, `events`,
+`permissions`, `notifications`, `dns_policies`, `members`, `account`, `dhcp`, `wpa3`,
+`power_saving`, `ddns`, `backup_access_points`, `subnets`, `wan`; plus node/port actions, LED
+cycle, nightlight override and eero support reads on `EerosAPI`, and MLO / fast transition /
+Passpoint / proxied nodes on `SecurityAPI`. They are additive except where noted in the table
+above. The one you are most likely to need during migration is DNS policies, which replaces the
+removed profile content-filter methods:
+
+```python
+# Before (v7.x) — never persisted
+await client._api.profiles.update_profile_block_list("<network-id>", "<profile-id>", ["example.com"])
+await client.set_blocked_applications("<profile-id>", ["<app-id>"])
+
+# After (v8.0.0+) — the DNS-policies resource family (premium feature)
+await client.block_domain_for_profiles("example.com", profiles=["<profile-id>"])
+await client.block_domain_for_profiles("example.com", profiles=["<profile-id>"], is_delete=True)  # remove
+await client.set_profile_blocked_applications("<profile-id>", ["<app-id>"])
+apps = await client.get_dns_policy_applications("<profile-id>")
+```
+
+Every method in every new family is listed with verb, path, and verified/unverified status in
+the [API Reference](API-Reference#domain-apis), with usage in [Python API](Python-API).
+
+Checklist (links and writes):
+
+- [ ] Grep for `set_sqm_enabled(`, `configure_sqm(`, `set_sqm_bandwidth(`, `set_sqm_auto(` —
+      replace with `set_sqm(enabled)` behind a read-compare-skip.
+- [ ] Grep for `get_backup_network(`, `get_backup_status(`, `set_backup_network(`,
+      `configure_backup_network(` — replace with the `*_backup_internet` / `cellular_backup`
+      methods; drop `phone_number`.
+- [ ] Grep for `set_guest_network(` calls passing `password=` — split into `set_guest_network`
+      + `set_guest_password`.
+- [ ] Grep for `block_device(` calls passing `blocked=` or a second positional — split into
+      `block_device(mac)` / `unblock_device(mac)`.
+- [ ] Grep for `set_profile_schedule(`, `get_profile_schedule(`, `time_blocks` — move to the
+      schedules sub-resource methods.
+- [ ] Grep for `update_profile_content_filter(`, `update_profile_block_list(`,
+      `get_blocked_applications(`, `set_blocked_applications(` — move to the DNS-policies
+      family.
+- [ ] Grep for `set_nightlight(` / `set_nightlight_schedule(` — switch to
+      `brightness_percentage=` / `schedule=`; drop `schedule_enabled`, `schedule_on`,
+      `schedule_off`, `ambient_light_enabled`, `on_time`, `off_time`.
+- [ ] Grep for `set_led(` / `set_led_brightness(` — audit: the old write did nothing, so any
+      logic that assumed the LED state was changed has never been exercised.
+- [ ] Grep for `device_id=` passed by keyword to a `DevicesAPI` method (not `EeroClient`) —
+      rename to `mac=`.
+- [ ] Grep for `update_reservation(` / `update_forward(` on the domain APIs — the network is now
+      keyword-only `network=` and only needed for a bare ID.
+- [ ] Any automation issuing a settings-class write (`set_sqm`, `set_dhcp`, `set_connection_mode`,
+      `set_nat_port_randomization`, `set_mlo_mode`, `set_wpa3_per_band`, `set_fast_transition`,
+      `set_power_saving`, `set_subnets_config`, `set_multistaticip`, secondary WAN, the DNS
+      writes) must read, compare, and skip — a write may reboot the whole mesh.
 
 ### Session transport and authentication
 
@@ -602,8 +751,11 @@ await client.get_ouicheck(serial="<eero-serial>", version="<eero-version>")
 
 New: `API_HOST`, `API_VERSION`, `DEFAULT_USER_AGENT`, `DEFAULT_ACCEPT_LANGUAGE`,
 `GET_RETRY_DELAY_SECONDS`, `CREDENTIAL_SCHEMA_VERSION`, `LOGIN_RESEND_ENDPOINT`,
-`LOGOUT_COOKIE_FIELD_NAME`, `SESSION_COOKIE_PREFIX`. `eero.api.base` additionally exports
-`RequestEncoding` and `build_request_headers`.
+`LOGOUT_COOKIE_FIELD_NAME`, `SESSION_COOKIE_PREFIX`, `api_endpoint(version)`,
+`API_VERSION_DEFAULT`, `API_VERSION_DEVICE_WRITES`, `API_VERSION_MULTISTATICIP`,
+`API_VERSION_SECONDARY_WAN`. `eero.api.base` additionally exports `RequestEncoding` and
+`build_request_headers`; `eero.api.links` (re-exported from `eero`) adds `resolve_link`,
+`self_url`, `resource_url`, `sub_resource_url`, `join_api_path`.
 
 Checklist (transport, auth, errors, parameters):
 
@@ -655,12 +807,23 @@ Checklist (transport, auth, errors, parameters):
     no-ops before v7.0.0 and now take effect. Also grep for `custom_dns`, `dns_caching` and
     `dns_servers` as *response* keys: none of them exist in the API.
   - `set_device_priority(`, `get_activity`, `set_ipv6_dns(`, `run_insights(`, `run_ouicheck(`,
-    `set_thread(`/`set_thread_enabled(`, `get_settings(`, `get_password(`, and
-    `get_burst_reporters(` — all removed outright in v8.0.0, see above.
+    `set_thread(`, `get_settings(`, `get_password(`, and `get_burst_reporters(` — all removed
+    outright in v8.0.0, see above.
+  - `set_sqm_enabled(`, `configure_sqm(`, `set_sqm_bandwidth(`, `set_sqm_auto(`,
+    `get_backup_network(`, `get_backup_status(`, `set_backup_network(`,
+    `configure_backup_network(`, `get_profile_schedule(`, `set_profile_schedule(`,
+    `update_profile_content_filter(`, `update_profile_block_list(`, `get_blocked_applications(`,
+    `set_blocked_applications(` — removed in v8.0.0 with the write re-pointing, see above.
+  - `set_guest_network(` with `password=`, `block_device(` with `blocked=`, `set_nightlight(`
+    with `brightness=` / `schedule_enabled=` / `schedule_on=` / `schedule_off=` /
+    `ambient_light_enabled=`, `set_nightlight_schedule(` with `on_time=` / `off_time=`, and
+    `device_id=` by keyword on a `DevicesAPI` method — re-signatured in v8.0.0, see above.
   - `session_expiry`, `refresh_token`, `MAX_ERROR_BODY_CHARS`, `DEFAULT_HEADERS`,
     `REFRESH_ENDPOINTS` — removed in v8.0.0 with the transport/auth changes, see above.
   - `get_data_usage(` without `start=`/`end=`/`cadence=`, and `get_ouicheck(` without
     `serial=`/`version=` — signatures changed in v8.0.0, see above.
+  - `set_led(` / `set_led_brightness(` — not a signature change, but the pre-v8.0.0 write was
+    verified to change nothing; any behaviour built on it has never actually run.
 
 ---
 
