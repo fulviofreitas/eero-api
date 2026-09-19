@@ -191,3 +191,27 @@ class TestBlacklistAPIRemoveFromBlacklist:
 
         with pytest.raises(EeroAuthenticationException):
             await blacklist_api.remove_from_blacklist("network_123", "AA:BB:CC:11:22:33")
+
+
+class TestRemoveFromBlacklistIdentifierSafety:
+    """The removal URL is built from a validated identifier, never by concatenation."""
+
+    @pytest.fixture
+    def blacklist_api(self, mock_session):
+        """Create a BlacklistAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return BlacklistAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_id", ["a/../../account", "abc?x=1"])
+    async def test_unsafe_identifier_is_refused_before_any_request(
+        self, blacklist_api, mock_session, bad_id
+    ):
+        """An id that could retarget the DELETE raises before the transport is touched."""
+        from eero.exceptions import EeroValidationException
+
+        with pytest.raises(EeroValidationException):
+            await blacklist_api.remove_from_blacklist("network_123", bad_id)
+        mock_session.request.assert_not_called()

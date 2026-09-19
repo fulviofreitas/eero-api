@@ -22,7 +22,7 @@ from ..logging import get_secure_logger
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import sub_resource_url
+from .links import child_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -168,7 +168,6 @@ class BlacklistAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        base_url = self._blacklist_url(network, parent)
-        url = f"{base_url.rstrip('/')}/{mac_or_device_id}"
-        _LOGGER.debug("Removing %s from blacklist at %s", mac_or_device_id, base_url)
+        url = child_url(self._blacklist_url(network, parent), mac_or_device_id)
+        _LOGGER.debug("Removing a device from the block list")
         return await self.delete(url, auth_token=auth_token)

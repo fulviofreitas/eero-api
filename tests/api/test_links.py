@@ -22,6 +22,7 @@ import pytest
 
 from eero.api.base import BaseAPI
 from eero.api.links import (
+    child_url,
     join_api_path,
     resolve_link,
     resource_url,
@@ -485,3 +486,77 @@ class TestResolvedLinkGoesThroughTransport:
         _, call_kwargs = mock_session.request.call_args
         assert mock_session.request.call_args[0][1] == resolved
         assert call_kwargs["headers"]["X-User-Token"] == "token-placeholder"
+
+
+# ========================== Identifier and link-value validation ==========================
+
+
+class TestIdentifierValidation:
+    """A bare identifier is one path segment; anything else is refused."""
+
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "a/../../../account",
+            "abc?x=1",
+            "abc#frag",
+            "abc%2F",
+            "a b",
+            "..",
+            "a\\b",
+            "",
+        ],
+        ids=["traversal", "query", "fragment", "percent", "space", "dotdot", "backslash", "empty"],
+    )
+    def test_resource_url_rejects_unsafe_bare_identifier(self, bad_id: str) -> None:
+        """Delimiters, escapes and traversal never reach the request line."""
+        with pytest.raises(EeroValidationException):
+            resource_url(bad_id, "networks/{id}/password")
+
+    @pytest.mark.parametrize(
+        "good_id", ["network-id-placeholder", "p_abc", "aabbccddeeff", "aa:bb:cc:11:22:33"]
+    )
+    def test_resource_url_accepts_ordinary_identifiers(self, good_id: str) -> None:
+        """Ordinary ids, including MACs with or without colons, are accepted."""
+        assert resource_url(good_id, "networks/{id}").endswith(f"/networks/{good_id}")
+
+    def test_uppercase_scheme_is_validated_as_absolute(self) -> None:
+        """An upper-case scheme goes through the absolute-URL validator, not the template."""
+        with pytest.raises(EeroValidationException):
+            resource_url("HTTPS://evil.example/x", "networks/{id}")
+
+    @pytest.mark.parametrize("bad_id", ["a/../b", "abc?x=1"])
+    def test_child_url_rejects_unsafe_identifier(self, bad_id: str) -> None:
+        """child_url applies the same identifier rule."""
+        with pytest.raises(EeroValidationException):
+            child_url(f"{API_ENDPOINT}/networks/net/blacklist", bad_id)
+
+    def test_child_url_appends_validated_identifier(self) -> None:
+        """A valid child id is appended to the collection URL."""
+        assert child_url(f"{API_ENDPOINT}/networks/net/blacklist/", "aabbccddeeff") == (
+            f"{API_ENDPOINT}/networks/net/blacklist/aabbccddeeff"
+        )
+
+
+class TestLinkValueValidation:
+    """Link values read from envelopes must be host-relative paths."""
+
+    @pytest.mark.parametrize(
+        "hostile", ["https://evil.example/x", "//evil.example/x", "HTTP://evil.example/x"]
+    )
+    def test_resolve_link_refuses_link_with_authority(self, hostile: str) -> None:
+        """A link carrying a scheme or authority is refused, never re-anchored silently."""
+        parent = {"resources": {"settings": hostile}}
+        with pytest.raises(EeroValidationException):
+            resolve_link(parent, "settings")
+
+    @pytest.mark.parametrize("hostile", ["https://evil.example/x", "//evil.example/x"])
+    def test_self_url_refuses_url_with_authority(self, hostile: str) -> None:
+        """The parent's own url is held to the same rule."""
+        with pytest.raises(EeroValidationException):
+            self_url({"url": hostile})
+
+    def test_resource_url_refuses_path_with_authority(self) -> None:
+        """A path input starting with // is not a host-relative path."""
+        with pytest.raises(EeroValidationException):
+            resource_url("//evil.example/x", "networks/{id}")
