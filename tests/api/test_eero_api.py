@@ -233,3 +233,36 @@ class TestEeroAPIPreferredNetworkRemoved:
         """The vestigial backing slot must not be initialized on EeroAPI."""
         api = EeroAPI(session=mock_session)
         assert "_preferred_network_id" not in vars(api)
+
+
+# ========================== Phase 4 domain attributes ==========================
+
+
+@pytest.mark.parametrize(
+    ("attribute", "class_name"),
+    [
+        ("entitlements", "EntitlementsAPI"),
+        ("events", "EventsAPI"),
+        ("permissions", "PermissionsAPI"),
+        ("notifications", "NotificationsAPI"),
+        ("dns_policies", "DnsPoliciesAPI"),
+        ("members", "MembersAPI"),
+        ("account", "AccountAPI"),
+        ("dhcp", "DhcpAPI"),
+        ("wpa3", "Wpa3API"),
+        ("power_saving", "PowerSavingAPI"),
+        ("ddns", "DdnsAPI"),
+        ("backup_access_points", "BackupAccessPointsAPI"),
+        ("subnets", "SubnetsAPI"),
+        ("wan", "WanAPI"),
+    ],
+)
+def test_new_domain_attribute_is_composed(attribute: str, class_name: str) -> None:
+    """Every new domain module is exposed on EeroAPI as the right class, sharing the auth API."""
+    from eero.api import EeroAPI
+
+    api = EeroAPI(use_keyring=False)
+    domain = getattr(api, attribute)
+
+    assert type(domain).__name__ == class_name
+    assert domain._auth_api is api.auth

@@ -6,29 +6,43 @@ from aiohttp import ClientSession
 
 from ..const import DEFAULT_ACCEPT_LANGUAGE
 from .ac_compat import ACCompatAPI
+from .account import AccountAPI
 from .auth import AuthAPI
 from .backup import BackupAPI
+from .backup_access_points import BackupAccessPointsAPI
 from .blacklist import BlacklistAPI
 from .burst_reporters import BurstReportersAPI
 from .data_usage import DataUsageAPI
+from .ddns import DdnsAPI
 from .devices import DevicesAPI
+from .dhcp import DhcpAPI
 from .diagnostics import DiagnosticsAPI
 from .dns import DnsAPI
+from .dns_policies import DnsPoliciesAPI
 from .eeros import EerosAPI
+from .entitlements import EntitlementsAPI
+from .events import EventsAPI
 from .forwards import ForwardsAPI
 from .insights import InsightsAPI
+from .members import MembersAPI
 from .networks import NetworksAPI
+from .notifications import NotificationsAPI
 from .ouicheck import OUICheckAPI
+from .permissions import PermissionsAPI
+from .power_saving import PowerSavingAPI
 from .profiles import ProfilesAPI
 from .reservations import ReservationsAPI
 from .routing import RoutingAPI
 from .schedule import ScheduleAPI
 from .security import SecurityAPI
 from .sqm import SqmAPI
+from .subnets import SubnetsAPI
 from .support import SupportAPI
 from .thread import ThreadAPI
 from .transfer import TransferAPI
 from .updates import UpdatesAPI
+from .wan import WanAPI
+from .wpa3 import Wpa3API
 
 
 class EeroAPI:
@@ -95,6 +109,20 @@ class EeroAPI:
         self.data_usage = DataUsageAPI(self.auth)
         self.ac_compat = ACCompatAPI(self.auth)
         self.ouicheck = OUICheckAPI(self.auth)
+        self.entitlements = EntitlementsAPI(self.auth)
+        self.events = EventsAPI(self.auth)
+        self.permissions = PermissionsAPI(self.auth)
+        self.notifications = NotificationsAPI(self.auth)
+        self.dns_policies = DnsPoliciesAPI(self.auth)
+        self.members = MembersAPI(self.auth)
+        self.account = AccountAPI(self.auth)
+        self.dhcp = DhcpAPI(self.auth)
+        self.wpa3 = Wpa3API(self.auth)
+        self.power_saving = PowerSavingAPI(self.auth)
+        self.ddns = DdnsAPI(self.auth)
+        self.backup_access_points = BackupAccessPointsAPI(self.auth)
+        self.subnets = SubnetsAPI(self.auth)
+        self.wan = WanAPI(self.auth)
 
     async def __aenter__(self) -> "EeroAPI":
         """Enter async context manager."""

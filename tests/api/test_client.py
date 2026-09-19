@@ -10,7 +10,7 @@ Tests cover:
 import inspect
 import time
 from typing import Any, Dict
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -1576,3 +1576,337 @@ class TestNewWriteWrapperCacheInvalidation:
         await client.create_profile("New Profile")
 
         assert "network_123_profiles" not in client._cache["profiles"]
+
+
+# ========================== Phase 4 wrapper bindings ==========================
+
+#: (dotted attribute path under EeroAPI, positional args, keyword args) for the
+#: wrappers added with the new domain modules; the same binding check as above.
+PHASE4_DOMAIN_CALL_SHAPES = [
+    ("entitlements.get_features", ("net",), {}),
+    ("entitlements.get_upsell_features", ("net",), {}),
+    ("entitlements.get_model_capabilities", ("net",), {}),
+    ("entitlements.get_premium_customer", (), {}),
+    (
+        "events.get_app_events",
+        ("net",),
+        {"page_size": 1, "timestamp": "t", "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("events.get_network_scan", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "events.get_channel_utilization",
+        ("net",),
+        {
+            "start": "s",
+            "end": "e",
+            "busy_threshold": 1,
+            "eero_id": 1,
+            "band": "b",
+            "granularity": 5,
+            "gap_data_placeholder": -1,
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    ("permissions.get_permissions", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("notifications.get_settings", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("notifications.set_settings", ("net", {}), {"parent": _PLACEHOLDER_PARENT}),
+    ("notifications.has_unread", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("notifications.mark_read", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("notifications.get_history", ("net",), {"timestamp": "t", "parent": _PLACEHOLDER_PARENT}),
+    ("notifications.set_push_settings", ({},), {}),
+    ("dns_policies.get_advanced_content_filter", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "dns_policies.allow_domain",
+        ("net", "example.test"),
+        {
+            "add_cname": True,
+            "reason_to_allow": 1,
+            "is_delete": False,
+            "keep_profiles": [],
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    ("dns_policies.allow_cnames", ("net", []), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "dns_policies.block_domain",
+        ("net", "example.test"),
+        {"is_delete": False, "keep_profiles": [], "parent": _PLACEHOLDER_PARENT},
+    ),
+    (
+        "dns_policies.allow_domain_for_profiles",
+        ("net", "example.test"),
+        {
+            "profiles": [],
+            "override": True,
+            "add_cname": True,
+            "reason_to_allow": 1,
+            "is_delete": False,
+            "parent": _PLACEHOLDER_PARENT,
+        },
+    ),
+    (
+        "dns_policies.allow_cnames_for_profiles",
+        ("net", []),
+        {"profiles": [], "parent": _PLACEHOLDER_PARENT},
+    ),
+    (
+        "dns_policies.block_domain_for_profiles",
+        ("net", "example.test"),
+        {"profiles": [], "is_delete": False, "override": True, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("dns_policies.get_profile_applications", ("net", "profile"), {}),
+    ("dns_policies.set_profile_blocked_applications", ("net", "profile", []), {}),
+    ("members.get_members", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("members.get_invites", ("net",), {}),
+    ("members.create_invite", ("net",), {"role": "admin"}),
+    ("members.update_invite", ("net", "invite"), {"invite_nickname": "n"}),
+    ("members.delete_invite", ("net", "invite"), {}),
+    ("members.respond_to_invite", ("net",), {"accept": True, "invite_id": "i", "invite_code": "c"}),
+    ("members.cancel_pending_admin", ("net",), {}),
+    ("members.promote_member", ("net", "member"), {}),
+    ("members.remove_admin", ("net", "user"), {}),
+    ("members.query_invite", ("code",), {}),
+    ("account.set_name", ("name",), {}),
+    ("account.set_email", ("mail",), {}),
+    ("account.verify_email", ("code",), {}),
+    ("account.set_phone", ("phone",), {}),
+    ("account.verify_phone", ("code",), {}),
+    ("account.set_consents", (), {"marketing_emails": True}),
+    ("account.get_sms_countries", (), {}),
+    (
+        "dhcp.set_dhcp",
+        ("net",),
+        {"mode": "m", "custom": {}, "custom_v2": {}, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("dhcp.set_connection_mode", ("net", "mode"), {"parent": _PLACEHOLDER_PARENT}),
+    ("dhcp.set_nat_port_randomization", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("dhcp.set_pppoe", ("serial",), {"username": "u", "password": "p"}),
+    ("wpa3.get_wpa3_per_band", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "wpa3.set_wpa3_per_band",
+        ("net",),
+        {"band_2_4_ghz": "WPA3", "band_5_ghz": "WPA3", "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("security.set_mlo_mode", ("net", "multi"), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.get_fast_transition", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_fast_transition", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_passpoint_enabled", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_proxied_nodes", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "power_saving.set_power_saving",
+        ("net",),
+        {"enable": True, "power_saving_schedule_enabled": True, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("power_saving.get_schedules", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    (
+        "power_saving.create_schedule",
+        ("net",),
+        {"name": "n", "days": [], "start_time": "s", "end_time": "e", "enabled": True},
+    ),
+    (
+        "power_saving.update_schedule",
+        ("net", "schedule"),
+        {"name": "n", "days": [], "start_time": "s", "end_time": "e", "enabled": True},
+    ),
+    ("power_saving.delete_schedule", ("net", "schedule"), {}),
+    ("ddns.enable", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("ddns.disable", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("backup_access_points.list", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("backup_access_points.add", ("net",), {"ssid": "s", "password": "p", "uuid": "u"}),
+    (
+        "backup_access_points.update",
+        ("net", "backup"),
+        {
+            "ssid": "s",
+            "password": "p",
+            "enabled": True,
+            "uuid": "u",
+            "connectivity": {},
+            "created": "c",
+            "last_updated_at": "l",
+        },
+    ),
+    ("backup_access_points.delete_backup_access_point", ("net", "backup"), {}),
+    ("backup_access_points.rearrange", ("net", []), {}),
+    ("backup_access_points.discover_ssids", ("net",), {}),
+    ("backup_access_points.start_ssid_discovery", ("net",), {}),
+    ("backup_access_points.connectivity_check", ("net",), {}),
+    ("subnets.get_config", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("subnets.set_config", ("net", {}), {}),
+    ("subnets.delete_subnet", ("net", "type"), {}),
+    ("subnets.set_content_filters", ("net", {}), {}),
+    ("subnets.get_content_filters", ("net", "subnet"), {}),
+    ("wan.get_multistaticip", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("wan.set_multistaticip", ("net", {}), {}),
+    ("wan.set_secondary_wan_config", ("net", {}), {}),
+    ("wan.set_device_secondary_wan_access", ("net", "aabbccddeeff"), {"deny": True}),
+    ("eeros.node_action", ("eero", "POWER_CYCLE_ALL_PORTS"), {"parent": _PLACEHOLDER_PARENT}),
+    ("eeros.port_action", ("eero", "1", "ENABLE_DATA"), {}),
+    ("eeros.led_cycle", ("serial",), {"colors": [], "duration": "1", "time_per_color": "1"}),
+    ("eeros.nightlight_override", ("eero",), {"brightness_percentage": 50}),
+    ("eeros.get_eero_support", ("serial",), {}),
+]
+
+#: EeroClient wrapper → the domain call it forwards to (dotted path).
+PHASE4_WRAPPERS = {
+    "get_entitlement_features": "entitlements.get_features",
+    "get_upsell_features": "entitlements.get_upsell_features",
+    "get_model_capabilities": "entitlements.get_model_capabilities",
+    "get_premium_customer": "entitlements.get_premium_customer",
+    "get_app_events": "events.get_app_events",
+    "get_network_scan": "events.get_network_scan",
+    "get_channel_utilization": "events.get_channel_utilization",
+    "get_permissions": "permissions.get_permissions",
+    "get_notification_settings": "notifications.get_settings",
+    "set_notification_settings": "notifications.set_settings",
+    "has_unread_notifications": "notifications.has_unread",
+    "mark_notifications_read": "notifications.mark_read",
+    "get_notification_history": "notifications.get_history",
+    "set_push_settings": "notifications.set_push_settings",
+    "get_advanced_content_filter": "dns_policies.get_advanced_content_filter",
+    "allow_domain": "dns_policies.allow_domain",
+    "allow_cnames": "dns_policies.allow_cnames",
+    "block_domain": "dns_policies.block_domain",
+    "allow_domain_for_profiles": "dns_policies.allow_domain_for_profiles",
+    "allow_cnames_for_profiles": "dns_policies.allow_cnames_for_profiles",
+    "block_domain_for_profiles": "dns_policies.block_domain_for_profiles",
+    "get_dns_policy_applications": "dns_policies.get_profile_applications",
+    "set_profile_blocked_applications": "dns_policies.set_profile_blocked_applications",
+    "get_members": "members.get_members",
+    "get_invites": "members.get_invites",
+    "create_invite": "members.create_invite",
+    "update_invite": "members.update_invite",
+    "delete_invite": "members.delete_invite",
+    "respond_to_invite": "members.respond_to_invite",
+    "cancel_pending_admin": "members.cancel_pending_admin",
+    "promote_member": "members.promote_member",
+    "remove_admin": "members.remove_admin",
+    "query_invite": "members.query_invite",
+    "set_account_name": "account.set_name",
+    "set_account_email": "account.set_email",
+    "verify_account_email": "account.verify_email",
+    "set_account_phone": "account.set_phone",
+    "verify_account_phone": "account.verify_phone",
+    "set_account_consents": "account.set_consents",
+    "get_sms_countries": "account.get_sms_countries",
+    "set_dhcp": "dhcp.set_dhcp",
+    "set_connection_mode": "dhcp.set_connection_mode",
+    "set_nat_port_randomization": "dhcp.set_nat_port_randomization",
+    "set_pppoe": "dhcp.set_pppoe",
+    "get_wpa3_per_band": "wpa3.get_wpa3_per_band",
+    "set_wpa3_per_band": "wpa3.set_wpa3_per_band",
+    "set_mlo_mode": "security.set_mlo_mode",
+    "get_fast_transition": "security.get_fast_transition",
+    "set_fast_transition": "security.set_fast_transition",
+    "set_passpoint_enabled": "security.set_passpoint_enabled",
+    "set_proxied_nodes": "security.set_proxied_nodes",
+    "set_power_saving": "power_saving.set_power_saving",
+    "get_power_saving_schedules": "power_saving.get_schedules",
+    "create_power_saving_schedule": "power_saving.create_schedule",
+    "update_power_saving_schedule": "power_saving.update_schedule",
+    "delete_power_saving_schedule": "power_saving.delete_schedule",
+    "enable_ddns": "ddns.enable",
+    "disable_ddns": "ddns.disable",
+    "list_backup_access_points": "backup_access_points.list",
+    "add_backup_access_point": "backup_access_points.add",
+    "update_backup_access_point": "backup_access_points.update",
+    "delete_backup_access_point": "backup_access_points.delete_backup_access_point",
+    "rearrange_backup_access_points": "backup_access_points.rearrange",
+    "discover_backup_ssids": "backup_access_points.discover_ssids",
+    "start_backup_ssid_discovery": "backup_access_points.start_ssid_discovery",
+    "backup_connectivity_check": "backup_access_points.connectivity_check",
+    "get_subnets_config": "subnets.get_config",
+    "set_subnets_config": "subnets.set_config",
+    "delete_subnet": "subnets.delete_subnet",
+    "set_subnet_content_filters": "subnets.set_content_filters",
+    "get_subnet_content_filters": "subnets.get_content_filters",
+    "get_multistaticip": "wan.get_multistaticip",
+    "set_multistaticip": "wan.set_multistaticip",
+    "set_secondary_wan_config": "wan.set_secondary_wan_config",
+    "set_device_secondary_wan_access": "wan.set_device_secondary_wan_access",
+    "node_action": "eeros.node_action",
+    "port_action": "eeros.port_action",
+    "led_cycle": "eeros.led_cycle",
+    "nightlight_override": "eeros.nightlight_override",
+    "get_eero_support": "eeros.get_eero_support",
+}
+
+
+class TestPhase4WrapperBindings:
+    """Every Phase 4 wrapper forwards to a real domain method with a valid call shape."""
+
+    @pytest.fixture
+    def api(self):
+        """A real EeroAPI so the bound methods are the real signatures."""
+        from eero.api import EeroAPI
+
+        return EeroAPI(use_keyring=False)
+
+    @pytest.mark.parametrize(
+        "shape", PHASE4_DOMAIN_CALL_SHAPES, ids=[s[0] for s in PHASE4_DOMAIN_CALL_SHAPES]
+    )
+    def test_call_shape_binds_to_the_real_domain_signature(self, api, shape):
+        """The forwarded call binds against the real domain method (no missing or renamed method)."""
+        path, args, kwargs = shape
+        *attrs, method_name = path.split(".")
+        target = api
+        for attr in attrs:
+            target = getattr(target, attr)
+        method = getattr(target, method_name)
+
+        inspect.signature(method).bind(*args, **kwargs)
+
+    def test_every_wrapper_exists_and_its_target_is_in_the_shape_table(self):
+        """Each listed wrapper exists on EeroClient and its target has a binding entry."""
+        client = EeroClient()
+        shapes = {shape[0] for shape in PHASE4_DOMAIN_CALL_SHAPES}
+
+        for wrapper, target in PHASE4_WRAPPERS.items():
+            assert callable(getattr(client, wrapper)), wrapper
+            assert target in shapes, target
+
+    @pytest.mark.parametrize(
+        ("wrapper", "args", "kwargs", "bucket"),
+        [
+            ("set_notification_settings", ({},), {}, "network"),
+            ("allow_domain", ("example.test",), {}, "network"),
+            ("set_dhcp", (), {"mode": "automatic"}, "network"),
+            ("set_mlo_mode", ("multi",), {}, "network"),
+            ("set_power_saving", (), {"enable": True}, "network"),
+            ("enable_ddns", (), {}, "network"),
+            ("set_subnets_config", ({},), {}, "network"),
+            ("set_multistaticip", ({},), {}, "network"),
+            ("node_action", ("eero_1", "POWER_CYCLE_ALL_PORTS"), {}, "eeros"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_write_wrappers_invalidate_their_cache_bucket(
+        self, wrapper, args, kwargs, bucket
+    ):
+        """A write wrapper drops the cached entry for the bucket it changes."""
+        client = EeroClient()
+        client._api = MagicMock()
+        target = PHASE4_WRAPPERS[wrapper]
+        domain, method = target.split(".")
+        setattr(getattr(client._api, domain), method, AsyncMock(return_value={"meta": {}}))
+        subkey = "network_123_eeros" if bucket == "eeros" else "network_123"
+        client._update_cache(bucket, subkey, {"meta": {"code": 200}, "data": {}})
+
+        await getattr(client, wrapper)(*args, **kwargs, network_id="network_123")
+
+        assert client._get_from_cache(bucket, subkey) is None
+
+    @pytest.mark.asyncio
+    async def test_parent_is_passed_when_the_network_is_cached(self):
+        """A network-scoped wrapper passes the cached envelope as parent."""
+        client = EeroClient()
+        client._api = MagicMock()
+        client._api.permissions.get_permissions = AsyncMock(return_value={"meta": {}})
+        envelope = {"meta": {"code": 200}, "data": {"url": "/2.2/networks/network_123"}}
+        client._update_cache("network", "network_123", envelope)
+
+        await client.get_permissions(network_id="network_123")
+
+        client._api.permissions.get_permissions.assert_awaited_once_with(
+            "network_123", parent=envelope
+        )
