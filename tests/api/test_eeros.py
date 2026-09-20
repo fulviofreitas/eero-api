@@ -221,7 +221,11 @@ class TestEerosAPILedControl:
     async def test_set_led_sends_form_encoded_led_on(
         self, eeros_api, mock_session, caplog, enabled, expected
     ):
-        """Test set_led PUTs form-encoded led_on to the led_action link and warns."""
+        """Test set_led PUTs form-encoded led_on to the led_action link without warning.
+
+        The write is live-verified, so it must not carry the
+        uncharacterised-write warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -235,7 +239,7 @@ class TestEerosAPILedControl:
         assert call_args.args[1].endswith("/2.2/eeros/eero_001/led")
         assert call_args.kwargs["data"] == {"led_on": expected}
         assert "json" not in call_args.kwargs or call_args.kwargs["json"] is None
-        assert any("set LED for eero" in message for message in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_set_led_prefers_parent_link(self, eeros_api, mock_session):

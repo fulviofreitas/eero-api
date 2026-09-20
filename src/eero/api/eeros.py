@@ -311,12 +311,13 @@ class EerosAPI(AuthenticatedAPI):
         Issues a form-encoded PUT (``led_on=true``/``led_on=false``) to the
         eero's ``led_action`` link.
 
-        .. warning::
-            A JSON write to the eero's own URL (``{"led_on": bool}``) was
-            live-verified to change nothing. This form-encoded write to the
-            dedicated ``led_action`` link is the shape the API declares for
-            this operation, but a live check did not observe the node's
-            light change state -- its side effects are unconfirmed.
+        Live-verified on 2026-09-20: this write turned a node's light off
+        and back on, the read-back (``get_led_status``) and the app agreed,
+        and no node rebooted. The pre-v8.0.0 JSON write to the eero's own
+        URL (``{"led_on": bool}``) was live-verified to change nothing.
+
+        Read ``get_led_status`` first and skip the write when ``led_on``
+        already matches; never retry it in a loop.
 
         Args:
             network_id: ID of the network the Eero belongs to (unused, kept for API compatibility)
@@ -340,7 +341,7 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/led", link="led_action", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, "set LED for eero")
+        _LOGGER.debug("Setting LED state for eero")
         return await self.put(
             url,
             auth_token=auth_token,

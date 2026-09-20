@@ -79,6 +79,10 @@ _VERIFIED_WRITE_ALLOWLIST = {
     # `device_id` is the MAC address with colons stripped, so both the raw
     # MAC and the colon-stripped form are accepted as the URL segment."
     ("BlacklistAPI", "remove_from_blacklist"),
+    # eeros.py: set_led was live-verified on 2026-09-20: the form-encoded
+    # write to the led link turned a node's light off and back on, the
+    # cloud read-back and the app agreed, and no node rebooted.
+    ("EerosAPI", "set_led"),
 }
 
 # Per-(method name, parameter name) placeholder overrides for parameters

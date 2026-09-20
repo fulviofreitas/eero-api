@@ -615,9 +615,10 @@ await client.led_cycle("<eero-serial>", colors=["red", "blue"], duration="<durat
 
 > ⚠️ The pre-v8.0.0 `set_led` write (a JSON body to the eero's own URL) was verified to change
 > nothing — any caller who "successfully" set the LED through this SDK never did. The
-> form-encoded write to the `led_action` link is the shape the API declares, but it is
-> unverified pending a later live check. Read `get_led_status` first and skip when it already
-> matches.
+> form-encoded write to the `led_action` link is the shape the API declares and was verified
+> live on 2026-09-20: the node's light went off and back on, the app agreed, and no node
+> rebooted. `set_led_brightness` uses the same link but has not been verified. Read
+> `get_led_status` first and skip when it already matches.
 
 The nightlight (Beacon only) is its own sub-resource at `data.nightlight.url` on the eero
 envelope; it accepts exactly `enabled`, `brightness_percentage`, and `schedule`. An eero without

@@ -443,7 +443,7 @@ network and logs one `WARNING` before the request**; see
 
 | Write | Before (v7.x) | After (v8.0.0) |
 |---|---|---|
-| `set_led(eero_id, enabled)` | JSON `{"led_on": bool}` PUT to the eero's own URL — **verified to change nothing**. Any caller who "successfully" set the LED through the SDK never did | Form-encoded `led_on=true|false` PUT to the eero's `led_action` link. Unverified; a later live check is pending |
+| `set_led(eero_id, enabled)` | JSON `{"led_on": bool}` PUT to the eero's own URL — **verified to change nothing**. Any caller who "successfully" set the LED through the SDK never did | Form-encoded `led_on=true|false` PUT to the eero's `led_action` link. Verified live on 2026-09-20 (light off and on, no reboot) |
 | `set_led_brightness(eero_id, brightness)` | JSON PUT to the eero's own URL | Form-encoded `led_brightness=<int>` PUT to the `led_action` link. Unverified |
 | `set_location(eero_id, location)` | *(new on `EeroClient`)* | Form-encoded `location=` PUT to the eero's own URL. Unverified |
 | `set_network_name(name)` | JSON `{"name": ...}` PUT to `settings` | Form-encoded `name=` PUT to the network's `settings` link. Disconnects clients while it takes effect; the form shape is unverified |
