@@ -17,9 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
+import yarl
+from aiohttp import DummyCookieJar
 
 from eero.api.base import AuthenticatedAPI, BaseAPI, RequestEncoding, build_request_headers
-from eero.const import DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
+from eero.const import API_ENDPOINT, DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
 from eero.exceptions import (
     EeroAccessDeniedException,
     EeroAPIException,
@@ -105,6 +107,21 @@ class TestBaseAPI:
         await api.__aexit__(None, None, None)
 
         mock_session.close.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_created_session_has_a_dummy_cookie_jar(self):
+        """A session the SDK creates cannot persist any cookie, including a Set-Cookie."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        await api.__aenter__()
+        try:
+            jar = api._session.cookie_jar
+            assert isinstance(jar, DummyCookieJar)
+            jar.update_cookies({"s": "would-be-persisted"}, yarl.URL(API_ENDPOINT))
+            assert len(jar) == 0
+            assert not jar.filter_cookies(yarl.URL(API_ENDPOINT))
+        finally:
+            await api.__aexit__(None, None, None)
 
     def test_session_property_raises_without_context(self):
         """Test that session property raises if not in context."""

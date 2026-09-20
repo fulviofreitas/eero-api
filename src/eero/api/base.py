@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import aiohttp
-from aiohttp import ClientSession
+from aiohttp import ClientSession, DummyCookieJar
 
 if TYPE_CHECKING:
     from .auth import AuthAPI
@@ -280,7 +280,13 @@ class BaseAPI:
     async def __aenter__(self) -> "BaseAPI":
         """Enter async context manager."""
         if self._session is None:
-            self._session = ClientSession()
+            # The session credential travels per request (header plus the
+            # optional legacy cookie built in ``_build_credentials``); it is
+            # never persisted. A DummyCookieJar also guarantees that no
+            # ``Set-Cookie`` from a response is stored and replayed. A
+            # caller-supplied session keeps whatever jar it was built with:
+            # the SDK never writes to it, but does not alter its policy.
+            self._session = ClientSession(cookie_jar=DummyCookieJar())
             self._should_close_session = True
         return self
 
@@ -396,7 +402,7 @@ class BaseAPI:
         )
         if not (host_matches and scheme_matches):
             _LOGGER.warning(
-                "Refusing to attach session credential to request for %s: %s://%s",
+                "Session header withheld from a request to a %s: %s://%s",
                 "foreign host" if not host_matches else "non-matching scheme",
                 parsed.scheme or "<unknown>",
                 request_host or "<unknown>",

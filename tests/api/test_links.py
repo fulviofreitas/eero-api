@@ -16,10 +16,12 @@ Tests cover:
 """
 
 import copy
+from types import MappingProxyType
 from typing import Any, Dict
 
 import pytest
 
+from eero.api._writes import as_envelope
 from eero.api.base import BaseAPI
 from eero.api.links import (
     child_url,
@@ -560,3 +562,29 @@ class TestLinkValueValidation:
         """A path input starting with // is not a host-relative path."""
         with pytest.raises(EeroValidationException):
             resource_url("//evil.example/x", "networks/{id}")
+
+
+class TestReadOnlyMappingParents:
+    """Any read-only Mapping is accepted as a parent, not only a dict."""
+
+    def test_resolve_link_from_mapping_proxy(self, network_data):
+        parent = MappingProxyType(dict(network_data))
+        assert resolve_link(parent, "eeros") == resolve_link(network_data, "eeros")
+
+    def test_self_url_from_mapping_proxy(self, network_data):
+        parent = MappingProxyType(dict(network_data))
+        assert self_url(parent) == self_url(network_data)
+
+    def test_full_envelope_as_mapping_proxy_is_unwrapped(self, network_envelope):
+        parent = MappingProxyType(
+            {
+                "meta": network_envelope["meta"],
+                "data": MappingProxyType(dict(network_envelope["data"])),
+            }
+        )
+        assert resolve_link(parent, "eeros") == resolve_link(network_envelope, "eeros")
+
+    def test_as_envelope_returns_the_same_object(self, network_data):
+        parent = MappingProxyType(dict(network_data))
+        assert as_envelope(parent) is parent
+        assert as_envelope(None) is None

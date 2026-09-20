@@ -2,7 +2,12 @@
 
 import pytest
 
-from eero.api._params import CADENCE_VALUES, resolve_network_url, validate_cadence
+from eero.api._params import (
+    CADENCE_VALUES,
+    resolve_nested_url,
+    resolve_network_url,
+    validate_cadence,
+)
 from eero.exceptions import EeroValidationException
 
 
@@ -48,3 +53,33 @@ class TestResolveNetworkUrl:
         parent = {"meta": {"code": 200}, "data": {"url": "/2.3/networks/network_123"}}
         url = resolve_network_url("network_123", parent)
         assert url == "https://api-user.e2ro.com/2.3/networks/network_123"
+
+
+class TestResolveNestedUrlChildValidation:
+    """A bare child id must be a single path segment before it is templated."""
+
+    @pytest.mark.parametrize(
+        "child",
+        ["../account", "device?x=1", "a/b", "id#frag", "", " "],
+        ids=["dot-segment", "query", "slash", "fragment", "empty", "blank"],
+    )
+    def test_bare_child_that_is_not_a_single_segment_is_rejected(self, child):
+        with pytest.raises(EeroValidationException):
+            resolve_nested_url("network_123", child, prefix="profiles", suffix="/schedules")
+
+    def test_valid_bare_child_is_templated_with_suffix(self):
+        url = resolve_nested_url("network_123", "profile_1", prefix="profiles", suffix="/schedules")
+        assert (
+            url == "https://api-user.e2ro.com/2.2/networks/network_123/profiles/profile_1/schedules"
+        )
+
+    def test_path_child_bypasses_the_template(self):
+        url = resolve_nested_url(
+            "network_123",
+            "/2.3/networks/network_123/profiles/profile_1",
+            prefix="profiles",
+            suffix="/schedules",
+        )
+        assert (
+            url == "https://api-user.e2ro.com/2.3/networks/network_123/profiles/profile_1/schedules"
+        )

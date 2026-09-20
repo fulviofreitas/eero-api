@@ -18,7 +18,7 @@ envelope.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
 from ..const import API_HOST, API_VERSION_DEFAULT, api_endpoint
@@ -32,7 +32,11 @@ _API_HOST_NAME = urlsplit(API_HOST).hostname or ""
 # The scheme required for any absolute URL accepted by this module.
 _API_SCHEME = urlsplit(API_HOST).scheme or "https"
 
-Envelope = Dict[str, Any]
+#: A response envelope or its ``data`` object, as any read-only mapping.
+#: The helpers below only ever look values up; they never mutate, copy or
+#: transform the envelope, so a ``dict``, a ``MappingProxyType`` or any other
+#: ``Mapping`` implementation is accepted alike.
+Envelope = Mapping[str, Any]
 
 # The single placeholder every URL template carries for the resource id.
 _ID_PLACEHOLDER = "{id}"
@@ -95,7 +99,7 @@ def _as_data(parent: Envelope) -> Envelope:
         read-only lookup; the returned object is the same object (or a
         sub-object of it) as was passed in, never a copy.
     """
-    if isinstance(parent, dict) and "meta" in parent and isinstance(parent.get("data"), dict):
+    if isinstance(parent, Mapping) and "meta" in parent and isinstance(parent.get("data"), Mapping):
         return parent["data"]
     return parent
 
@@ -169,8 +173,8 @@ def resolve_link(parent: Envelope, name: str) -> Optional[str]:
         no ``resources`` object, or no link of that name.
     """
     data = _as_data(parent)
-    resources = data.get("resources") if isinstance(data, dict) else None
-    if not isinstance(resources, dict):
+    resources = data.get("resources") if isinstance(data, Mapping) else None
+    if not isinstance(resources, Mapping):
         return None
     link = resources.get(name)
     if not isinstance(link, str) or not link:
@@ -190,7 +194,7 @@ def self_url(parent: Envelope) -> Optional[str]:
         ``url`` field is present.
     """
     data = _as_data(parent)
-    url = data.get("url") if isinstance(data, dict) else None
+    url = data.get("url") if isinstance(data, Mapping) else None
     if not isinstance(url, str) or not url:
         return None
     return join_api_path(_validate_link_path(url))

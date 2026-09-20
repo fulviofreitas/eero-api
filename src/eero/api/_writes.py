@@ -11,20 +11,21 @@ across modules:
   before issuing the request, instead of hand-rolling their own log
   line, so the wording and log level are identical everywhere it
   appears.
-* :func:`as_envelope` -- a zero-cost type narrowing from the
-  ``Mapping[str, Any]`` domain methods accept for their ``parent``
-  keyword argument (chosen to signal, at the type level, that the value
-  is read-only and never mutated) to the ``Dict[str, Any]`` that
-  :mod:`eero.api.links` is typed against. It performs no copy and no
-  validation.
+* :func:`as_envelope` -- the single hand-off point through which domain
+  modules pass the read-only ``Mapping[str, Any]`` they accept for their
+  ``parent`` keyword argument (chosen to signal, at the type level, that
+  the value is read-only and never mutated) on to :mod:`eero.api.links`,
+  whose helpers accept any ``Mapping``. It performs no copy, no cast and
+  no validation.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Mapping, Optional, Union, cast
+from typing import Any, Mapping, Optional, Union
 
 from ..logging import SecureLoggerAdapter
+from .links import Envelope
 
 #: Either logger shape used across the domain modules: most use
 #: :func:`eero.logging.get_secure_logger`, but a few (e.g. ``dns.py``)
@@ -71,24 +72,24 @@ def warn_uncharacterised_write(logger: _Logger, operation: str) -> None:
     )
 
 
-def as_envelope(parent: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Narrow a read-only ``parent`` mapping to the type ``eero.api.links`` expects.
+def as_envelope(parent: Optional[Mapping[str, Any]]) -> Optional[Envelope]:
+    """Hand a read-only ``parent`` mapping to the link helpers unchanged.
 
     Domain methods accept ``parent`` as ``Mapping[str, Any]`` to signal, at
     the type level, that the value is read-only and is never mutated,
     copied-with-changes, or otherwise transformed. The link-resolution
-    helpers in :mod:`eero.api.links` are typed against ``Dict[str, Any]``.
-    This function performs no copy and no validation; it exists solely to
-    satisfy static typing for a value that is already read-only by
-    convention throughout this SDK.
+    helpers in :mod:`eero.api.links` operate on any ``Mapping`` (a ``dict``,
+    a ``MappingProxyType``, or any other read-only mapping), so this is the
+    single place the domain modules go through to pass an envelope on.
+    It performs no copy, no cast and no validation.
 
     Args:
         parent: The caller-supplied parent envelope, or ``None``.
 
     Returns:
-        The same object, retyped as ``Optional[Dict[str, Any]]``.
+        The same object, unchanged.
     """
-    return cast(Optional[Dict[str, Any]], parent)
+    return parent
 
 
 __all__ = ["as_envelope", "warn_uncharacterised_write"]

@@ -12,7 +12,7 @@ from typing import Any, Mapping, Optional, Sequence
 from ..const import API_VERSION_DEFAULT
 from ..exceptions import EeroValidationException
 from ._writes import as_envelope
-from .links import resolve_link, resource_url, self_url
+from .links import child_url, resolve_link, resource_url, self_url
 
 #: Valid values for a `cadence` query/body parameter, shared by every family
 #: that buckets a time series into "daily" or "hourly" points (data usage,
@@ -143,9 +143,11 @@ def resolve_nested_url(
 
     Raises:
         EeroValidationException: If ``child`` is not a non-empty string,
-            or is an absolute URL that is not on the configured API host,
-            or uses a scheme other than the API host's scheme. As
-            :func:`resolve_network_url` for an invalid ``network``.
+            is a bare id that is not a single path segment (see
+            :func:`eero.api.links.child_url`), or is an absolute URL that is
+            not on the configured API host or uses a scheme other than the
+            API host's scheme. As :func:`resolve_network_url` for an invalid
+            ``network``.
     """
     envelope = as_envelope(parent)
     if envelope is not None and link is not None:
@@ -159,7 +161,7 @@ def resolve_nested_url(
         raise EeroValidationException("child", "must be a non-empty string")
 
     network_url = resolve_network_url(network, version=version)
-    return f"{network_url}/{prefix}/{child}{suffix}"
+    return child_url(f"{network_url}/{prefix}", child) + suffix
 
 
 __all__ = [

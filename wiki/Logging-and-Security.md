@@ -35,26 +35,17 @@ _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
 
 `get_secure_logger(name, sensitive_patterns=None, visible_chars=4)` is `@lru_cache`d — repeated calls with the same `(name, sensitive_patterns, visible_chars)` return the same adapter instance.
 
-> ⚠️ **Warning:** Passing a custom `sensitive_patterns=` here looks like it scopes a pattern
-> set to your logger, but it doesn't reliably. `_get_sensitive_regex()` compiles and caches a
-> single **module-global** regex the first time *any* sensitive-key check runs anywhere in the
-> process, then ignores the `patterns` argument on every subsequent call — including yours. In
-> practice the SDK's own `auth.py`/`base.py` loggers usually compile that global regex first
-> (with `DEFAULT_SENSITIVE_PATTERNS`), so a `sensitive_patterns=` you pass to `get_secure_logger()`
-> is silently a no-op. This looks like an SDK bug, not documented behavior — use
-> `add_sensitive_pattern()` below, which is the one mechanism that actually works.
+A custom `sensitive_patterns=` is scoped to the loggers you pass it to. The compiled regex is
+cached **per pattern set** (`_get_sensitive_regex()` is keyed by the frozenset it receives), so
+the SDK's own loggers, which use `DEFAULT_SENSITIVE_PATTERNS`, and a logger you build with your
+own set never share or overwrite each other's regex. Combine the two with
+`add_sensitive_pattern()` below when you want the defaults plus your own field names.
 
 ---
 
 ## `SecureLoggerAdapter`
 
 `SecureLoggerAdapter(logger, extra=None, sensitive_patterns=DEFAULT_SENSITIVE_PATTERNS, visible_chars=4)` wraps a standard `logging.Logger` and overrides `debug()`, `info()`, `warning()`, `error()`, `critical()`, and `exception()`. Each override:
-
-> ⚠️ **Warning:** The same caveat applies here as for `get_secure_logger()` above —
-> `sensitive_patterns=` is only honored the first time the process-global regex cache is built;
-> after that, every instance's `sensitive_patterns` is ignored by `_get_sensitive_regex()`. Treat
-> this constructor argument as effectively non-functional and use `add_sensitive_pattern()`
-> instead.
 
 1. Redacts sensitive data in the `extra` kwarg (if it's a dict) via `process()`.
 2. Redacts every positional format argument via `redact_sensitive()` before handing off to the underlying `logging.Logger.log()`.
@@ -122,11 +113,10 @@ After:  {'session_id': 's_9f...[REDACTED:14chars]', 'email': 'you@example.com', 
 
 ## `add_sensitive_pattern()`
 
-This is the mechanism that actually works for adding your own sensitive field names — unlike
-the `sensitive_patterns=` constructor argument above. It does not mutate `DEFAULT_SENSITIVE_PATTERNS`
-in place; it returns a new `FrozenSet[str]` you pass back into `get_secure_logger()`, and as a
-side effect it resets the module-global compiled-regex cache so the new pattern set actually
-takes effect:
+Builds a pattern set that is the defaults plus your own field name. It does not mutate
+`DEFAULT_SENSITIVE_PATTERNS` in place; it returns a new `FrozenSet[str]` you pass back into
+`get_secure_logger()`. No cache reset is involved: the new set gets its own compiled regex the
+first time it is used, independently of every other set:
 
 ```python
 from eero.logging import add_sensitive_pattern, get_secure_logger
