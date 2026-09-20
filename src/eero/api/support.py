@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
-from ._writes import as_envelope
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import sub_resource_url
@@ -95,6 +95,7 @@ class SupportAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/support", link="support", parent=as_envelope(parent)
         )
+        warn_uncharacterised_write(_LOGGER, "request support for network")
         _LOGGER.debug("Requesting support for network %s", network_id)
         return await self.post(
             url,

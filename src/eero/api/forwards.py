@@ -14,15 +14,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, self_url, sub_resource_url
+from .links import self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single forward resource on the default API version.
-_FORWARD_TEMPLATE = "networks/{network}/forwards/{{id}}"
 
 
 def _resolve_forward_url(forward: Any, network: Optional[str] = None) -> str:
@@ -51,12 +49,14 @@ def _resolve_forward_url(forward: Any, network: Optional[str] = None) -> str:
         return url
     if isinstance(forward, str):
         if forward.startswith(("http://", "https://", "/")):
-            return resource_url(forward, "{id}")
+            # ``network`` is never consulted by resolve_nested_url's
+            # path/URL branch, so a missing network is harmless here.
+            return resolve_nested_url(network or "", forward, prefix="forwards")
         if network is None:
             raise EeroValidationException(
                 "network", "required when 'forward' is a bare ID rather than a path/URL"
             )
-        return resource_url(forward, _FORWARD_TEMPLATE.format(network=network))
+        return resolve_nested_url(network, forward, prefix="forwards")
     raise EeroValidationException(
         "forward", "must be a bare ID, a URL/path string, or a forward envelope (mapping)"
     )
@@ -201,7 +201,7 @@ class ForwardsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(forward, _FORWARD_TEMPLATE.format(network=network))
+        url = resolve_nested_url(network, forward, prefix="forwards")
         warn_uncharacterised_write(_LOGGER, "delete forward for network")
         _LOGGER.debug("Deleting forward %s for network %s", forward, network)
         return await self.delete(url, auth_token=auth_token)

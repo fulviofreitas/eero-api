@@ -16,6 +16,7 @@ schema existed are migrated in place the first time they are loaded.
 import json
 import os
 import stat
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -263,15 +264,22 @@ class FileStorage(CredentialStorage):
         """Save credentials to file with restricted permissions.
 
         The record is first written to a fresh temporary file in the same
-        directory as the destination, created with
-        ``O_CREAT | O_EXCL | O_NOFOLLOW`` at mode 0600 (no window where the
-        file is briefly world/group readable, and no symlink can be
-        followed for the temporary name itself). Once the payload is fully
-        written and flushed, ``os.replace()`` atomically swaps it into
-        ``file_path`` -- a process interrupted mid-write (crash, kill -9,
-        power loss) leaves either the untouched previous record or nothing
-        at all; it can never leave a truncated/partial record at the final
-        path, unlike writing in place.
+        directory as the destination, created via ``tempfile.mkstemp`` --
+        which opens with ``O_CREAT | O_EXCL`` at mode 0600 under an
+        unpredictable, collision-free name -- so no window exists where the
+        file is briefly world/group readable, and two saves can never
+        collide on the same temp name. An earlier revision derived the temp
+        name from ``os.getpid()`` alone: a process that crashed mid-write
+        left that file behind, and every later save from a new process that
+        happened to reuse the same PID then failed outright on the
+        ``O_EXCL`` open (silently, since the failure is caught and logged
+        below) until the stale file was removed by hand. ``mkstemp``'s
+        per-call-unique suffix makes that collision impossible. Once the
+        payload is fully written and flushed, ``os.replace()`` atomically
+        swaps it into ``file_path`` -- a process interrupted mid-write
+        (crash, kill -9, power loss) leaves either the untouched previous
+        record or nothing at all; it can never leave a truncated/partial
+        record at the final path, unlike writing in place.
 
         The final path is refused when it already exists as a symlink (the
         same protection the previous in-place ``O_NOFOLLOW`` open provided):
@@ -293,10 +301,11 @@ class FileStorage(CredentialStorage):
 
             payload = json.dumps(credentials.to_dict()).encode("utf-8")
 
-            tmp_name = f".{os.path.basename(self._file_path)}.{os.getpid()}.tmp"
-            tmp_path = os.path.join(cookie_dir, tmp_name)
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-            fd = os.open(tmp_path, flags, 0o600)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=cookie_dir,
+                prefix=f".{os.path.basename(self._file_path)}.",
+                suffix=".tmp",
+            )
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(payload)

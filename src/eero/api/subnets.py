@@ -16,20 +16,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, sub_resource_url
+from .links import child_url, resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for the content-filters sub-resource of a single subnet.
-_SUBNET_CONTENT_FILTERS_TEMPLATE = (
-    "networks/{{id}}/subnets_config/{subnet_id}/dns_policies/content_filters"
-)
-
-#: Template for deleting a single subnet's configuration by type.
-_SUBNET_TYPE_TEMPLATE = "networks/{{id}}/subnets_config/{subnet_type}"
 
 
 class SubnetsAPI(AuthenticatedAPI):
@@ -143,7 +136,7 @@ class SubnetsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(network_id, _SUBNET_TYPE_TEMPLATE.format(subnet_type=subnet_type))
+        url = child_url(resource_url(network_id, "networks/{id}/subnets_config"), subnet_type)
         warn_uncharacterised_write(_LOGGER, "delete subnet for network")
         return await self.delete(url, auth_token=auth_token)
 
@@ -208,6 +201,11 @@ class SubnetsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(network_id, _SUBNET_CONTENT_FILTERS_TEMPLATE.format(subnet_id=subnet_id))
+        url = resolve_nested_url(
+            network_id,
+            subnet_id,
+            prefix="subnets_config",
+            suffix="/dns_policies/content_filters",
+        )
         _LOGGER.debug("Getting content filters for subnet %s on network %s", subnet_id, network_id)
         return await self.get(url, auth_token=auth_token)

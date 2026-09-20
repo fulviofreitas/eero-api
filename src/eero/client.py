@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from aiohttp import ClientSession
 
 from .api import EeroAPI
+from .api.base import id_from_url
 from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
 
@@ -855,6 +856,11 @@ class EeroClient:
             **self._device_parent_kwargs(network_id, device_id),
         )
         self._invalidate_device_cache(network_id, device_id)
+        if profile is not None:
+            # Mirror set_profile_devices: a device's profile assignment
+            # changed, so both the single cached profile and the cached
+            # profiles list may now be stale.
+            self._invalidate_profile_cache(network_id, id_from_url(profile))
         return response
 
     async def set_device_type(

@@ -22,7 +22,7 @@ from ..logging import get_secure_logger
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, RequestEncoding
-from .links import Envelope, join_api_path, resource_url, self_url, sub_resource_url
+from .links import Envelope, child_url, join_api_path, resource_url, self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -47,9 +47,6 @@ _PORT_ACTIONS = frozenset(
         "DISABLE_PORT_SECURITY",
     }
 )
-
-#: Template for a single eero port's action sub-resource.
-_PORT_ACTION_TEMPLATE = "eeros/{{id}}/ports/{interface_number}/action"
 
 
 def _eero_own_url(eero_id: str, parent: Optional[Envelope]) -> str:
@@ -740,7 +737,7 @@ class EerosAPI(AuthenticatedAPI):
                 "action", f"must be one of {sorted(_PORT_ACTIONS)}, got {action!r}"
             )
 
-        url = resource_url(eero_id, _PORT_ACTION_TEMPLATE.format(interface_number=interface_number))
+        url = child_url(resource_url(eero_id, "eeros/{id}/ports"), interface_number) + "/action"
         warn_uncharacterised_write(_LOGGER, f"perform port action {action!r} on eero port")
         return await self.post(url, auth_token=auth_token, json={"action": action})
 

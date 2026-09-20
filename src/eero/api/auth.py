@@ -163,7 +163,13 @@ class AuthAPI(BaseAPI):
 
         Raises:
             EeroAuthenticationException: If the login request itself fails
-                (e.g. the identifier is rejected)
+                (e.g. the identifier is rejected). This includes the case
+                where the server rejects the identifier with a validation
+                error (HTTP 400, an ``error.form.*`` code): the transport
+                raises ``EeroValidationException`` for that response, which
+                is caught here and re-wrapped so every login failure --
+                rejected identifier or otherwise -- surfaces uniformly as
+                ``EeroAuthenticationException``.
             EeroNetworkException: If there's a network error
         """
         # Clear any previous authentication data
@@ -193,6 +199,18 @@ class AuthAPI(BaseAPI):
 
             return True
         except EeroAPIException as err:
+            _LOGGER.error("Login failed: %s", err)
+            raise EeroAuthenticationException(
+                f"Login failed: {err}", envelope=err.envelope, error_code=err.error_code
+            ) from err
+        except EeroValidationException as err:
+            # A server-rejected identifier (HTTP 400 with an
+            # `error.form.*` code) raises EeroValidationException from the
+            # transport -- a subclass of EeroException, not
+            # EeroAPIException. Re-wrap it so this method's documented
+            # contract (every login failure surfaces as
+            # EeroAuthenticationException) holds regardless of which
+            # exception class the transport used.
             _LOGGER.error("Login failed: %s", err)
             raise EeroAuthenticationException(
                 f"Login failed: {err}", envelope=err.envelope, error_code=err.error_code
@@ -360,6 +378,20 @@ class AuthAPI(BaseAPI):
         self._refresh_future_loop = running_loop
         try:
             result = await self._do_refresh()
+        except asyncio.CancelledError:
+            # The leader's own refresh call was cancelled (e.g. its task was
+            # cancelled externally while awaiting the network). Resolve the
+            # shared future with False -- "refresh did not succeed" -- rather
+            # than propagating the CancelledError into it: every concurrent
+            # waiter is awaiting this exact future via `asyncio.shield`, and
+            # setting an exception on it would cancel every one of them too,
+            # even though their own individual awaits were never cancelled.
+            # A False result makes each waiter fall back to raising its own
+            # original authentication error, which is the correct outcome
+            # for a refresh that never completed for reasons unrelated to
+            # them.
+            future.set_result(False)
+            raise
         except BaseException as exc:
             future.set_exception(exc)
             # Mark the exception retrieved immediately from the leader's own

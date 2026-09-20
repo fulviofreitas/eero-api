@@ -14,15 +14,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, self_url, sub_resource_url
+from .links import self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single reservation resource on the default API version.
-_RESERVATION_TEMPLATE = "networks/{network}/reservations/{{id}}"
 
 
 def _resolve_reservation_url(reservation: Any, network: Optional[str] = None) -> str:
@@ -52,12 +50,14 @@ def _resolve_reservation_url(reservation: Any, network: Optional[str] = None) ->
         return url
     if isinstance(reservation, str):
         if reservation.startswith(("http://", "https://", "/")):
-            return resource_url(reservation, "{id}")
+            # ``network`` is never consulted by resolve_nested_url's
+            # path/URL branch, so a missing network is harmless here.
+            return resolve_nested_url(network or "", reservation, prefix="reservations")
         if network is None:
             raise EeroValidationException(
                 "network", "required when 'reservation' is a bare ID rather than a path/URL"
             )
-        return resource_url(reservation, _RESERVATION_TEMPLATE.format(network=network))
+        return resolve_nested_url(network, reservation, prefix="reservations")
     raise EeroValidationException(
         "reservation",
         "must be a bare ID, a URL/path string, or a reservation envelope (mapping)",
@@ -212,7 +212,7 @@ class ReservationsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(reservation, _RESERVATION_TEMPLATE.format(network=network))
+        url = resolve_nested_url(network, reservation, prefix="reservations")
         params: Optional[Dict[str, str]] = None
         if delete_forwards is not None:
             params = {"delete_forwards": "true" if delete_forwards else "false"}

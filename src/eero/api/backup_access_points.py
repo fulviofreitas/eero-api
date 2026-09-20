@@ -10,15 +10,13 @@ from typing import Any, Dict, List, Mapping, Optional
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, RequestEncoding
 from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single backup access point on the default API version.
-_BACKUP_TEMPLATE = "networks/{{id}}/backup_access_points/{backup_network_id}"
 
 
 class BackupAccessPointsAPI(AuthenticatedAPI):
@@ -189,7 +187,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
         if last_updated_at is not None:
             payload["last_updated_at"] = last_updated_at
 
-        url = resource_url(network_id, _BACKUP_TEMPLATE.format(backup_network_id=backup_network_id))
+        url = resolve_nested_url(network_id, backup_network_id, prefix="backup_access_points")
         warn_uncharacterised_write(
             _LOGGER,
             "update backup access point for network",
@@ -223,7 +221,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(network_id, _BACKUP_TEMPLATE.format(backup_network_id=backup_network_id))
+        url = resolve_nested_url(network_id, backup_network_id, prefix="backup_access_points")
         warn_uncharacterised_write(
             _LOGGER,
             "delete backup access point for network",
