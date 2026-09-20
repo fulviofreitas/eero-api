@@ -57,13 +57,11 @@ class TestEeroAPIInit:
         assert hasattr(api, "profiles")
 
         # Feature APIs
-        assert hasattr(api, "activity")
         assert hasattr(api, "backup")
         assert hasattr(api, "dns")
         assert hasattr(api, "security")
         assert hasattr(api, "sqm")
         assert hasattr(api, "diagnostics")
-        assert hasattr(api, "settings")
         assert hasattr(api, "updates")
         assert hasattr(api, "insights")
         assert hasattr(api, "routing")
@@ -76,7 +74,30 @@ class TestEeroAPIInit:
         assert hasattr(api, "burst_reporters")
         assert hasattr(api, "ac_compat")
         assert hasattr(api, "ouicheck")
-        assert hasattr(api, "password")
+
+
+class TestEeroAPICoreOptions:
+    """Tests for the keyword-only core transport options forwarded to AuthAPI."""
+
+    def test_defaults_forwarded_to_auth_api(self):
+        """Test the default option values reach AuthAPI unchanged."""
+        api = EeroAPI()
+
+        assert api.auth._send_legacy_cookie is True
+        assert api.auth._accept_language == "en-US"
+        assert api.auth._get_retries == 0
+
+    def test_custom_values_forwarded_to_auth_api(self):
+        """Test explicit option values reach AuthAPI unchanged."""
+        api = EeroAPI(
+            send_legacy_cookie=False,
+            accept_language="fr-FR",
+            get_retries=3,
+        )
+
+        assert api.auth._send_legacy_cookie is False
+        assert api.auth._accept_language == "fr-FR"
+        assert api.auth._get_retries == 3
 
 
 class TestEeroAPISubAPIs:
@@ -212,3 +233,36 @@ class TestEeroAPIPreferredNetworkRemoved:
         """The vestigial backing slot must not be initialized on EeroAPI."""
         api = EeroAPI(session=mock_session)
         assert "_preferred_network_id" not in vars(api)
+
+
+# ========================== Phase 4 domain attributes ==========================
+
+
+@pytest.mark.parametrize(
+    ("attribute", "class_name"),
+    [
+        ("entitlements", "EntitlementsAPI"),
+        ("events", "EventsAPI"),
+        ("permissions", "PermissionsAPI"),
+        ("notifications", "NotificationsAPI"),
+        ("dns_policies", "DnsPoliciesAPI"),
+        ("members", "MembersAPI"),
+        ("account", "AccountAPI"),
+        ("dhcp", "DhcpAPI"),
+        ("wpa3", "Wpa3API"),
+        ("power_saving", "PowerSavingAPI"),
+        ("ddns", "DdnsAPI"),
+        ("backup_access_points", "BackupAccessPointsAPI"),
+        ("subnets", "SubnetsAPI"),
+        ("wan", "WanAPI"),
+    ],
+)
+def test_new_domain_attribute_is_composed(attribute: str, class_name: str) -> None:
+    """Every new domain module is exposed on EeroAPI as the right class, sharing the auth API."""
+    from eero.api import EeroAPI
+
+    api = EeroAPI(use_keyring=False)
+    domain = getattr(api, attribute)
+
+    assert type(domain).__name__ == class_name
+    assert domain._auth_api is api.auth

@@ -17,15 +17,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
+import yarl
+from aiohttp import DummyCookieJar
 
-from eero.api.base import AuthenticatedAPI, BaseAPI
-from eero.const import MAX_RESPONSE_BYTES
+from eero.api.base import AuthenticatedAPI, BaseAPI, RequestEncoding, build_request_headers
+from eero.const import API_ENDPOINT, DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
 from eero.exceptions import (
+    EeroAccessDeniedException,
     EeroAPIException,
     EeroAuthenticationException,
+    EeroClientBlockedException,
+    EeroFeatureUnavailableException,
     EeroNetworkException,
+    EeroNotFoundException,
+    EeroPremiumRequiredException,
     EeroRateLimitException,
     EeroTimeoutException,
+    EeroValidationException,
 )
 
 from .conftest import api_success_response, create_mock_response
@@ -100,6 +108,21 @@ class TestBaseAPI:
 
         mock_session.close.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_created_session_has_a_dummy_cookie_jar(self):
+        """A session the SDK creates cannot persist any cookie, including a Set-Cookie."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        await api.__aenter__()
+        try:
+            jar = api._session.cookie_jar
+            assert isinstance(jar, DummyCookieJar)
+            jar.update_cookies({"s": "would-be-persisted"}, yarl.URL(API_ENDPOINT))
+            assert len(jar) == 0
+            assert not jar.filter_cookies(yarl.URL(API_ENDPOINT))
+        finally:
+            await api.__aexit__(None, None, None)
+
     def test_session_property_raises_without_context(self):
         """Test that session property raises if not in context."""
         api = BaseAPI(base_url="https://api.example.com")
@@ -171,14 +194,23 @@ class TestBaseAPIRequests:
         assert result["data"] == expected_data
 
     @pytest.mark.asyncio
-    async def test_request_with_auth_token(self, api_with_session, mock_session):
-        """Test that auth token is added to cookies."""
+    async def test_request_with_auth_token_sets_header_and_legacy_cookie(
+        self, api_with_session, mock_session
+    ):
+        """Test that an auth token on the API host sets X-User-Token and the legacy cookie.
+
+        The credential must never be written to the shared cookie jar -- it is
+        passed per-request via the ``cookies=`` kwarg instead.
+        """
         mock_response = create_mock_response(200, api_success_response({}))
         mock_session.request.return_value = mock_response
 
         await api_with_session.get("/endpoint", auth_token="test_token")
 
-        mock_session.cookie_jar.update_cookies.assert_called_with({"s": "test_token"})
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["headers"]["X-User-Token"] == "test_token"
+        assert call_kwargs["cookies"] == {"s": "test_token"}
+        mock_session.cookie_jar.update_cookies.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_request_with_full_url(self, api_with_session, mock_session):
@@ -240,19 +272,20 @@ class TestBaseAPIErrorHandling:
         mock_response = create_mock_response(401, None, "Unauthorized")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="unrecognised error string"):
             await api_with_session.get("/endpoint")
 
     @pytest.mark.asyncio
-    async def test_404_raises_api_exception(self, api_with_session, mock_session):
-        """Test that 404 status raises EeroAPIException."""
+    async def test_404_raises_not_found_exception(self, api_with_session, mock_session):
+        """Test that 404 status raises EeroNotFoundException, regardless of body."""
         mock_response = create_mock_response(404, None, "Not found")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAPIException) as exc_info:
+        with pytest.raises(EeroNotFoundException) as exc_info:
             await api_with_session.get("/endpoint")
 
-        assert exc_info.value.status_code == 404
+        assert exc_info.value.resource_type is None
+        assert exc_info.value.resource_id is None
 
     @pytest.mark.asyncio
     async def test_429_raises_rate_limit_exception(self, api_with_session, mock_session):
@@ -260,7 +293,7 @@ class TestBaseAPIErrorHandling:
         mock_response = create_mock_response(429, None, "Too Many Requests")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroRateLimitException, match="Rate limit exceeded"):
+        with pytest.raises(EeroRateLimitException, match="unrecognised error string"):
             await api_with_session.get("/endpoint")
 
     @pytest.mark.asyncio
@@ -546,17 +579,28 @@ class TestBaseAPIRedirectProtection:
         assert call_kwargs.get("allow_redirects") is False
 
     @pytest.mark.asyncio
-    async def test_allow_redirects_caller_override_is_preserved(
-        self, api_with_session, mock_session
-    ):
-        """Test that an explicit allow_redirects value supplied by the caller is not overwritten."""
+    async def test_allow_redirects_true_override_is_rejected(self, api_with_session, mock_session):
+        """A caller may never re-enable redirect following.
+
+        aiohttp strips Authorization and Cookie on a cross-origin redirect
+        but not the SDK's own X-User-Token header, so the core refuses to
+        let allow_redirects=True reach the transport at all.
+        """
+        with pytest.raises(EeroValidationException, match="allow_redirects"):
+            await api_with_session.get("/endpoint", allow_redirects=True)
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allow_redirects_false_override_is_a_no_op(self, api_with_session, mock_session):
+        """Explicitly passing allow_redirects=False is accepted (it matches the forced default)."""
         mock_response = create_mock_response(200, api_success_response({}))
         mock_session.request.return_value = mock_response
 
-        await api_with_session.get("/endpoint", allow_redirects=True)
+        await api_with_session.get("/endpoint", allow_redirects=False)
 
         call_kwargs = mock_session.request.call_args[1]
-        assert call_kwargs.get("allow_redirects") is True
+        assert call_kwargs.get("allow_redirects") is False
 
 
 # ========================== Server-Driven Session Refresh Tests ==========================
@@ -609,7 +653,7 @@ class TestServerDrivenSessionRefresh:
         mock_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="error.session.refresh"):
             await api_with_hook.get("/endpoint")
 
         api_with_hook._refresh_hook.assert_awaited_once()
@@ -627,7 +671,7 @@ class TestServerDrivenSessionRefresh:
         refresh_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
         mock_session.request.side_effect = [refresh_response, refresh_response]
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="error.session.refresh"):
             await api_with_hook.get("/endpoint")
 
         assert mock_session.request.call_count == 2
@@ -643,7 +687,7 @@ class TestServerDrivenSessionRefresh:
         mock_response = create_mock_response(401, None, "Unauthorized")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="unrecognised error string"):
             await api.get("/endpoint")
 
         hook.assert_not_awaited()
@@ -658,7 +702,7 @@ class TestServerDrivenSessionRefresh:
         mock_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="error.session.refresh"):
             await api.get("/endpoint")
 
         assert mock_session.request.call_count == 1
@@ -673,11 +717,97 @@ class TestServerDrivenSessionRefresh:
         mock_response = create_mock_response(401, body_bytes=b"not json at all")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAuthenticationException, match="Authentication failed"):
+        with pytest.raises(EeroAuthenticationException, match="unrecognised error string"):
             await api.get("/endpoint")
 
         hook.assert_not_awaited()
         assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_replay_rebuilds_headers_and_cookies_from_scratch(
+        self, api_with_hook, mock_session
+    ):
+        """The replay must not reuse the first attempt's headers/cookies object.
+
+        Both calls carry a fresh, correctly-built header set for the
+        (possibly new) token -- never the literal headers/cookies kwargs
+        captured before the refresh.
+        """
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        await api_with_hook.get("/endpoint", auth_token="original_token")
+
+        assert mock_session.request.call_count == 2
+        first_kwargs = mock_session.request.call_args_list[0][1]
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        # Distinct header dict instances -- the replay rebuilds, not reuses.
+        assert first_kwargs["headers"] is not second_kwargs["headers"]
+        assert second_kwargs["headers"]["X-User-Token"] == "original_token"
+        assert second_kwargs["cookies"] == {"s": "original_token"}
+
+    @pytest.mark.asyncio
+    async def test_replay_uses_token_provider_when_set(self, api_with_hook, mock_session):
+        """When a token provider is wired, the replay sources its token from it."""
+        api_with_hook._token_provider = AsyncMock(return_value="refreshed_token")
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        await api_with_hook.get("/endpoint", auth_token="original_token")
+
+        api_with_hook._token_provider.assert_awaited_once()
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        assert second_kwargs["headers"]["X-User-Token"] == "refreshed_token"
+        assert second_kwargs["cookies"] == {"s": "refreshed_token"}
+
+    @pytest.mark.asyncio
+    async def test_replay_falls_back_to_original_token_without_provider(
+        self, api_with_hook, mock_session
+    ):
+        """With no token provider wired, the replay falls back to the original auth_token."""
+        assert api_with_hook._token_provider is None
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        await api_with_hook.get("/endpoint", auth_token="original_token")
+
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        assert second_kwargs["headers"]["X-User-Token"] == "original_token"
+
+    @pytest.mark.asyncio
+    async def test_replay_with_empty_json_string_encoding_succeeds(
+        self, api_with_hook, mock_session
+    ):
+        """A POST using RequestEncoding.EMPTY_JSON_STRING must replay exactly once, successfully.
+
+        Regression test (item 9): the derived two-byte '""' body must not be
+        re-passed alongside encoding=EMPTY_JSON_STRING on the replay --
+        _classify_encoding would otherwise reject that as two body carriers
+        and the replay would raise EeroValidationException instead of
+        succeeding.
+        """
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        result = await api_with_hook.post(
+            "/endpoint",
+            auth_token="original_token",
+            encoding=RequestEncoding.EMPTY_JSON_STRING,
+        )
+
+        assert mock_session.request.call_count == 2
+        assert result["data"] == {"ok": True}
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        assert second_kwargs["data"] == '""'
+        assert second_kwargs["headers"]["Content-Type"] == "application/json"
 
 
 # ========================== AuthenticatedAPI Refresh Hook Wiring Tests ==========================
@@ -692,6 +822,7 @@ class TestAuthenticatedAPIRefreshHookWiring:
         auth_api = MagicMock()
         auth_api.session = mock_session
         auth_api.refresh_session = AsyncMock(return_value=True)
+        auth_api.get_auth_token = AsyncMock(return_value="provider_token")
         return auth_api
 
     def test_refresh_hook_is_wired_to_auth_api_refresh_session(self, mock_auth_api):
@@ -700,8 +831,835 @@ class TestAuthenticatedAPIRefreshHookWiring:
 
         assert api._refresh_hook is mock_auth_api.refresh_session
 
+    def test_token_provider_is_wired_to_auth_api_get_auth_token(self, mock_auth_api):
+        """AuthenticatedAPI._token_provider must be auth_api.get_auth_token after construction."""
+        api = AuthenticatedAPI(mock_auth_api, base_url="https://api.example.com")
+
+        assert api._token_provider is mock_auth_api.get_auth_token
+
     def test_base_api_refresh_hook_defaults_to_none(self):
         """BaseAPI._refresh_hook must default to None (no auto-refresh unless wired)."""
         api = BaseAPI(base_url="https://api.example.com")
 
         assert api._refresh_hook is None
+
+    def test_base_api_token_provider_defaults_to_none(self):
+        """BaseAPI._token_provider must default to None (fall back to auth_token)."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        assert api._token_provider is None
+
+
+# ========================== Credential Placement Tests ==========================
+
+
+class TestCredentialPlacement:
+    """Tests for X-User-Token header and legacy cookie placement.
+
+    The session token must only ever be attached to requests whose resolved
+    hostname exactly matches the configured API host, never to a foreign
+    host or a foreign host that merely shares a parent domain.
+    """
+
+    API_BASE_URL = "https://api.example.com"
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url=self.API_BASE_URL)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("send_legacy_cookie", [True, False])
+    async def test_credential_sent_to_api_host(self, mock_session, send_legacy_cookie):
+        """X-User-Token is always sent to the API host; the legacy cookie follows the flag."""
+        api = BaseAPI(
+            session=mock_session,
+            base_url=self.API_BASE_URL,
+            send_legacy_cookie=send_legacy_cookie,
+        )
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint", auth_token="test_token")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["headers"]["X-User-Token"] == "test_token"
+        if send_legacy_cookie:
+            assert call_kwargs["cookies"] == {"s": "test_token"}
+        else:
+            assert "cookies" not in call_kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "foreign_url",
+        [
+            "https://other.example.com/endpoint",
+            "https://evil.example.com/endpoint",
+            "https://sub.api.example.com/endpoint",
+            "https://attacker.example.com.evil.net/endpoint",
+        ],
+    )
+    async def test_no_credential_sent_to_foreign_host(self, api, mock_session, foreign_url):
+        """No X-User-Token and no legacy cookie are sent to any non-API host,
+        including a host that merely shares the parent domain."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get(foreign_url, auth_token="test_token")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert "X-User-Token" not in call_kwargs["headers"]
+        assert "cookies" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_foreign_host_logs_warning(self, api, mock_session, caplog):
+        """Sending a credential-bearing request to a foreign host logs a warning."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level("WARNING", logger="eero.api.base"):
+            await api.get("https://evil.example.com/endpoint", auth_token="test_token")
+
+        assert any("foreign host" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_no_credential_attached_without_auth_token(self, api, mock_session):
+        """No credential is attached when no auth_token is supplied."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert "X-User-Token" not in call_kwargs["headers"]
+        assert "cookies" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_credential_never_written_to_shared_cookie_jar(self, api, mock_session):
+        """The transport never touches the shared cookie jar for credentials."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint", auth_token="test_token")
+        await api.post("https://evil.example.com/endpoint", auth_token="test_token", json={})
+
+        mock_session.cookie_jar.update_cookies.assert_not_called()
+        mock_session.cookie_jar.clear.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_credential_on_plain_http_downgrade_to_api_host(self, api, mock_session):
+        """A plain-http URL on the API host still gets no credential.
+
+        The resolved scheme must match the configured API host's scheme
+        (normally https) in addition to the hostname, so a downgraded URL
+        never carries the session token.
+        """
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("http://api.example.com/endpoint", auth_token="test_token")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert "X-User-Token" not in call_kwargs["headers"]
+        assert "cookies" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_plain_http_downgrade_logs_warning(self, api, mock_session, caplog):
+        """A scheme downgrade on the API host is warned about too."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level("WARNING", logger="eero.api.base"):
+            await api.get("http://api.example.com/endpoint", auth_token="test_token")
+
+        assert any("scheme" in record.getMessage() for record in caplog.records)
+
+
+# ========================== Forbidden Caller Header Tests ==========================
+
+
+class TestForbiddenCallerHeaders:
+    """Caller-supplied headers may never set a credential-bearing header name.
+
+    The credential builder (``_build_credentials``) is the only writer of
+    ``X-User-Token``/``Cookie``/``Authorization``; this holds regardless of
+    whether the request even resolves to the API host.
+    """
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "header_name",
+        ["X-User-Token", "x-user-token", "Cookie", "cookie", "Authorization", "authorization"],
+    )
+    async def test_credential_header_name_rejected_on_api_host(
+        self, api, mock_session, header_name
+    ):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with pytest.raises(EeroValidationException):
+            await api.get("/endpoint", headers={header_name: "smuggled"})
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("header_name", ["X-User-Token", "Cookie", "Authorization"])
+    async def test_credential_header_name_rejected_on_foreign_host(
+        self, api, mock_session, header_name
+    ):
+        """The rejection is unconditional -- it also applies to a foreign host,
+        where no credential would have been attached anyway."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with pytest.raises(EeroValidationException):
+            await api.get("https://evil.example.com/endpoint", headers={header_name: "smuggled"})
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_caller_header_still_accepted(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint", headers={"X-Custom": "fine"})
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["headers"]["X-Custom"] == "fine"
+
+
+# ========================== Header Construction Tests ==========================
+
+
+class TestHeaderConstruction:
+    """Tests for the single header-building function and its use in requests."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    def test_build_request_headers_defaults(self):
+        headers = build_request_headers(accept_language=DEFAULT_ACCEPT_LANGUAGE)
+
+        assert headers["Accept"] == "application/json"
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert headers["X-Accept-Language"] == DEFAULT_ACCEPT_LANGUAGE
+        assert "Content-Type" not in headers
+
+    def test_build_request_headers_extra_overrides_defaults(self):
+        headers = build_request_headers(
+            accept_language=DEFAULT_ACCEPT_LANGUAGE,
+            extra_headers={"Accept": "application/vnd.custom+json"},
+        )
+
+        assert headers["Accept"] == "application/vnd.custom+json"
+
+    def test_build_request_headers_rejects_invalid_accept_language(self):
+        with pytest.raises(EeroValidationException):
+            build_request_headers(accept_language="en\r\nX-Injected: 1")
+
+    def test_build_request_headers_rejects_invalid_extra_header(self):
+        with pytest.raises(EeroValidationException):
+            build_request_headers(
+                accept_language=DEFAULT_ACCEPT_LANGUAGE,
+                extra_headers={"X-Custom": "bad\nvalue"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_default_headers_present_on_every_request(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint")
+
+        headers = mock_session.request.call_args[1]["headers"]
+        assert headers["Accept"] == "application/json"
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert headers["X-Accept-Language"] == DEFAULT_ACCEPT_LANGUAGE
+
+    @pytest.mark.asyncio
+    async def test_custom_accept_language_is_sent(self, mock_session):
+        api = BaseAPI(
+            session=mock_session, base_url="https://api.example.com", accept_language="fr-FR"
+        )
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint")
+
+        headers = mock_session.request.call_args[1]["headers"]
+        assert headers["X-Accept-Language"] == "fr-FR"
+
+    def test_invalid_accept_language_rejected_at_construction(self, mock_session):
+        with pytest.raises(EeroValidationException):
+            BaseAPI(
+                session=mock_session,
+                base_url="https://api.example.com",
+                accept_language="bad\r\nvalue",
+            )
+
+    @pytest.mark.asyncio
+    async def test_invalid_caller_header_rejected(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with pytest.raises(EeroValidationException):
+            await api.get("/endpoint", headers={"X-Custom": "bad\r\ninjected"})
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_session_default_headers_respected(self):
+        """A caller-supplied real aiohttp session's default headers survive
+        for names the SDK does not itself set, via aiohttp's own per-request
+        vs. session-default header merge -- the SDK never touches them."""
+        real_session = aiohttp.ClientSession(headers={"X-Caller-Custom": "value"})
+        try:
+            mock_response = create_mock_response(200, api_success_response({}))
+            real_session.request = MagicMock(return_value=mock_response)  # type: ignore[method-assign]
+
+            api = BaseAPI(session=real_session, base_url="https://api.example.com")
+            await api.get("/endpoint")
+
+            call_kwargs = real_session.request.call_args[1]
+            # The SDK's own per-request headers never mention X-Caller-Custom.
+            assert "X-Caller-Custom" not in call_kwargs["headers"]
+            # aiohttp merges request headers with the session's default
+            # headers by name, so the caller's header still reaches the wire.
+            assert real_session.headers["X-Caller-Custom"] == "value"
+        finally:
+            await real_session.close()
+
+
+# ========================== Request Encoding Tests ==========================
+
+
+class TestRequestEncoding:
+    """Tests for the single per-operation body encoding selector."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    async def test_json_encoding_sets_json_kwarg(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.post("/endpoint", json={"name": "test"})
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["json"] == {"name": "test"}
+        assert "data" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_form_encoding_sets_data_kwarg(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.post("/endpoint", data={"name": "test"})
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["data"] == {"name": "test"}
+        assert "json" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_empty_json_string_encoding_sends_two_byte_body(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.post("/endpoint", encoding=RequestEncoding.EMPTY_JSON_STRING)
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["data"] == '""'
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
+        assert "json" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_none_encoding_sends_no_body(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint", params={"q": "1"})
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert "json" not in call_kwargs
+        assert "data" not in call_kwargs
+        assert call_kwargs["params"] == {"q": "1"}
+
+    @pytest.mark.asyncio
+    async def test_json_and_data_together_raises(self, api, mock_session):
+        with pytest.raises(EeroValidationException):
+            await api.post("/endpoint", json={"a": 1}, data={"b": 2})
+
+    @pytest.mark.asyncio
+    async def test_json_and_empty_json_string_together_raises(self, api, mock_session):
+        with pytest.raises(EeroValidationException):
+            await api.post("/endpoint", json={"a": 1}, encoding=RequestEncoding.EMPTY_JSON_STRING)
+
+    @pytest.mark.asyncio
+    async def test_data_and_empty_json_string_together_raises(self, api, mock_session):
+        with pytest.raises(EeroValidationException):
+            await api.post("/endpoint", data={"a": 1}, encoding=RequestEncoding.EMPTY_JSON_STRING)
+
+
+# ========================== Write Retry Prohibition Tests ==========================
+
+
+class TestWriteRetryProhibition:
+    """The core must never retry a write, under any failure mode, for any reason."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=5)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method_name", ["post", "put", "delete"])
+    async def test_write_not_retried_on_transport_error(self, api, mock_session, method_name):
+        mock_session.request.side_effect = aiohttp.ClientError("boom")
+
+        with pytest.raises(EeroNetworkException):
+            await getattr(api, method_name)(
+                "/endpoint", json={} if method_name != "delete" else None
+            )
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method_name", ["post", "put", "delete"])
+    async def test_write_not_retried_on_5xx(self, api, mock_session, method_name):
+        mock_session.request.return_value = create_mock_response(503, None, "Service Unavailable")
+
+        with pytest.raises(EeroAPIException):
+            await getattr(api, method_name)(
+                "/endpoint", json={} if method_name != "delete" else None
+            )
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_write_replay_after_refresh_fires_at_most_once(self, mock_session):
+        """A write's post-refresh replay is a single, non-looping event -- not a retry."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=5)
+        api._refresh_hook = AsyncMock(return_value=True)
+
+        refresh_signal = create_mock_response(
+            401, {"meta": {"code": 401, "error": "error.session.refresh"}}
+        )
+        success = create_mock_response(200, api_success_response({"ok": True}))
+        mock_session.request.side_effect = [refresh_signal, success]
+
+        result = await api.post("/endpoint", json={"x": 1})
+
+        assert result["data"] == {"ok": True}
+        assert mock_session.request.call_count == 2
+        api._refresh_hook.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_write_replay_never_loops_on_repeated_refresh_signal(self, mock_session):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=5)
+        api._refresh_hook = AsyncMock(return_value=True)
+
+        refresh_signal = create_mock_response(
+            401, {"meta": {"code": 401, "error": "error.session.refresh"}}
+        )
+        mock_session.request.side_effect = [refresh_signal, refresh_signal]
+
+        with pytest.raises(EeroAuthenticationException):
+            await api.post("/endpoint", json={"x": 1})
+
+        assert mock_session.request.call_count == 2
+        api._refresh_hook.assert_awaited_once()
+
+
+# ========================== Bounded GET Retry Tests ==========================
+
+
+class TestGetRetryPolicy:
+    """Tests for the bounded, GET-only retry policy."""
+
+    @pytest.fixture(autouse=True)
+    def no_real_sleep(self, monkeypatch):
+        """Avoid real delays between retry attempts in tests."""
+        monkeypatch.setattr("eero.api.base.asyncio.sleep", AsyncMock(return_value=None))
+
+    @pytest.mark.asyncio
+    async def test_get_retries_zero_by_default_on_transport_error(self, mock_session):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        mock_session.request.side_effect = aiohttp.ClientError("boom")
+
+        with pytest.raises(EeroNetworkException):
+            await api.get("/endpoint")
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_retries_transport_error_then_succeeds(self, mock_session):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=1)
+        success = create_mock_response(200, api_success_response({"ok": True}))
+        mock_session.request.side_effect = [aiohttp.ClientError("boom"), success]
+
+        result = await api.get("/endpoint")
+
+        assert result["data"] == {"ok": True}
+        assert mock_session.request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_retries_5xx_then_succeeds(self, mock_session):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=2)
+        failure = create_mock_response(502, None, "Bad Gateway")
+        success = create_mock_response(200, api_success_response({"ok": True}))
+        mock_session.request.side_effect = [failure, failure, success]
+
+        result = await api.get("/endpoint")
+
+        assert result["data"] == {"ok": True}
+        assert mock_session.request.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_get_retries_bounded_then_raises(self, mock_session):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=2)
+        failure = create_mock_response(500, None, "Internal Server Error")
+        mock_session.request.side_effect = [failure, failure, failure]
+
+        with pytest.raises(EeroAPIException):
+            await api.get("/endpoint")
+
+        assert mock_session.request.call_count == 3
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 429])
+    async def test_get_never_retries_excluded_statuses(self, mock_session, status):
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=3)
+        mock_session.request.return_value = create_mock_response(status, None, "error")
+
+        with pytest.raises(
+            (
+                EeroAPIException,
+                EeroAuthenticationException,
+                EeroRateLimitException,
+                EeroNotFoundException,
+            )
+        ):
+            await api.get("/endpoint")
+
+        assert mock_session.request.call_count == 1
+
+
+# ========================== Envelope / error_code Attachment Tests ==========================
+
+
+class TestEnvelopeAttachment:
+    """The raw envelope and meta.error must be attached to raised errors."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    async def test_api_exception_carries_envelope_and_error_code(self, api, mock_session):
+        body = {"meta": {"code": 500, "error": "error.something_unrecognised"}, "data": None}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == "error.something_unrecognised"
+
+    @pytest.mark.asyncio
+    async def test_not_found_exception_carries_envelope_and_error_code(self, api, mock_session):
+        """A 404 with an unrecognised meta.error still carries envelope/error_code."""
+        body = {"meta": {"code": 404, "error": "error.not_found"}, "data": None}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == "error.not_found"
+
+    @pytest.mark.asyncio
+    async def test_authentication_exception_carries_envelope_and_error_code(
+        self, api, mock_session
+    ):
+        body = {"meta": {"code": 401, "error": "error.auth"}}
+        mock_session.request.return_value = create_mock_response(401, body)
+
+        with pytest.raises(EeroAuthenticationException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == "error.auth"
+
+    @pytest.mark.asyncio
+    async def test_non_json_body_yields_none_envelope_and_error_code(self, api, mock_session):
+        mock_session.request.return_value = create_mock_response(500, None, "not json at all")
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope is None
+        assert exc_info.value.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exception_carries_envelope(self, api, mock_session):
+        body = {"meta": {"code": 429, "error": "error.rate_limit"}}
+        mock_session.request.return_value = create_mock_response(429, body)
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == "error.rate_limit"
+
+
+# ========================== Error Catalogue Classification Tests ==========================
+
+
+class TestErrorCatalogueClassification:
+    """Tests that the transport picks the right SDK exception per catalogue group.
+
+    One representative status/error_code pair per group in
+    ``eero.errors``, plus the status-only fallbacks (free-text 404, 404 with
+    no meta.error at all) and case-insensitive matching.
+    """
+
+    @pytest.fixture
+    def api(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.parametrize(
+        "status_code,error_code,expected_class",
+        [
+            (401, "error.session.expired", EeroAuthenticationException),
+            (401, "error.session.invalid", EeroAuthenticationException),
+            (401, "error.session.revoked", EeroAuthenticationException),
+            (401, "error.session.refresh", EeroAuthenticationException),
+            (401, "error.verification.required", EeroAuthenticationException),
+            (401, "error.verification.invalid", EeroAuthenticationException),
+            (401, "error.login.unknown", EeroAuthenticationException),
+            # 401 short-circuits before the status-independent groups are
+            # even consulted -- none of these may downgrade an
+            # authentication failure to something else.
+            (401, "error.premium.user_not_subscribed", EeroAuthenticationException),
+            (401, "error.eero.offline", EeroAuthenticationException),
+            (401, "error.rate.limit", EeroAuthenticationException),
+            (401, "error.app.version.blocked", EeroAuthenticationException),
+            (403, "error.access.denied", EeroAccessDeniedException),
+            (404, "error.network.not.found", EeroNotFoundException),
+            (404, "error.eero.no_serial_found", EeroNotFoundException),
+            (429, "error.rate.limit", EeroRateLimitException),
+            (500, "error.rate.limit", EeroRateLimitException),
+            (400, "error.form.errors", EeroValidationException),
+            (400, "error.reservation.ip.invalid", EeroValidationException),
+            (402, "error.premium.user_not_subscribed", EeroPremiumRequiredException),
+            (403, "error.partner.unavailable", EeroPremiumRequiredException),
+            (400, "error.eero.offline", EeroFeatureUnavailableException),
+            (403, "error.network.unavailable", EeroFeatureUnavailableException),
+            (400, "error.app.version.blocked", EeroClientBlockedException),
+            (500, "error.reservation.failed", EeroAPIException),
+            (500, "error.stripe.card.declined", EeroAPIException),
+            (500, "encryptme.error.email.exists", EeroAPIException),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_error_code_maps_to_expected_exception_class(
+        self, api, mock_session, status_code, error_code, expected_class
+    ):
+        """Each catalogue group's representative error_code raises the right class."""
+        body = {"meta": {"code": status_code, "error": error_code}}
+        mock_session.request.return_value = create_mock_response(status_code, body)
+
+        with pytest.raises(expected_class) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code == error_code
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_matching(self, api, mock_session):
+        """A catalogue string is matched regardless of case."""
+        body = {"meta": {"code": 403, "error": "ERROR.ACCESS.DENIED"}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.error_code == "ERROR.ACCESS.DENIED"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_trimmed_matching(self, api, mock_session):
+        """A catalogue string is matched even with surrounding whitespace."""
+        body = {"meta": {"code": 403, "error": "  error.access.denied  "}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException):
+            await api.get("/endpoint")
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_error_code_does_not_change_status_based_class(
+        self, api, mock_session
+    ):
+        """An unrecognised meta.error never changes the class chosen by status."""
+        body = {"meta": {"code": 500, "error": "error.something_never_seen_before"}}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "error.something_never_seen_before"
+
+    @pytest.mark.asyncio
+    async def test_404_with_free_text_sentence_raises_not_found(self, api, mock_session):
+        """A 404 whose meta.error is a free-text sentence still raises EeroNotFoundException."""
+        body = {"meta": {"code": 404, "error": "No parameters were given to check."}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.error_code == "No parameters were given to check."
+
+    @pytest.mark.asyncio
+    async def test_404_with_no_meta_error_raises_not_found(self, api, mock_session):
+        """A 404 with no meta.error at all (e.g. an unknown network) still raises EeroNotFoundException."""
+        body = {"meta": {"code": 404}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope == body
+        assert exc_info.value.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_404_with_no_body_raises_not_found(self, api, mock_session):
+        """A 404 with a completely empty/non-JSON body still raises EeroNotFoundException."""
+        mock_session.request.return_value = create_mock_response(404, None, body_bytes=b"")
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.envelope is None
+        assert exc_info.value.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_403_without_access_denied_string_stays_api_exception(self, api, mock_session):
+        """A 403 without the recognised access-denied string stays a plain EeroAPIException."""
+        mock_session.request.return_value = create_mock_response(403, None, "Forbidden")
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.status_code == 403
+        assert not isinstance(exc_info.value, EeroAccessDeniedException)
+
+    @pytest.mark.asyncio
+    async def test_access_denied_is_not_an_auth_error(self, api, mock_session):
+        """EeroAccessDeniedException.is_auth_error() is False -- it is not a 401."""
+        body = {"meta": {"code": 403, "error": "error.access.denied"}}
+        mock_session.request.return_value = create_mock_response(403, body)
+
+        with pytest.raises(EeroAccessDeniedException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.is_auth_error() is False
+
+    @pytest.mark.asyncio
+    async def test_not_found_is_not_an_auth_error(self, api, mock_session):
+        """EeroNotFoundException.is_auth_error() is False -- the base default."""
+        mock_session.request.return_value = create_mock_response(404, None, "")
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.is_auth_error() is False
+
+    @pytest.mark.asyncio
+    async def test_recognised_404_error_embeds_the_catalogue_string(self, api, mock_session):
+        """A recognised 404 error_code is embedded verbatim (normalized) in the message."""
+        body = {"meta": {"code": 404, "error": "error.network.not.found"}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/endpoint")
+
+        assert "error.network.not.found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_404_message_never_embeds_free_text_or_url(self, api, mock_session):
+        """A 404's free-text meta.error and the request URL never reach the message."""
+        body = {"meta": {"code": 404, "error": "No parameters were given to check."}}
+        mock_session.request.return_value = create_mock_response(404, body)
+
+        with pytest.raises(EeroNotFoundException) as exc_info:
+            await api.get("/some/network/path")
+
+        message = str(exc_info.value)
+        assert message == "API error 404: unrecognised error string"
+        assert "No parameters were given to check." not in message
+        assert "some/network/path" not in message
+        assert "https://api.example.com" not in message
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_error_message_is_fixed_label_only(self, api, mock_session):
+        """An unrecognised meta.error yields the fixed label and nothing else."""
+        body = {"meta": {"code": 500, "error": "error.something_never_seen_before"}}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert str(exc_info.value) == "API error 500: unrecognised error string"
+
+
+class TestExceptionMessageSafety:
+    """Tests that exception messages never leak response body data or credentials."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    async def test_message_excludes_body_data_and_credential_shaped_values(self, api, mock_session):
+        """str(exc) never contains the envelope's data payload or a credential-shaped value."""
+        body = {
+            "meta": {"code": 500, "error": "error.reservation.failed"},
+            "data": {
+                "session_token": "SUPER_SECRET_TOKEN_VALUE",
+                "user_token": "ANOTHER_SECRET_TOKEN",
+                "detail": "some internal diagnostic string",
+            },
+        }
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        message = str(exc_info.value)
+        assert message == "API error 500: error.reservation.failed"
+        assert "SUPER_SECRET_TOKEN_VALUE" not in message
+        assert "ANOTHER_SECRET_TOKEN" not in message
+        assert "some internal diagnostic string" not in message
+        # The data is still available, verbatim, via the envelope attribute --
+        # it is only ever excluded from the message text.
+        assert exc_info.value.envelope == body
+
+    @pytest.mark.asyncio
+    async def test_2xx_body_with_meta_error_shaped_field_returned_unmodified(
+        self, api, mock_session
+    ):
+        """A 2xx body is returned exactly as received, even if it has an error-shaped meta.error.
+
+        Classification only ever applies to non-2xx responses; a success
+        status is never second-guessed by inspecting meta.error.
+        """
+        body = {
+            "meta": {"code": 200, "error": "error.session.refresh", "server_time": "now"},
+            "data": {"ok": True},
+        }
+        mock_session.request.return_value = create_mock_response(200, body)
+
+        result = await api.get("/endpoint")
+
+        assert result == body
+
+    @pytest.mark.asyncio
+    async def test_non_string_meta_error_degrades_to_none_without_raising(self, api, mock_session):
+        """A non-string meta.error (e.g. a list or int) degrades to error_code=None, no crash."""
+        body = {"meta": {"code": 500, "error": ["unexpected", "shape"]}}
+        mock_session.request.return_value = create_mock_response(500, body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api.get("/endpoint")
+
+        assert exc_info.value.error_code is None
+        assert str(exc_info.value) == "API error 500: unrecognised error string"

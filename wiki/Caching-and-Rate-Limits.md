@@ -36,7 +36,19 @@ Only these `EeroClient` read methods check and populate the cache. Every other `
 | `get_profiles(network_id)` | `"profiles"` keyed by `f"{network_id}_profiles"` |
 | `get_profile(profile_id, network_id)` | `"profiles"` keyed by `f"{network_id}_{profile_id}"` |
 
-> ⚠️ **Warning:** `get_eero(eero_id, network_id, refresh_cache=False)` accepts a `refresh_cache` kwarg in its signature, but its implementation never checks or populates the cache — every call goes straight to the API. The kwarg currently has no effect. Every other method not in the table above (`get_diagnostics`, `get_settings`, `get_security_settings`, `get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_network`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`, `get_data_usage`, `get_activity*`, etc.) is likewise never cached — it always makes a fresh request.
+> ⚠️ **Warning:** `get_eero(eero_id, network_id, refresh_cache=False)` accepts a `refresh_cache` kwarg in its signature, but its implementation never checks or populates the cache — every call goes straight to the API. The kwarg currently has no effect. Every other method not in the table above (`get_diagnostics`, `get_security_settings`, `get_dns_settings`, `get_sqm_settings`, `get_led_status`, `get_nightlight`, `get_backup_internet`, `get_blacklist`, `get_reservations`, `get_forwards`, `get_transfer_stats`, `get_data_usage`, `get_speed_tests`, `get_schedules`, and every read in the families added in v8.0.0 — entitlements, events, permissions, notifications, DNS policies, members, WPA3, power saving, backup access points, subnets, WAN) is likewise never cached — it always makes a fresh request.
+
+> **Note**: `get_devices(thread=...)` / `get_devices(proxied_node=...)` bypass the cache in both directions — a filtered list is neither served from nor written to the `devices` entry, because the cached list is the unfiltered one.
+
+### The cache also feeds `parent=`
+
+Beyond serving repeat reads, three cached entries are reused as the `parent=` envelope for
+domain calls (see [Network Targeting](Network-Targeting#parent--use-the-link-the-api-published)):
+a fresh `network` entry is passed to every network-scoped call, a fresh `eeros` list supplies
+the matching eero's envelope to the eero calls, and a fresh single-device entry is passed to
+`update_device_via_link`. This is read-only — the cached envelope is forwarded as-is and never
+merged into a response. When the entry is stale or absent the call simply falls back to the
+template URL; nothing is fetched to populate `parent=`.
 
 ---
 
@@ -68,28 +80,62 @@ The SDK also calls `clear_cache()` for you automatically after `verify()`, `logo
 
 ## Automatic Invalidation on Writes
 
-Some write methods invalidate the specific cache entries they affect via two internal helpers, `_invalidate_device_cache(network_id, device_id)` and `_invalidate_profile_cache(network_id, profile_id)` (plus `_invalidate_profiles_list_cache(network_id)` for the profiles list only). Confirmed from `src/eero/client.py`:
+Write methods invalidate the specific cache entries they affect via internal helpers (`_invalidate_network_cache`, `_invalidate_eeros_cache`, `_invalidate_device_cache`, `_invalidate_profile_cache`, `_invalidate_profiles_list_cache`). Confirmed from `src/eero/client.py` at v8.0.0:
 
 | Write method | Invalidates |
 |---|---|
-| `set_device_nickname`, `block_device`, `pause_device`, `set_device_priority` | that device's cache entry + the network's device list |
-| `pause_profile`, `set_blocked_applications`, `set_profile_devices`, `set_profile_schedule` | that profile's cache entry + the network's profile list |
-| `create_profile` | the network's profile list |
+| `set_device_nickname`, `block_device`, `unblock_device`, `pause_device`, `update_device_via_link`, `set_device_type`, `set_device_labels`, `set_device_secondary_wan_access` | that device's cache entry + the network's device list |
+| `pause_profile`, `set_profile_devices`, `set_profile_blocked_applications` | that profile's cache entry + the network's profile list |
+| `create_profile`, `allow_domain_for_profiles`, `allow_cnames_for_profiles`, `block_domain_for_profiles` | the network's profile list |
 | `rename_profile`, `delete_profile` | that profile's cache entry + the network's profile list |
-| `reboot_eero`, `set_led`, `set_nightlight` | the network's eeros list |
-| `set_guest_network`, `run_speed_test`, `set_network_name` | that network's cache entry |
+| `reboot_eero`, `set_location`, `set_led`, `set_led_brightness`, `set_nightlight`, `node_action`, `port_action`, `nightlight_override` | the network's eeros list |
+| `set_network_name`, `set_network_password`, `clear_network_password`, `set_guest_network`, `set_guest_password`, `clear_guest_password`, `run_speed_test`, `set_thread_enabled`, `update_thread`, `regenerate_thread_credentials`, `set_data_usage_report_settings`, `apply_update`, `set_backup_internet`, the DNS writes, `set_sqm`, `set_wpa3`, `set_band_steering`, `set_upnp`, `set_ipv6`, `configure_security`, `set_notification_settings`, `allow_domain`, `allow_cnames`, `block_domain`, `set_dhcp`, `set_connection_mode`, `set_nat_port_randomization`, `set_wpa3_per_band`, `set_mlo_mode`, `set_fast_transition`, `set_passpoint_enabled`, `set_proxied_nodes`, `set_power_saving`, `enable_ddns`, `disable_ddns`, `set_subnets_config`, `delete_subnet`, `set_multistaticip`, `set_secondary_wan_config` | that network's cache entry |
+
+Invalidating the network entry also means the next network-scoped call runs without a cached
+`parent=` envelope (template URL) until `get_network()` repopulates it.
 
 > ⚠️ **Gotcha:** Not every write invalidates a related read. Confirmed **not** invalidated by this SDK version, despite mutating server-side state that a cached read reflects:
-> - `set_led_brightness` — does **not** invalidate the eeros cache (unlike `set_led` and `set_nightlight`, which do)
-> - `enable_bedtime` and `clear_profile_schedule` — do **not** invalidate the profile cache (unlike `set_profile_schedule`, which does)
-> - `set_wpa3`, `set_band_steering`, `set_upnp`, `set_ipv6`, `set_thread_enabled`, `configure_security` — security settings aren't cached at all, so nothing to invalidate, but also nothing protects you from reading stale data elsewhere if you assumed otherwise
-> - `configure_backup_network`, `set_backup_network` — no cache invalidation
+> - `create_schedule`, `update_schedule`, `delete_schedule`, `clear_profile_schedule`, `enable_bedtime` — do **not** invalidate the profile cache (the profile envelope is what `get_profile` caches; the schedules themselves are never cached)
+> - `set_nightlight_brightness` / `set_nightlight_schedule` — these delegate to `set_nightlight`, so they *do* invalidate the eeros list; listed here only because their names are not in the table
+> - The account writes (`set_account_name`, `set_account_email`, …, `set_push_settings`) — do **not** invalidate the `account` entry
+> - `mark_notifications_read`, the invite/member writes, the power-saving schedule writes, the backup-access-point writes, `set_subnet_content_filters`, `set_pppoe`, `led_cycle` — nothing is invalidated; none of the reads they affect are cached anyway
 >
-> **Workaround**: after any write whose effect you need to see immediately, call the corresponding getter with `refresh_cache=True` rather than trusting the cache to have been cleared for you:
+> **Workaround**: after any write whose effect you need to see immediately, call the corresponding getter with `refresh_cache=True` (or, for uncached reads, simply call it — it is always fresh) rather than trusting the cache to have been cleared for you:
 > ```python
-> await client.set_led_brightness(eero_id, 50, network_id=network_id)
-> eeros = await client.get_eeros(network_id=network_id, refresh_cache=True)
+> await client.set_account_name("<name>")
+> account = await client.get_account(refresh_cache=True)
 > ```
+
+---
+
+## Writes: what "unverified" and "settings-class" mean
+
+Every write in the families added in v8.0.0 — and the re-pointed writes listed in
+[Migration](Migration#writes-now-use-the-forms-the-api-declares) — is **unverified against a
+live network**: the request follows the field names, encoding, and path the API declares for the
+operation, but the SDK has not confirmed on a real network that the write persists or what else
+it does. Each of these logs one line at `WARNING` on the module's secure logger immediately
+before the request is sent:
+
+```
+Issuing write (<operation>): its side effects have not been fully characterised against a live
+network. Read the current state first and skip the write when it already matches -- never retry
+a failed write in a loop.
+```
+
+**Settings-class writes may reboot the entire mesh.** The DNS write on `networks/{id}/settings`
+is confirmed to restart every eero and drop every client; the SDK treats every other write to
+that link and its settings-class siblings as capable of the same until proven otherwise —
+`set_sqm`, `set_dhcp`, `set_connection_mode`, `set_nat_port_randomization`, `set_mlo_mode`,
+`set_wpa3_per_band`, `set_fast_transition`, `set_power_saving`, `set_subnets_config`,
+`delete_subnet`, `set_multistaticip`, `set_secondary_wan_config`,
+`set_device_secondary_wan_access`, plus the security toggles (`set_wpa3`, `set_band_steering`,
+`set_upnp`, `set_ipv6`, `configure_security`) that write the same `settings` link.
+`apply_update` reboots every node by design, and `node_action("POWER_CYCLE_ALL_PORTS_AND_REBOOT")`
+reboots that eero. The full statement of the discipline this implies, with a worked example, is
+in [Python API — Writes and safety](Python-API#writes-and-safety); the short version is *read,
+compare, skip if unchanged, never retry in a loop, and treat a 200 as "accepted", not
+"settled"*.
 
 ---
 
@@ -102,7 +148,7 @@ Practical guidance:
 - **Lean on the cache** — the default 60-second TTL alone eliminates most redundant reads in interactive use.
 - **Raise `cache_timeout` for polling workloads** — a monitoring loop checking network health every few minutes doesn't need fresh data every call.
 - **Batch reads** — call `get_networks()` / `get_devices()` once and slice the response in memory rather than issuing one request per item.
-- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`.
+- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`. The SDK never retries a `429` itself, and never retries a write for any reason; the only built-in retry is the opt-in `get_retries` constructor option for `GET`s that fail with a transport error or a `5xx` (see [Configuration](Configuration#-retry-policy)).
 
 ### Example: a rate-limit-respecting monitoring loop
 
@@ -131,16 +177,13 @@ asyncio.run(main())
 
 ## Mobile User-Agent
 
-The SDK sends a mobile-style `User-Agent` header by default, defined in `src/eero/const.py`:
+The SDK sends a mobile-style `User-Agent` header on every request, defined in `src/eero/const.py`:
 
 ```python
-DEFAULT_HEADERS: Final[Dict[str, str]] = {
-    "User-Agent": "eero/3.0 (iPhone; iOS 17.0)",
-    "Content-Type": "application/json",
-}
+DEFAULT_USER_AGENT: Final[str] = "eero/3.0 (iPhone; iOS 17.0)"
 ```
 
-Per the inline comment in `const.py`, this exists because the Eero Cloud API "has been observed to treat non-mobile clients more aggressively" for rate-limiting — presenting as the official mobile app reduces the chance of being throttled.
+This exists because the Eero Cloud API rate-limits non-mobile clients more aggressively — presenting as the official mobile app reduces the chance of being throttled. It is not configurable. The full per-request header set (`Accept`, `User-Agent`, `X-Accept-Language`, and a per-request `Content-Type`) is described in [Configuration](Configuration#-request-headers-and-transport).
 
 ---
 
@@ -161,6 +204,7 @@ Request timeouts are hardcoded in `BaseAPI._request()` and are not configurable 
 | Background monitoring / polling loop | `180`–`300` |
 | Bulk reporting across many networks | `300`+, paired with `refresh_cache=True` only where freshness matters |
 | Anything issuing writes immediately followed by reads | Use `refresh_cache=True` on the read — don't rely on cache invalidation for the gaps noted above |
+| Anything issuing settings-class writes | Read, compare, and skip — the write itself is the expensive event (a possible mesh reboot), not the request |
 
 ---
 
@@ -169,5 +213,6 @@ Request timeouts are hardcoded in `BaseAPI._request()` and are not configurable 
 - [Error Handling](Error-Handling) — `EeroRateLimitException`, `EeroTimeoutException`, and retry patterns
 - [Configuration](Configuration) — client setup, options, and request timeouts
 - [Raw Response Format](Raw-Response-Format) — the `{"meta": ..., "data": ...}` envelope returned by every cached and uncached method alike
-- [Network Targeting](Network-Targeting) — how `network_id` resolution interacts with cache keys
+- [Network Targeting](Network-Targeting) — how `network_id` resolution interacts with cache keys, and how cached envelopes become `parent=`
+- [Python API](Python-API#writes-and-safety) — the read-compare-skip discipline for every write
 - [Troubleshooting](Troubleshooting) — common issues & fixes

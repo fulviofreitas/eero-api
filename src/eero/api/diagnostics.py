@@ -4,15 +4,17 @@ IMPORTANT: This module returns RAW responses from the Eero Cloud API.
 All data extraction, field mapping, and transformation must be done by downstream clients.
 """
 
-import logging
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ..logging import get_secure_logger
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import sub_resource_url
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_secure_logger(__name__)
 
 
 class DiagnosticsAPI(AuthenticatedAPI):
@@ -30,11 +32,19 @@ class DiagnosticsAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_diagnostics(self, network_id: str) -> Dict[str, Any]:
-        """Get network diagnostics information - returns raw Eero API response.
+    async def get_diagnostics(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Get network diagnostics results - returns raw Eero API response.
+
+        GETs the network's ``diagnostics`` link.
 
         Args:
-            network_id: ID of the network to get diagnostics from
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``diagnostics`` link is
+                used instead of the default template. Read only; never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -47,17 +57,45 @@ class DiagnosticsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Getting diagnostics for network %s", network_id)
-        return await self.get(
-            f"networks/{network_id}/diagnostics",
-            auth_token=auth_token,
+        url = sub_resource_url(
+            network_id,
+            "networks/{id}/diagnostics",
+            link="diagnostics",
+            parent=as_envelope(parent),
         )
+        _LOGGER.debug("Getting diagnostics for network %s", network_id)
+        return await self.get(url, auth_token=auth_token)
 
-    async def run_diagnostics(self, network_id: str) -> Dict[str, Any]:
+    async def run_diagnostics(
+        self,
+        network_id: str,
+        *,
+        device: Optional[str] = None,
+        symptom: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Run network diagnostics - returns raw Eero API response.
 
+        Issues a JSON POST to the network's ``diagnostics`` link with
+        exactly the keys given among ``device`` and ``symptom`` (an empty
+        JSON object when neither is supplied). Results are read back via
+        `get_diagnostics` on the same link.
+
+        .. warning::
+            The request body shape has not been confirmed against a live
+            network. Follow the read-compare-skip discipline where
+            applicable, and do not retry on failure.
+
         Args:
-            network_id: ID of the network to run diagnostics on
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            device: Optional device identifier to scope the diagnostics run
+                to. Omitted from the request body when ``None``.
+            symptom: Optional symptom identifier describing the issue being
+                diagnosed. Omitted from the request body when ``None``.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``diagnostics`` link is
+                used instead of the default template. Read only; never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -70,9 +108,17 @@ class DiagnosticsAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Running diagnostics for network %s", network_id)
-        return await self.post(
-            f"networks/{network_id}/diagnostics",
-            auth_token=auth_token,
-            json={},
+        url = sub_resource_url(
+            network_id,
+            "networks/{id}/diagnostics",
+            link="diagnostics",
+            parent=as_envelope(parent),
         )
+        payload: Dict[str, str] = {}
+        if device is not None:
+            payload["device"] = device
+        if symptom is not None:
+            payload["symptom"] = symptom
+
+        warn_uncharacterised_write(_LOGGER, "run diagnostics for network")
+        return await self.post(url, auth_token=auth_token, json=payload)

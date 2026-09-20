@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import ClientResponseError, ClientSession
 
+from eero.const import CREDENTIAL_SCHEMA_VERSION
+
 # ==================== Mock Response Helpers ====================
 
 
@@ -323,21 +325,34 @@ def mock_keyring():
 
 @pytest.fixture
 def valid_session_data() -> Dict[str, Any]:
-    """Valid session data for authenticated state."""
+    """A current-schema (v2) persisted credential record."""
     return {
         "session_id": "session_valid_id",
-        "refresh_token": "rt_refresh_token",
-        "session_expiry": (datetime.now() + timedelta(days=30)).isoformat(),
+        "schema_version": CREDENTIAL_SCHEMA_VERSION,
     }
 
 
 @pytest.fixture
-def expired_session_data() -> Dict[str, Any]:
-    """Expired session data."""
+def legacy_session_data() -> Dict[str, Any]:
+    """A pre-schema-version (7.x or earlier) persisted credential record.
+
+    Carries fields the current schema no longer supports (``refresh_token``,
+    ``session_expiry``) and lacks the ``schema_version`` marker entirely,
+    which is what triggers migration on load.
+    """
     return {
-        "session_id": "session_expired_id",
-        "refresh_token": "rt_expired_refresh",
+        "session_id": "session_legacy_id",
+        "refresh_token": "rt_legacy_refresh",
         "session_expiry": (datetime.now() - timedelta(days=1)).isoformat(),
+    }
+
+
+@pytest.fixture
+def legacy_user_token_data() -> Dict[str, Any]:
+    """A pre-schema-version record using the even older ``user_token`` key."""
+    return {
+        "user_token": "session_from_user_token",
+        "session_expiry": (datetime.now() + timedelta(days=30)).isoformat(),
     }
 
 

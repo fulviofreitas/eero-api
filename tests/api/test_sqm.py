@@ -1,12 +1,13 @@
-"""Tests for SqmAPI module (Smart Queue Management).
+"""Tests for SqmAPI module.
 
 Tests cover:
-- Getting SQM settings (raw response)
-- Enabling/disabling SQM
-- Setting bandwidth limits
-- Configuring SQM
+- Getting SQM settings (raw response, via the network's own URL)
+- Setting the SQM boolean via a query parameter with no body
+- id/path/URL polymorphism and parent-link preference
+- The uncharacterised-write warning
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +16,15 @@ from eero.api.sqm import SqmAPI
 from eero.exceptions import EeroAuthenticationException
 
 from .conftest import api_success_response, create_mock_response
+
+
+@pytest.fixture
+def sqm_api(mock_session):
+    """Create a SqmAPI with mocked auth."""
+    auth_api = MagicMock()
+    auth_api.session = mock_session
+    auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+    return SqmAPI(auth_api)
 
 
 class TestSqmAPIInit:
@@ -33,235 +43,84 @@ class TestSqmAPIInit:
 class TestSqmAPIGetSettings:
     """Tests for get_sqm_settings method."""
 
-    @pytest.fixture
-    def sqm_api(self, mock_session):
-        """Create a SqmAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SqmAPI(auth_api)
-
     @pytest.mark.asyncio
-    async def test_get_sqm_settings_returns_raw_response(self, sqm_api, mock_session):
-        """Test getting SQM settings returns raw response."""
-        network_data = {
-            "sqm": {
-                "enabled": True,
-                "upload_bandwidth": 100,
-                "download_bandwidth": 500,
-            },
-        }
-        mock_response = create_mock_response(200, api_success_response(network_data))
-        mock_session.request.return_value = mock_response
+    async def test_get_sqm_settings_reads_network_envelope(self, sqm_api, mock_session):
+        """Test get_sqm_settings GETs the network's own URL."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"sqm": True})
+        )
 
         result = await sqm_api.get_sqm_settings("network_123")
 
-        assert "meta" in result
-        assert "data" in result
+        assert result["data"]["sqm"] is True
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "GET"
+        assert call_args.args[1].endswith("/2.2/networks/network_123")
+
+    @pytest.mark.asyncio
+    async def test_get_sqm_settings_prefers_parent_self_url(self, sqm_api, mock_session):
+        """Test get_sqm_settings uses the parent's own url over the template."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"sqm": True})
+        )
+        parent = {"url": "/2.3/networks/network_123"}
+
+        await sqm_api.get_sqm_settings("network_123", parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123")
 
     @pytest.mark.asyncio
     async def test_get_sqm_settings_not_authenticated(self, sqm_api):
         """Test get_sqm_settings raises when not authenticated."""
         sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
-        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+        with pytest.raises(EeroAuthenticationException):
             await sqm_api.get_sqm_settings("network_123")
 
 
-class TestSqmAPISetEnabled:
-    """Tests for set_sqm_enabled method."""
-
-    @pytest.fixture
-    def sqm_api(self, mock_session):
-        """Create a SqmAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SqmAPI(auth_api)
+class TestSqmAPISetSqm:
+    """Tests for set_sqm method."""
 
     @pytest.mark.asyncio
-    async def test_enable_sqm_returns_raw_response(self, sqm_api, mock_session):
-        """Test enabling SQM returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await sqm_api.set_sqm_enabled("network_123", True)
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        assert call_args.kwargs["json"] == {"sqm": True}
-
-    @pytest.mark.asyncio
-    async def test_set_sqm_enabled_targets_settings_endpoint(self, sqm_api, mock_session):
-        """Test set_sqm_enabled sends request to /settings endpoint."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        await sqm_api.set_sqm_enabled("network_123", True)
-
-        call_args = mock_session.request.call_args
-        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-        assert "networks/network_123/settings" in url
-
-    @pytest.mark.asyncio
-    async def test_set_sqm_enabled_not_authenticated(self, sqm_api):
-        """Test set_sqm_enabled raises when not authenticated."""
-        sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await sqm_api.set_sqm_enabled("network_123", True)
-
-
-class TestSqmAPISetBandwidth:
-    """Tests for set_sqm_bandwidth method."""
-
-    @pytest.fixture
-    def sqm_api(self, mock_session):
-        """Create a SqmAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SqmAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_set_upload_bandwidth_returns_raw_response(self, sqm_api, mock_session):
-        """Test setting upload bandwidth returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await sqm_api.set_sqm_bandwidth("network_123", upload_mbps=50)
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["sqm"]["enabled"] is True
-        assert payload["sqm"]["upload_bandwidth"] == 50
-
-    @pytest.mark.asyncio
-    async def test_set_both_bandwidths_returns_raw_response(self, sqm_api, mock_session):
-        """Test setting both bandwidths returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await sqm_api.set_sqm_bandwidth("network_123", upload_mbps=100, download_mbps=500)
-
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["sqm"]["upload_bandwidth"] == 100
-        assert payload["sqm"]["download_bandwidth"] == 500
-
-    @pytest.mark.asyncio
-    async def test_set_sqm_bandwidth_targets_settings_endpoint(self, sqm_api, mock_session):
-        """Test set_sqm_bandwidth sends request to /settings endpoint."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        await sqm_api.set_sqm_bandwidth("network_123", upload_mbps=50)
-
-        call_args = mock_session.request.call_args
-        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-        assert "networks/network_123/settings" in url
-
-    @pytest.mark.asyncio
-    async def test_set_sqm_bandwidth_not_authenticated(self, sqm_api):
-        """Test set_sqm_bandwidth raises when not authenticated."""
-        sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await sqm_api.set_sqm_bandwidth("network_123", upload_mbps=50)
-
-
-class TestSqmAPIConfigure:
-    """Tests for configure_sqm method."""
-
-    @pytest.fixture
-    def sqm_api(self, mock_session):
-        """Create a SqmAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SqmAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_configure_sqm_returns_raw_response(self, sqm_api, mock_session):
-        """Test configuring SQM returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await sqm_api.configure_sqm(
-            "network_123",
-            enabled=True,
-            upload_mbps=100,
-            download_mbps=500,
+    @pytest.mark.parametrize("enabled,expected", [(True, "true"), (False, "false")])
+    async def test_set_sqm_sends_query_param_with_no_body(
+        self, sqm_api, mock_session, caplog, enabled, expected
+    ):
+        """Test set_sqm PUTs to the settings link with sqm as a query param and no body."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
         )
 
-        assert "meta" in result
-        call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["sqm"]["enabled"] is True
-
-    @pytest.mark.asyncio
-    async def test_configure_sqm_targets_settings_endpoint(self, sqm_api, mock_session):
-        """Test configure_sqm sends request to /settings endpoint."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        await sqm_api.configure_sqm("network_123", enabled=True, upload_mbps=100, download_mbps=500)
-
-        call_args = mock_session.request.call_args
-        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-        assert "networks/network_123/settings" in url
-
-    @pytest.mark.asyncio
-    async def test_configure_sqm_not_authenticated(self, sqm_api):
-        """Test configure_sqm raises when not authenticated."""
-        sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await sqm_api.configure_sqm("network_123", enabled=True)
-
-
-class TestSqmAPISetAuto:
-    """Tests for set_sqm_auto method."""
-
-    @pytest.fixture
-    def sqm_api(self, mock_session):
-        """Create a SqmAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return SqmAPI(auth_api)
-
-    @pytest.mark.asyncio
-    async def test_set_sqm_auto_returns_raw_response(self, sqm_api, mock_session):
-        """Test setting SQM to auto returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        result = await sqm_api.set_sqm_auto("network_123")
+        with caplog.at_level(logging.WARNING):
+            result = await sqm_api.set_sqm("network_123", enabled)
 
         assert "meta" in result
         call_args = mock_session.request.call_args
-        payload = call_args.kwargs["json"]
-        assert payload["sqm"]["mode"] == "auto"
+        assert call_args.args[0] == "PUT"
+        assert call_args.args[1].endswith("/2.2/networks/network_123/settings")
+        assert call_args.kwargs["params"] == {"sqm": expected}
+        assert "json" not in call_args.kwargs or call_args.kwargs["json"] is None
+        assert "data" not in call_args.kwargs or call_args.kwargs["data"] is None
+        assert any("set SQM for network" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
-    async def test_set_sqm_auto_targets_settings_endpoint(self, sqm_api, mock_session):
-        """Test set_sqm_auto sends request to /settings endpoint."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
+    async def test_set_sqm_prefers_parent_link(self, sqm_api, mock_session):
+        """Test set_sqm uses the network's published settings link over the template."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+        parent = {"resources": {"settings": "/2.3/networks/network_123/settings"}}
 
-        await sqm_api.set_sqm_auto("network_123")
+        await sqm_api.set_sqm("network_123", True, parent=parent)
 
         call_args = mock_session.request.call_args
-        url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-        assert "networks/network_123/settings" in url
+        assert call_args.args[1].endswith("/2.3/networks/network_123/settings")
 
     @pytest.mark.asyncio
-    async def test_set_sqm_auto_not_authenticated(self, sqm_api):
-        """Test set_sqm_auto raises when not authenticated."""
+    async def test_set_sqm_not_authenticated(self, sqm_api):
+        """Test set_sqm raises when not authenticated."""
         sqm_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
         with pytest.raises(EeroAuthenticationException):
-            await sqm_api.set_sqm_auto("network_123")
+            await sqm_api.set_sqm("network_123", True)

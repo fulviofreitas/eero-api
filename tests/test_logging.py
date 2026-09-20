@@ -5,7 +5,9 @@ import logging
 import pytest
 
 from eero.logging import (
+    DEFAULT_SENSITIVE_PATTERNS,
     SecureLoggerAdapter,
+    _get_sensitive_regex,
     _is_sensitive_key,
     _redact_dict,
     _redact_value,
@@ -62,11 +64,21 @@ class TestIsSensitiveKey:
     def test_non_sensitive_keys(self):
         """Should not flag non-sensitive keys."""
         assert _is_sensitive_key("name") is False
-        assert _is_sensitive_key("email") is False
         assert _is_sensitive_key("status") is False
         assert _is_sensitive_key("id") is False
         assert _is_sensitive_key("count") is False
         assert _is_sensitive_key("network_id") is False
+
+    def test_detects_identifier_variations(self):
+        """Should detect identifier field names that could leak a submitted identifier."""
+        assert _is_sensitive_key("login") is True
+        assert _is_sensitive_key("email") is True
+        assert _is_sensitive_key("phone") is True
+        assert _is_sensitive_key("sms") is True
+        assert _is_sensitive_key("serial") is True
+        assert _is_sensitive_key("mac") is True
+        assert _is_sensitive_key("mac_address") is True
+        assert _is_sensitive_key("ssid") is True
 
 
 class TestRedactValue:
@@ -266,3 +278,70 @@ class TestAddSensitivePattern:
         """Should lowercase the pattern."""
         patterns = add_sensitive_pattern("MY_PATTERN")
         assert "my_pattern" in patterns
+
+
+# ========================== Regex Cache Isolation Tests (item 6) ==========================
+
+
+class TestSensitiveRegexCacheIsolation:
+    """A logger built with a narrow/custom pattern set must not narrow later default loggers."""
+
+    def test_get_sensitive_regex_does_not_leak_across_pattern_sets(self):
+        """Each distinct pattern set gets its own independently-cached regex."""
+        narrow = frozenset({"foo_only_field"})
+        regex_narrow = _get_sensitive_regex(narrow)
+        assert regex_narrow.search("token") is None
+        assert regex_narrow.search("foo_only_field") is not None
+
+        regex_default = _get_sensitive_regex(DEFAULT_SENSITIVE_PATTERNS)
+        assert regex_default.search("token") is not None
+
+        # The narrow lookup is unaffected by having built the default one
+        # afterwards -- proves there is no shared mutable global being
+        # overwritten between the two calls.
+        assert _get_sensitive_regex(narrow) is regex_narrow
+        assert regex_narrow.search("token") is None
+
+    def test_custom_pattern_logger_does_not_narrow_later_default_loggers(self):
+        """Building a logger with a narrow custom pattern set first must not affect later default loggers."""
+        narrow_patterns = frozenset({"foo_only_field"})
+        get_secure_logger("test.narrow.custom.logger", sensitive_patterns=narrow_patterns)
+
+        # A default logger built afterwards must still redact every default
+        # pattern -- the narrow logger's regex must never have overwritten a
+        # shared global cache slot.
+        assert _is_sensitive_key("token", DEFAULT_SENSITIVE_PATTERNS) is True
+        assert _is_sensitive_key("password", DEFAULT_SENSITIVE_PATTERNS) is True
+        assert _is_sensitive_key("token", narrow_patterns) is False
+
+
+# ================ Zero-Visibility Redaction for Credentials Tests (item 7) ================
+
+
+class TestRedactDictZeroVisibilityForCredentials:
+    """Keys matching token/credential patterns must never show a value prefix via _redact_dict."""
+
+    @pytest.mark.parametrize(
+        "key", ["token", "user_token", "session_id", "password", "api_key", "secret", "cookie"]
+    )
+    def test_credential_like_keys_show_length_only(self, key):
+        """Should redact credential-shaped keys to length-only, with no leading characters."""
+        value = "supersecretvalue1234"
+        data = {key: value}
+        result = _redact_dict(data)
+
+        assert result[key] == f"[REDACTED:{len(value)}chars]"
+        assert "supe" not in result[key]
+
+    def test_identifier_pattern_keys_still_use_visible_chars(self):
+        """Identifier-shaped keys (not credential-shaped) keep the normal partial-prefix redaction."""
+        data = {"email": "user@example.test-domain-value"}
+        result = _redact_dict(data)
+
+        assert result["email"].startswith("user")
+
+    def test_redact_value_called_directly_is_unaffected(self):
+        """Calling _redact_value directly (outside _redact_dict) keeps its own visible_chars default."""
+        result = _redact_value("secret123456")
+        assert result.startswith("secr")
+        assert "[REDACTED:12chars]" in result

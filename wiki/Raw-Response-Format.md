@@ -31,6 +31,8 @@ Every `EeroAPI` / `EeroClient` method returns:
 
 `meta.code` mirrors the HTTP status of a successful call (typically `200`). `data` holds the endpoint-specific payload — its shape (list vs. object) depends on the endpoint.
 
+Error responses follow the same envelope shape, with `meta.error` carrying the API's error string. The SDK raises them as exceptions instead of returning them, but the envelope is attached unmodified as `err.envelope` (and `meta.error` as `err.error_code`) — see [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
+
 ### `get_networks()` (abridged)
 
 ```python
@@ -41,7 +43,7 @@ Every `EeroAPI` / `EeroClient` method returns:
             "count": 1,
             "data": [
                 {
-                    "url": "/2.2/networks/1234567",
+                    "url": "/2.2/networks/<network-id>",
                     "name": "Home",
                     "status": "connected",
                     "wan_ip": "203.0.113.10",
@@ -59,9 +61,9 @@ Every `EeroAPI` / `EeroClient` method returns:
     "meta": {"code": 200, "server_time": "2026-01-22T10:00:00.000Z"},
     "data": [
         {
-            "url": "/2.2/networks/1234567/devices/abcdef",
+            "url": "/2.2/networks/<network-id>/devices/<mac>",
             "nickname": "Living Room TV",
-            "mac": "aa:bb:cc:dd:ee:ff",
+            "mac": "<mac>",
             "connected": True,
             "ip": "192.168.4.23",
         }
@@ -98,14 +100,14 @@ Use `.get(...)` with defaults throughout — a field's absence is not an error c
 
 ## The networks shape, specifically
 
-`get_networks()` is the one response worth calling out, because its `data` has been observed in
+`get_networks()` is the one response worth calling out, because its `data` has been seen in
 three different shapes:
 
 | Shape | Where it comes from |
 |---|---|
 | `data["networks"]` is a **list** | What the SDK's own auto-discovery assumes, and what the `/account` fallback in `EeroClient.get_networks()` constructs |
-| `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Observed in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
-| `data` is a **bare list** | Observed on some accounts |
+| `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Seen in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
+| `data` is a **bare list** | Seen on some accounts |
 
 > ⚠️ **Warning:** The SDK's internal auto-discovery does `networks = data.get("networks") or
 > data.get("data") or []` and then indexes `networks[0]`. It assumes `data["networks"]` is a
@@ -176,6 +178,52 @@ network_id = id_from_url(network["url"])  # "12345"
 
 `id_from_url` accepts either a bare ID (returned unchanged) or a URL/URL fragment (returns the trailing path segment). It raises `EeroValidationException` for empty or non-string input.
 
+### The `resources` links
+
+Several envelopes — the network, each eero, each profile, and the guest network — also carry a
+`resources` object: a map of link names to host-relative paths for related resources. On a
+network it looks like this (abridged; the exact set of keys is whatever the API returns for
+your network):
+
+```python
+{
+    "meta": {"code": 200, "server_time": "..."},
+    "data": {
+        "url": "/2.2/networks/<network-id>",
+        "name": "Home",
+        "resources": {
+            "eeros": "/2.2/networks/<network-id>/eeros",
+            "devices": "/2.2/networks/<network-id>/devices",
+            "profiles": "/2.2/networks/<network-id>/profiles",
+            "settings": "/2.2/networks/<network-id>/settings",
+            "guestnetwork": "/2.2/networks/<network-id>/guestnetwork",
+            "reboot": "/2.2/networks/<network-id>/reboot",
+            "speedtest": "/2.2/networks/<network-id>/speedtest",
+            "routing": "/2.3/networks/<network-id>/routing",
+            ...
+        },
+        ...
+    }
+}
+```
+
+Since v8.0.0 the SDK reads these links: every domain method resolves its URL through
+`sub_resource_url(...)`, which prefers the link published on the envelope you pass as `parent=`
+and falls back to a template only when no envelope (or no such link) is available. Note that a
+link may carry a different version prefix from the SDK's default (`routing` above is on `2.3`)
+— the SDK preserves whatever prefix the link carries.
+
+You do not need to unwrap anything before passing an envelope back in: the helpers accept the
+full `{"meta": ..., "data": ...}` response or the bare `data` object and detect which they were
+given. Nothing in this path mutates, copies-with-changes, or re-shapes the envelope; the
+response you get back from any method is still the API's body, unmodified.
+
+Three forms are interchangeable wherever a method takes a resource identifier — a bare ID, the
+`url` value, or that value joined onto the API host — and links to any other host or scheme are
+refused with `EeroValidationException`. The exported helpers (`resolve_link`, `self_url`,
+`resource_url`, `sub_resource_url`, `join_api_path`) and the per-family version constants are
+described in [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
+
 ---
 
 ## Typing Guidance
@@ -207,6 +255,6 @@ This keeps the SDK dependency-light and future-proof against upstream field chan
 ## 🔗 Related Pages
 
 - [Python API](Python-API) — full API reference & examples
-- [Network Targeting](Network-Targeting) — passing `network_id` correctly
+- [Network Targeting](Network-Targeting) — passing `network_id` correctly, and using the `resources` links
 - [Migration](Migration) — upgrading from pre-v2.0 (Pydantic) releases
 - [Error Handling](Error-Handling) — the `EeroException` hierarchy

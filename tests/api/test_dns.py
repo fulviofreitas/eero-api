@@ -140,6 +140,20 @@ class TestDnsAPIGetSettings:
 
         mock_session.request.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_network_id_with_brace_does_not_break_template(self, dns_api, mock_session):
+        """A brace-containing network id must resolve through the shared link
+        helper (`resolve_network_url`) rather than a raw f-string path, so it
+        can never be re-parsed as template text."""
+        mock_session.request.return_value = create_mock_response(json_data=api_success_response({}))
+
+        try:
+            await dns_api.get_dns_settings("net{evil}")
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
 
 # ========================== DNS caching ==========================
 
@@ -584,7 +598,6 @@ class TestRebootWarning:
             lambda api: api.clear_custom_dns("net123"),
             lambda api: api.set_dns_caching("net123", True),
             lambda api: api.set_dns_mode("net123", "auto"),
-            lambda api: api.set_ipv6_dns("net123", True),
         ],
     )
     async def test_every_write_path_warns(self, dns_api, mock_session, caplog, call):
@@ -611,29 +624,3 @@ class TestRebootWarning:
 
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
         mock_session.request.assert_not_called()
-
-
-# ========================== IPv6 upstream toggle ==========================
-
-
-class TestSetIpv6Dns:
-    """Tests for set_ipv6_dns (the ipv6_upstream toggle)."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("enabled", [True, False])
-    async def test_writes_ipv6_upstream(self, dns_api, mock_session, enabled):
-        """Test this writes the connectivity toggle, not DNS servers."""
-        await dns_api.set_ipv6_dns("net123", enabled)
-
-        assert sent_payload(mock_session) == {"ipv6_upstream": enabled}
-
-    @pytest.mark.asyncio
-    async def test_does_not_touch_name_servers(self, dns_api, mock_session):
-        """Test it leaves IPv6 DNS configuration alone.
-
-        IPv6 custom DNS works independently of ipv6_upstream — verified with
-        name_servers.mode == "custom" while ipv6_upstream was False.
-        """
-        await dns_api.set_ipv6_dns("net123", True)
-
-        assert "ipv6" not in sent_payload(mock_session)

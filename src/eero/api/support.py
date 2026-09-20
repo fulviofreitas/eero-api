@@ -5,12 +5,14 @@ All data extraction, field mapping, and transformation must be done by downstrea
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import sub_resource_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,11 +32,18 @@ class SupportAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_support(self, network_id: str) -> Dict[str, Any]:
+    async def get_support(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Get support information - returns raw Eero API response.
 
+        GETs the network's ``support`` link.
+
         Args:
-            network_id: ID of the network to get support info from
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``support`` link is used
+                instead of the default template. Read only; never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -47,20 +56,30 @@ class SupportAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Getting support info for network %s", network_id)
-        return await self.get(
-            f"networks/{network_id}/support",
-            auth_token=auth_token,
+        url = sub_resource_url(
+            network_id, "networks/{id}/support", link="support", parent=as_envelope(parent)
         )
+        _LOGGER.debug("Getting support info for network %s", network_id)
+        return await self.get(url, auth_token=auth_token)
 
     async def request_support(
-        self, network_id: str, request_data: Dict[str, Any]
+        self,
+        network_id: str,
+        request_data: Dict[str, Any],
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Request support - returns raw Eero API response.
 
+        POSTs to the network's ``support`` link.
+
         Args:
-            network_id: ID of the network
-            request_data: Support request data
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            request_data: Support request data, forwarded to the API
+                unchanged.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``support`` link is used
+                instead of the default template. Read only; never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -73,9 +92,12 @@ class SupportAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
+        url = sub_resource_url(
+            network_id, "networks/{id}/support", link="support", parent=as_envelope(parent)
+        )
         _LOGGER.debug("Requesting support for network %s", network_id)
         return await self.post(
-            f"networks/{network_id}/support",
+            url,
             auth_token=auth_token,
             json=request_data,
         )

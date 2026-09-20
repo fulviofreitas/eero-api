@@ -52,6 +52,18 @@ class TestSupportAPIGetSupport:
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await support_api.get_support("network_123")
 
+    @pytest.mark.asyncio
+    async def test_get_support_prefers_parent_link(self, support_api, mock_session):
+        """Test get_support uses the network's published support link over the template."""
+        mock_response = create_mock_response(200, api_success_response({}))
+        mock_session.request.return_value = mock_response
+        parent = {"resources": {"support": "/2.3/networks/network_123/support"}}
+
+        await support_api.get_support("network_123", parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/support")
+
 
 class TestSupportAPIRequestSupport:
     """Tests for request_support method."""

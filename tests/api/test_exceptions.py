@@ -7,9 +7,13 @@ Tests cover:
 - Resource type handling for not found exceptions
 """
 
+import pytest
+
 from eero.exceptions import (
+    EeroAccessDeniedException,
     EeroAPIException,
     EeroAuthenticationException,
+    EeroClientBlockedException,
     EeroException,
     EeroFeatureUnavailableException,
     EeroNetworkException,
@@ -164,6 +168,82 @@ class TestEeroNotFoundException:
             exc = EeroNotFoundException(resource_type, f"{resource_type}_123")
             assert resource_type in str(exc)
 
+    def test_direct_construction_accepts_envelope_and_error_code(self):
+        """Test that the original constructor also accepts envelope/error_code."""
+        envelope = {"meta": {"code": 404}}
+        exc = EeroNotFoundException(
+            "network", "network_123", envelope=envelope, error_code="error.network.not.found"
+        )
+        assert exc.envelope == envelope
+        assert exc.error_code == "error.network.not.found"
+
+    def test_from_response_has_no_resource_type_or_id(self):
+        """Test that from_response leaves resource_type/resource_id as None."""
+        envelope = {"meta": {"code": 404}}
+        exc = EeroNotFoundException.from_response(
+            "Resource not found", envelope=envelope, error_code=None
+        )
+        assert exc.resource_type is None
+        assert exc.resource_id is None
+        assert exc.envelope == envelope
+        assert exc.error_code is None
+        assert isinstance(exc, EeroNotFoundException)
+        assert isinstance(exc, EeroException)
+
+    def test_from_response_message_is_preserved_verbatim(self):
+        """Test that from_response embeds the given message unmodified (past the standard prefix)."""
+        exc = EeroNotFoundException.from_response("No parameters were given to check.")
+        assert str(exc) == "API error 404: No parameters were given to check."
+
+    def test_from_response_defaults_status_code_to_404(self):
+        """Test that from_response defaults status_code to 404."""
+        exc = EeroNotFoundException.from_response("not found")
+        assert exc.status_code == 404
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroNotFoundException is now an EeroAPIException."""
+        exc = EeroNotFoundException("network", "id")
+        assert isinstance(exc, EeroAPIException)
+
+
+class TestEeroAccessDeniedException:
+    """Tests for EeroAccessDeniedException."""
+
+    def test_inherits_from_api_exception(self):
+        """Test inheritance from EeroAPIException (and EeroException transitively)."""
+        exc = EeroAccessDeniedException(403, "Forbidden")
+        assert isinstance(exc, EeroAPIException)
+        assert isinstance(exc, EeroException)
+
+    def test_status_code_and_message(self):
+        """Test the inherited EeroAPIException constructor works unchanged."""
+        exc = EeroAccessDeniedException(403, "Forbidden", error_code="error.access.denied")
+        assert exc.status_code == 403
+        assert exc.error_code == "error.access.denied"
+
+    def test_is_not_an_auth_error(self):
+        """Test that a 403 access-denied exception is not an auth error."""
+        exc = EeroAccessDeniedException(403, "Forbidden")
+        assert exc.is_auth_error() is False
+
+
+class TestEeroClientBlockedException:
+    """Tests for EeroClientBlockedException."""
+
+    def test_inherits_from_api_exception(self):
+        """Test inheritance from EeroAPIException (and EeroException transitively)."""
+        exc = EeroClientBlockedException(400, "Client version blocked")
+        assert isinstance(exc, EeroAPIException)
+        assert isinstance(exc, EeroException)
+
+    def test_status_code_and_message(self):
+        """Test the inherited EeroAPIException constructor works unchanged."""
+        exc = EeroClientBlockedException(
+            400, "Client version blocked", error_code="error.app.version.blocked"
+        )
+        assert exc.status_code == 400
+        assert exc.error_code == "error.app.version.blocked"
+
 
 class TestEeroPremiumRequiredException:
     """Tests for EeroPremiumRequiredException."""
@@ -185,6 +265,37 @@ class TestEeroPremiumRequiredException:
         """Test inheritance from EeroException."""
         exc = EeroPremiumRequiredException()
         assert isinstance(exc, EeroException)
+
+    def test_direct_construction_accepts_envelope_and_error_code(self):
+        """Test that the original constructor also accepts envelope/error_code."""
+        exc = EeroPremiumRequiredException(
+            "Ad blocking", envelope={"meta": {"code": 402}}, error_code="error.partner.unavailable"
+        )
+        assert exc.envelope == {"meta": {"code": 402}}
+        assert exc.error_code == "error.partner.unavailable"
+
+    def test_from_response_uses_generic_feature_name(self):
+        """Test that from_response falls back to a generic feature name."""
+        exc = EeroPremiumRequiredException.from_response(
+            "Requires Eero Plus", status_code=402, error_code="error.premium.user_not_subscribed"
+        )
+        assert exc.feature == "This feature"
+        assert exc.status_code == 402
+        assert str(exc) == "API error 402: Requires Eero Plus"
+        assert exc.error_code == "error.premium.user_not_subscribed"
+        assert isinstance(exc, EeroPremiumRequiredException)
+
+    def test_from_response_defaults_status_code_to_none(self):
+        """Test that from_response is None-safe when no status_code is supplied."""
+        exc = EeroPremiumRequiredException.from_response("Requires Eero Plus")
+        assert exc.status_code is None
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroPremiumRequiredException is now an EeroAPIException."""
+        exc = EeroPremiumRequiredException()
+        assert isinstance(exc, EeroAPIException)
+        assert exc.status_code is None
+        assert exc.is_auth_error() is False
 
 
 class TestEeroFeatureUnavailableException:
@@ -212,6 +323,42 @@ class TestEeroFeatureUnavailableException:
         exc = EeroFeatureUnavailableException("WPA3")
         assert isinstance(exc, EeroException)
 
+    def test_direct_construction_accepts_envelope_and_error_code(self):
+        """Test that the original constructor also accepts envelope/error_code."""
+        exc = EeroFeatureUnavailableException(
+            "Thread", envelope={"meta": {"code": 400}}, error_code="error.eero.not.capable"
+        )
+        assert exc.envelope == {"meta": {"code": 400}}
+        assert exc.error_code == "error.eero.not.capable"
+
+    def test_from_response_derives_feature_from_error_code(self):
+        """Test that from_response uses error_code as the feature label."""
+        exc = EeroFeatureUnavailableException.from_response(
+            "eero is offline", status_code=400, error_code="error.eero.offline"
+        )
+        assert exc.feature == "error.eero.offline"
+        assert exc.reason == "eero is offline"
+        assert exc.status_code == 400
+        assert str(exc) == "API error 400: eero is offline"
+        assert isinstance(exc, EeroFeatureUnavailableException)
+
+    def test_from_response_falls_back_to_generic_feature_without_error_code(self):
+        """Test that from_response falls back to a generic feature label."""
+        exc = EeroFeatureUnavailableException.from_response("Feature unavailable")
+        assert exc.feature == "feature"
+
+    def test_from_response_defaults_status_code_to_none(self):
+        """Test that from_response is None-safe when no status_code is supplied."""
+        exc = EeroFeatureUnavailableException.from_response("Feature unavailable")
+        assert exc.status_code is None
+
+    def test_reparented_under_api_exception(self):
+        """Test that EeroFeatureUnavailableException is now an EeroAPIException."""
+        exc = EeroFeatureUnavailableException("Thread")
+        assert isinstance(exc, EeroAPIException)
+        assert exc.status_code is None
+        assert exc.is_auth_error() is False
+
 
 class TestEeroValidationException:
     """Tests for EeroValidationException."""
@@ -232,6 +379,26 @@ class TestEeroValidationException:
         exc = EeroValidationException("name", "required")
         assert isinstance(exc, EeroException)
 
+    def test_direct_construction_accepts_envelope_and_error_code(self):
+        """Test that the original constructor also accepts envelope/error_code."""
+        exc = EeroValidationException(
+            "email",
+            "invalid format",
+            envelope={"meta": {"code": 400}},
+            error_code="error.form.errors",
+        )
+        assert exc.envelope == {"meta": {"code": 400}}
+        assert exc.error_code == "error.form.errors"
+
+    def test_from_response_uses_generic_field_name(self):
+        """Test that from_response falls back to a generic field name."""
+        exc = EeroValidationException.from_response(
+            "Email is unavailable", error_code="error.form.email.unavailable"
+        )
+        assert exc.field == "request"
+        assert str(exc) == "Email is unavailable"
+        assert isinstance(exc, EeroValidationException)
+
 
 class TestExceptionHierarchy:
     """Tests for overall exception hierarchy."""
@@ -241,6 +408,8 @@ class TestExceptionHierarchy:
         exception_classes = [
             EeroAuthenticationException("test"),
             EeroAPIException(400, "test"),
+            EeroAccessDeniedException(403, "test"),
+            EeroClientBlockedException(400, "test"),
             EeroRateLimitException("test"),
             EeroNetworkException("test"),
             EeroTimeoutException("test"),
@@ -267,6 +436,8 @@ class TestExceptionHierarchy:
 
         assert raise_and_catch(EeroAuthenticationException, "test") is not None
         assert raise_and_catch(EeroAPIException, 400, "test") is not None
+        assert raise_and_catch(EeroAccessDeniedException, 403, "test") is not None
+        assert raise_and_catch(EeroClientBlockedException, 400, "test") is not None
         assert raise_and_catch(EeroRateLimitException, "test") is not None
         assert raise_and_catch(EeroNetworkException, "test") is not None
         assert raise_and_catch(EeroTimeoutException, "test") is not None
@@ -274,3 +445,31 @@ class TestExceptionHierarchy:
         assert raise_and_catch(EeroPremiumRequiredException) is not None
         assert raise_and_catch(EeroFeatureUnavailableException, "feature") is not None
         assert raise_and_catch(EeroValidationException, "field", "msg") is not None
+
+    @pytest.mark.parametrize(
+        "exc,expected",
+        [
+            (EeroException("test"), False),
+            (EeroAuthenticationException("test"), True),
+            (EeroAPIException(401, "test"), True),
+            (EeroAPIException(403, "test"), False),
+            (EeroAPIException(404, "test"), False),
+            (EeroAPIException(500, "test"), False),
+            (EeroAccessDeniedException(403, "test"), False),
+            (EeroClientBlockedException(400, "test"), False),
+            (EeroNotFoundException("network", "id"), False),
+            (EeroRateLimitException("test"), False),
+            (EeroNetworkException("test"), False),
+            (EeroTimeoutException("test"), False),
+            (EeroPremiumRequiredException(), False),
+            (EeroFeatureUnavailableException("feature"), False),
+            (EeroValidationException("field", "msg"), False),
+        ],
+    )
+    def test_is_auth_error_matrix(self, exc, expected):
+        """Only an authentication failure (401 family) reports is_auth_error() True.
+
+        Access-denied (403) and not-found (404) are deliberately not auth
+        errors -- the caller is authenticated in both cases.
+        """
+        assert exc.is_auth_error() is expected

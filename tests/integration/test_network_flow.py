@@ -160,7 +160,9 @@ class TestPreferredNetworkManagement:
 
             await client.get_devices()
 
-            client._api.devices.get_devices.assert_awaited_once_with("network_client_only")
+            client._api.devices.get_devices.assert_awaited_once_with(
+                "network_client_only", thread=None, proxied_node=None
+            )
 
 
 # ========================== Error Propagation Tests ==========================

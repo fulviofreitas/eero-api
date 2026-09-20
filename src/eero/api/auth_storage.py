@@ -1,94 +1,115 @@
 """Credential storage backends for Eero authentication.
 
-This module provides storage backends for persisting authentication tokens:
+This module provides storage backends for persisting the session token:
 - KeyringStorage: Uses OS keyring for secure credential storage
 - FileStorage: Uses JSON file with restricted permissions
 - MemoryStorage: In-memory only, no persistence (for testing/ephemeral use)
+- ChainedStorage: Tries a primary backend, falling back to a secondary one
+
+v2.0 credential schema: the only value ever persisted is the session token
+itself (as ``session_id``). There is no client-observable session expiry and
+no client-held refresh token -- refreshing a session reuses the current
+session token (see ``AuthAPI.refresh_session``). Records written before this
+schema existed are migrated in place the first time they are loaded.
 """
 
 import json
-import logging
 import os
 import stat
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 import keyring
 
-_LOGGER = logging.getLogger(__name__)
+from ..const import CREDENTIAL_SCHEMA_VERSION
+from ..logging import get_secure_logger
+
+_LOGGER = get_secure_logger(__name__)
 
 
 @dataclass
 class AuthCredentials:
-    """Container for authentication credentials.
-
-    Auth-only credential storage:
-    - session_id: The auth token (used as 's' cookie for API requests)
-    - refresh_token: Optional token for refreshing expired sessions
-    - session_expiry: When the session expires
+    """Container for the session token.
 
     Note: User preferences (like preferred_network_id) should be managed
-    by the CLI application, not stored with auth credentials.
+    by the consuming application, not stored with auth credentials.
     """
 
     session_id: Optional[str] = None
-    refresh_token: Optional[str] = None
-    session_expiry: Optional[datetime] = None
 
-    def is_session_expired(self) -> bool:
-        """Check if the session has expired."""
-        if self.session_expiry is None:
-            return True
-        return datetime.now() > self.session_expiry
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to the persisted record shape.
 
-    def has_valid_session(self) -> bool:
-        """Check if we have a valid, non-expired session."""
-        return bool(self.session_id and not self.is_session_expired())
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for serialization."""
+        Returns:
+            A dictionary with the session token and the current
+            ``schema_version`` marker.
+        """
         return {
             "session_id": self.session_id,
-            "refresh_token": self.refresh_token,
-            "session_expiry": (self.session_expiry.isoformat() if self.session_expiry else None),
+            "schema_version": CREDENTIAL_SCHEMA_VERSION,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "AuthCredentials":
-        """Create from dictionary.
+    def from_dict(cls, data: Dict[str, Any]) -> "AuthCredentials":
+        """Create from an already-current (``schema_version`` present) record.
 
-        Handles backward compatibility with old cookie files that had
-        user_token instead of session_id.
+        Args:
+            data: A previously-persisted record carrying ``schema_version``.
+
+        Returns:
+            The corresponding ``AuthCredentials``.
         """
-        expiry = data.get("session_expiry")
-        session_expiry = None
-        if expiry:
-            try:
-                session_expiry = datetime.fromisoformat(expiry)
-            except ValueError:
-                _LOGGER.warning("Invalid session_expiry date format in stored credentials")
-
-        # Backward compatibility: use user_token if session_id not present
-        session_id = data.get("session_id") or data.get("user_token")
-
-        return cls(
-            session_id=session_id,
-            refresh_token=data.get("refresh_token"),
-            session_expiry=session_expiry,
-        )
-
-    def clear_session(self) -> None:
-        """Clear session-related credentials."""
-        self.session_id = None
-        self.session_expiry = None
+        return cls(session_id=data.get("session_id"))
 
     def clear_all(self) -> None:
-        """Clear all credentials."""
+        """Clear the stored session token."""
         self.session_id = None
-        self.refresh_token = None
-        self.session_expiry = None
+
+
+def _log_migration_readback(backend_name: str, matched: bool) -> None:
+    """Log the outcome of a post-migration read-back check.
+
+    Never logs the credential values themselves -- only whether the record
+    read back from the backend after a legacy-record migration matches what
+    was just written.
+
+    Args:
+        backend_name: Human-readable name of the storage backend, used only
+            in the log message (e.g. ``"keyring"``, ``"file"``).
+        matched: Whether the read-back record's session token matched the
+            migrated in-memory credentials.
+    """
+    if matched:
+        _LOGGER.debug("Migration read-back verified for %s storage", backend_name)
+    else:
+        _LOGGER.warning(
+            "Migration read-back did not match for %s storage; "
+            "in-memory credentials are still returned to the caller",
+            backend_name,
+        )
+
+
+def _parse_stored_record(data: Dict[str, Any]) -> Tuple[AuthCredentials, bool]:
+    """Parse a raw stored credential record, migrating legacy shapes.
+
+    A record written before the ``schema_version`` marker existed may carry
+    a legacy ``user_token`` field instead of ``session_id``, alongside
+    now-unsupported fields such as ``refresh_token`` / ``session_expiry``.
+    Those extra fields are dropped -- only the token itself is retained.
+
+    Args:
+        data: The raw JSON-decoded record.
+
+    Returns:
+        A tuple of ``(credentials, migrated)`` where ``migrated`` is True
+        when the record predated the ``schema_version`` marker and required
+        conversion to the current shape.
+    """
+    if "schema_version" in data:
+        return AuthCredentials.from_dict(data), False
+    session_id = data.get("session_id") or data.get("user_token")
+    return AuthCredentials(session_id=session_id), True
 
 
 class CredentialStorage(ABC):
@@ -99,7 +120,7 @@ class CredentialStorage(ABC):
         """Load credentials from storage.
 
         Returns:
-            AuthCredentials instance (may have None values if not found)
+            AuthCredentials instance (``session_id`` is None if not found)
         """
         pass
 
@@ -125,18 +146,31 @@ class KeyringStorage(CredentialStorage):
     ACCOUNT_NAME = "auth-tokens"
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from keyring."""
+        """Load credentials from keyring, migrating a legacy record in place.
+
+        When a legacy record is migrated, the write is read back and
+        compared against the migrated in-memory credentials; the outcome is
+        logged at DEBUG (match) or WARNING (mismatch), never the values
+        themselves (see :func:`_log_migration_readback`). The in-memory
+        credentials are returned to the caller either way -- a failed
+        read-back does not fail the load.
+        """
         try:
             token_data = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
             if token_data:
                 data = json.loads(token_data)
-                credentials = AuthCredentials.from_dict(data)
+                credentials, migrated = _parse_stored_record(data)
 
-                # Clear expired sessions
-                if credentials.is_session_expired() and credentials.session_id:
-                    _LOGGER.debug("Session expired, clearing from keyring")
-                    credentials.clear_session()
+                if migrated:
+                    _LOGGER.debug("Migrated legacy credential record in keyring storage")
                     await self.save(credentials)
+                    readback_raw = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
+                    readback_matched = (
+                        readback_raw is not None
+                        and _parse_stored_record(json.loads(readback_raw))[0].session_id
+                        == credentials.session_id
+                    )
+                    _log_migration_readback("keyring", readback_matched)
 
                 return credentials
         except Exception as e:
@@ -183,7 +217,15 @@ class FileStorage(CredentialStorage):
         return self._file_path
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from file."""
+        """Load credentials from file, migrating a legacy record in place.
+
+        When a legacy record is migrated, the write is read back and
+        compared against the migrated in-memory credentials; the outcome is
+        logged at DEBUG (match) or WARNING (mismatch), never the values
+        themselves (see :func:`_log_migration_readback`). The in-memory
+        credentials are returned to the caller either way -- a failed
+        read-back does not fail the load.
+        """
         try:
             if not os.path.exists(self._file_path):
                 _LOGGER.debug("Cookie file not found: %s", self._file_path)
@@ -191,15 +233,24 @@ class FileStorage(CredentialStorage):
 
             with open(self._file_path, "r") as f:
                 data = json.load(f)
-                credentials = AuthCredentials.from_dict(data)
 
-                # Clear expired sessions
-                if credentials.is_session_expired() and credentials.session_id:
-                    _LOGGER.debug("Session expired, clearing from file")
-                    credentials.clear_session()
-                    await self.save(credentials)
+            credentials, migrated = _parse_stored_record(data)
 
-                return credentials
+            if migrated:
+                _LOGGER.debug("Migrated legacy credential record in file storage")
+                await self.save(credentials)
+                readback_matched = False
+                try:
+                    with open(self._file_path, "r") as f:
+                        readback_data = json.load(f)
+                    readback_matched = (
+                        _parse_stored_record(readback_data)[0].session_id == credentials.session_id
+                    )
+                except (OSError, json.JSONDecodeError):
+                    readback_matched = False
+                _log_migration_readback("file", readback_matched)
+
+            return credentials
 
         except (FileNotFoundError, json.JSONDecodeError) as e:
             _LOGGER.debug("Error loading cookie file: %s", e)
@@ -209,19 +260,65 @@ class FileStorage(CredentialStorage):
             return AuthCredentials()
 
     async def save(self, credentials: AuthCredentials) -> None:
-        """Save credentials to file with restricted permissions."""
+        """Save credentials to file with restricted permissions.
+
+        The record is first written to a fresh temporary file in the same
+        directory as the destination, created with
+        ``O_CREAT | O_EXCL | O_NOFOLLOW`` at mode 0600 (no window where the
+        file is briefly world/group readable, and no symlink can be
+        followed for the temporary name itself). Once the payload is fully
+        written and flushed, ``os.replace()`` atomically swaps it into
+        ``file_path`` -- a process interrupted mid-write (crash, kill -9,
+        power loss) leaves either the untouched previous record or nothing
+        at all; it can never leave a truncated/partial record at the final
+        path, unlike writing in place.
+
+        The final path is refused when it already exists as a symlink (the
+        same protection the previous in-place ``O_NOFOLLOW`` open provided):
+        a symlink planted by another local user to redirect the write
+        elsewhere is not followed, and nothing is written. The trailing
+        ``chmod`` is kept as defense in depth in case the mode passed to
+        ``os.open`` is not honoured verbatim on some platform/filesystem
+        combination.
+        """
         try:
             # Ensure directory exists
-            cookie_dir = os.path.dirname(self._file_path)
-            if cookie_dir:
-                os.makedirs(cookie_dir, exist_ok=True)
+            cookie_dir = os.path.dirname(self._file_path) or "."
+            os.makedirs(cookie_dir, exist_ok=True)
 
-            # Write credentials
-            with open(self._file_path, "w") as f:
-                json.dump(credentials.to_dict(), f)
+            # Refuse to write through a symlink at the final path -- same
+            # semantics as the previous O_NOFOLLOW in-place open.
+            if os.path.islink(self._file_path):
+                raise OSError(f"Refusing to write through symlink: {self._file_path}")
 
-            # Set restrictive permissions (owner read/write only)
-            os.chmod(self._file_path, stat.S_IRUSR | stat.S_IWUSR)
+            payload = json.dumps(credentials.to_dict()).encode("utf-8")
+
+            tmp_name = f".{os.path.basename(self._file_path)}.{os.getpid()}.tmp"
+            tmp_path = os.path.join(cookie_dir, tmp_name)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            fd = os.open(tmp_path, flags, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Defense in depth: re-assert restrictive permissions (owner
+                # read/write only) in case the mode above wasn't fully
+                # honoured.
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+
+                os.replace(tmp_path, self._file_path)
+            except BaseException:
+                # Best-effort cleanup of the temporary file on any failure
+                # (including the atomic replace itself) so a half-written
+                # temp file never accumulates.
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+
             _LOGGER.debug("Saved authentication data to %s", self._file_path)
 
         except Exception as e:
@@ -264,7 +361,10 @@ class MemoryStorage(CredentialStorage):
 class ChainedStorage(CredentialStorage):
     """Storage that tries multiple backends in order.
 
-    Useful for trying keyring first, then falling back to file storage.
+    Useful for trying keyring first, then falling back to file storage. Each
+    underlying backend performs its own legacy-record migration on load (see
+    ``KeyringStorage.load`` / ``FileStorage.load``); this class only decides
+    which backend's result to use and keeps them in sync.
     """
 
     def __init__(self, primary: CredentialStorage, fallback: CredentialStorage) -> None:
@@ -278,7 +378,14 @@ class ChainedStorage(CredentialStorage):
         self._fallback = fallback
 
     async def load(self) -> AuthCredentials:
-        """Load credentials, trying primary first then fallback."""
+        """Load credentials, trying primary first then fallback.
+
+        A record found only in the fallback is promoted into the primary
+        and then removed from the fallback (single-writer invariant): after
+        this call, at most one backend ever holds the live record, so a
+        later credential-clearing write to the primary can never be
+        "resurrected" by a stale copy still sitting in the fallback.
+        """
         # Try primary first
         credentials = await self._primary.load()
         if credentials.session_id:
@@ -287,8 +394,18 @@ class ChainedStorage(CredentialStorage):
         # Fall back to secondary
         credentials = await self._fallback.load()
         if credentials.session_id:
-            # Migrate to primary storage
+            # Migrate to primary storage, then remove the now-duplicate
+            # fallback copy so the primary is the sole owner going forward.
+            # The fallback is cleared only once a read-back proves the
+            # primary holds the record; backends swallow their own write
+            # errors, so without the read-back a failed primary write would
+            # destroy the only surviving copy.
             await self._primary.save(credentials)
+            promoted = await self._primary.load()
+            if promoted.session_id == credentials.session_id:
+                await self._fallback.clear()
+            else:
+                _LOGGER.debug("Primary storage did not retain the promoted record; fallback kept")
 
         return credentials
 

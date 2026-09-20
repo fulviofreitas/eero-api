@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.insights import InsightsAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -93,6 +93,36 @@ class TestInsightsAPIGetInsights:
         assert result == raw
 
     @pytest.mark.asyncio
+    async def test_get_insights_rejects_cadence_outside_the_api_set(
+        self, insights_api, mock_session
+    ):
+        """Only the API's two cadence buckets are accepted; nothing is sent otherwise."""
+        from eero.exceptions import EeroValidationException
+
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_insights(
+                "network_123",
+                start="2026-07-21T00:00:00Z",
+                end="2026-07-22T00:00:00Z",
+                insight_type="adblock",
+                cadence="weekly",
+            )
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_insights_rejects_invalid_cadence(self, insights_api):
+        """Test get_insights now validates cadence like its siblings."""
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_insights(
+                "network_123",
+                start="2026-07-21T00:00:00Z",
+                end="2026-07-22T00:00:00Z",
+                insight_type="adblock",
+                cadence="monthly",
+            )
+
+    @pytest.mark.asyncio
     async def test_get_insights_requires_keyword_args(self, insights_api):
         """Test start/end/insight_type are keyword-only (positional call raises)."""
         with pytest.raises(TypeError):
@@ -114,23 +144,189 @@ class TestInsightsAPIGetInsights:
             )
 
 
-class TestInsightsAPIRunInsights:
-    """Tests for run_insights method."""
+@pytest.fixture
+def insights_api(mock_session):
+    """Create an InsightsAPI with mocked auth."""
+    auth_api = MagicMock()
+    auth_api.session = mock_session
+    auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+    return InsightsAPI(auth_api)
 
-    @pytest.fixture
-    def insights_api(self, mock_session):
-        """Create an InsightsAPI with mocked auth."""
-        auth_api = MagicMock()
-        auth_api.session = mock_session
-        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
-        return InsightsAPI(auth_api)
+
+_WINDOW = {"start": "2026-07-21T00:00:00Z", "end": "2026-07-22T00:00:00Z"}
+
+
+class TestInsightsAPIDevicesInsights:
+    """Tests for get_devices_insights (collection) and get_device_insights (single)."""
 
     @pytest.mark.asyncio
-    async def test_run_insights_returns_raw_response(self, insights_api, mock_session):
-        """Test run_insights returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
+    async def test_get_devices_insights_builds_url_and_params(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
 
-        result = await insights_api.run_insights("network_123")
+        await insights_api.get_devices_insights(
+            "network_123", cadence="daily", insight_type="blocked", **_WINDOW
+        )
 
-        assert "meta" in result
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "GET"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/insights/devices"
+        assert mock_session.request.call_args.kwargs["params"] == {
+            "start": _WINDOW["start"],
+            "end": _WINDOW["end"],
+            "cadence": "daily",
+            "insight_type": "blocked",
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_devices_insights_invalid_cadence_raises(self, insights_api):
+        with pytest.raises(EeroValidationException):
+            await insights_api.get_devices_insights(
+                "network_123", cadence="weekly", insight_type="blocked", **_WINDOW
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_device_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_device_insights(
+            "network_123", "aabbccddeeff", cadence="hourly", insight_type="inspected", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123/insights/devices/aabbccddeeff"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_device_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template.
+
+        This call used to build `resource_url(mac, f"networks/{network}/...")`
+        -- splicing `network` into the `template` argument, which `resource_url`
+        then formats a second time to substitute `mac`. A network id
+        containing a stray `{...}` group broke that second `.format()` call
+        with a bare `KeyError`.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_device_insights(
+                "network{evil}",
+                "aabbccddeeff",
+                cadence="hourly",
+                insight_type="inspected",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
+
+class TestInsightsAPIProfilesInsights:
+    """Tests for get_profiles_insights (collection), get_profile_insights (single),
+    and get_profile_devices_insights."""
+
+    @pytest.mark.asyncio
+    async def test_get_profiles_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profiles_insights(
+            "network_123", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/insights/profiles"
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profile_insights(
+            "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123/insights/profiles/profile_001"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_insights_builds_url(self, insights_api, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        await insights_api.get_profile_devices_insights(
+            "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
+        )
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == (
+            "https://api-user.e2ro.com/2.2/networks/network_123"
+            "/insights/profiles/profile_001/devices"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_profile_insights(
+                "network{evil}",
+                "profile_001",
+                cadence="daily",
+                insight_type="adblock",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
+    @pytest.mark.asyncio
+    async def test_get_profile_devices_insights_network_id_with_brace_does_not_break_template(
+        self, insights_api, mock_session
+    ):
+        """A brace-containing network id must never leak into a format template."""
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"series": []})
+        )
+
+        try:
+            await insights_api.get_profile_devices_insights(
+                "network{evil}",
+                "profile_001",
+                cadence="daily",
+                insight_type="adblock",
+                **_WINDOW,
+            )
+        except EeroValidationException:
+            pass  # acceptable: cleanly rejected
+        except (KeyError, ValueError) as exc:
+            pytest.fail(f"brace in network id leaked into a template: {exc!r}")
+
+    @pytest.mark.asyncio
+    async def test_get_profile_insights_not_authenticated(self, insights_api):
+        insights_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+        with pytest.raises(EeroAuthenticationException):
+            await insights_api.get_profile_insights(
+                "network_123", "profile_001", cadence="daily", insight_type="adblock", **_WINDOW
+            )

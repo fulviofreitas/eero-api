@@ -46,9 +46,9 @@ async with EeroClient() as client:
 
 ---
 
-### Session Expired
+### Session Rejected by the Server
 
-Eero sessions expire after roughly 30 days. If a call raises `EeroAuthenticationException`, clear the stored token and re-authenticate:
+There is no client-side session expiry: `is_authenticated` only means a token is stored, and the server decides whether it is still valid. When the server asks for a refresh (`error.session.refresh`) the SDK refreshes and replays the request for you. When it reports the session as expired, invalid, or revoked, the call raises `EeroAuthenticationException` and `err.error_code` tells you which. Clear the stored token and re-authenticate:
 
 ```python
 from eero import EeroClient
@@ -57,12 +57,15 @@ from eero.exceptions import EeroAuthenticationException
 async with EeroClient() as client:
     try:
         await client.get_networks()
-    except EeroAuthenticationException:
+    except EeroAuthenticationException as err:
+        print(f"Session rejected: {err.error_code}")
         await client.clear_session_token()
-        await client.login("your-email@example.com")
+        await client.login("you@example.com")
         code = input("Enter verification code: ")
         await client.verify(code)
 ```
+
+> **Note**: A token that the server rejects during a refresh is already cleared from storage by the SDK (except for `error.verification.required`, which means the OTP flow was never completed — call `verify()`). The `clear_session_token()` above is harmless in that case.
 
 > 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`logout()` directly — use these public methods instead of reaching into `client._api` for auth. `client._api.<domain>` is private (not covered by semver) but it IS the documented escape hatch for domain methods that have no `EeroClient` wrapper — see [API Reference](API-Reference).
 
@@ -136,6 +139,14 @@ pip install -e .
 
 Exception names all end in `Exception`, not `Error` — there is no `EeroAuthenticationError`, only `EeroAuthenticationException`. These classes have never been named `*Error` in any release, so this is a typo rather than a rename to chase; earlier versions of this wiki documented the wrong names. See [Error Handling](Error-Handling) for the full hierarchy.
 
+### My `except EeroAPIException` block stopped catching 404s / 403s / 400s
+
+It still catches 404s and `error.access.denied` 403s — since v8.0.0 those raise `EeroNotFoundException` and `EeroAccessDeniedException`, both **subclasses** of `EeroAPIException`. What it no longer catches is an API `400` carrying a form-error string (`error.form.errors`, `error.form.email.malformed`, …): that now raises `EeroValidationException`, which derives from `EeroException` only. Add an `except EeroValidationException` clause (or catch `EeroException`). See [Error Handling](Error-Handling#the-error-catalogue-eeroerrors).
+
+### My code matched on `str(exc)` and no longer works
+
+Exception messages no longer contain the response body — only the status plus the recognised catalogue string, or the fixed label `unrecognised error string`. Match on `exc.error_code` (the exact `meta.error` string) or on the exception class instead, and read `exc.envelope` for the API's full error metadata. See [Migration](Migration#error-classes-and-attributes).
+
 ### `ModuleNotFoundError: No module named 'eero.models'`
 
 `eero.models` was removed in v2.0.0. Every API method now returns a raw `Dict[str, Any]` envelope instead of Pydantic models. See [Migration](Migration) and [Raw Response Format](Raw-Response-Format).
@@ -146,7 +157,15 @@ You're using attribute access (`network.name`) on a v2.0+ raw response. Use dict
 
 ### `TypeError: __init__() got an unexpected keyword argument '...'`
 
-`EeroClient.__init__` only accepts `session`, `cookie_file`, `use_keyring`, and `cache_timeout`. There is no `timeout`, `config_path`, or `session_token` constructor argument, and no `connect()`/`close()` methods — use the async context manager (`async with EeroClient() as client:`) for lifecycle management.
+`EeroClient.__init__` only accepts `session`, `cookie_file`, `use_keyring`, `cache_timeout`, and the keyword-only `send_legacy_cookie`, `accept_language`, and `get_retries`. There is no `timeout`, `config_path`, or `session_token` constructor argument, and no `connect()`/`close()` methods — use the async context manager (`async with EeroClient() as client:`) for lifecycle management. See [Configuration](Configuration#-constructor-reference).
+
+### `TypeError` from `get_data_usage(...)` after upgrading
+
+The v8.0.0 signature is `get_data_usage(network_id, *, start, end, cadence, timezone=None)` — the old `payload` dict and free-form `resource` argument are gone, and the API requires `start`, `end`, and `cadence` (`"daily"` or `"hourly"`) as query parameters. See [Migration](Migration#v7x--v800).
+
+### `get_ouicheck` raises `EeroNotFoundException`
+
+The API responds `404` (raised as `EeroNotFoundException` since v8.0.0) to `GET /networks/{id}/ouicheck` unless both `serial` and `version` query parameters are present. Since v8.0.0 they are required keyword-only arguments — `get_ouicheck(network_id, *, serial=..., version=...)` — taken from the eero envelope returned by `get_eeros()`.
 
 ---
 
@@ -176,11 +195,11 @@ The Eero Cloud API allows roughly 100 requests/minute. If you're polling frequen
 
 ### Device or Network Writes Appear to Succeed but Have No Effect
 
-Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for three device writes — `set_device_nickname`, `pause_device`, and `set_device_priority` — where `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). `block_device` is unaffected — it writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
+Some write endpoints return `200 OK` but don't persist the change server-side. This is a known upstream quirk of the Eero Cloud API's `/2.2` endpoint for two device writes — `set_device_nickname` and `pause_device` — where `/2.3` is required and is what this SDK already uses for those calls (see `src/eero/const.py`, issue #102). `block_device` is unaffected — it writes via `/2.2` `POST`/`DELETE /networks/{id}/blacklist` (issue #109). If you're seeing this on a custom request path, double-check you're not bypassing the SDK's endpoint selection.
 
-### `set_device_priority` Does Nothing
+### `set_device_priority` is gone
 
-`set_device_priority` (and the underlying device-priority endpoint) is a confirmed no-op upstream — it returns `200 OK` and changes nothing (issue #111). Use [SQM](Deprecations) bandwidth controls instead. See [Deprecations](Deprecations).
+`set_device_priority` was removed in v8.0.0 — the API never exposed device-level priority; the method returned `200 OK` and changed nothing (issue #111). Use [SQM](Deprecations) bandwidth controls instead. See [Deprecations](Deprecations).
 
 ---
 
@@ -190,7 +209,7 @@ Some write endpoints return `200 OK` but don't persist the change server-side. T
 
 Expected. **A DNS change reboots every eero on the network.** Wi-Fi and internet drop for all clients until the mesh comes back.
 
-Observed on 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting within a 17-second window. The eero app does the same thing when you apply a DNS change.
+Verified on 2026-09-12: two DNS writes were followed ~5 minutes later by all four nodes rebooting within a 17-second window. The eero app does the same thing when you apply a DNS change.
 
 Two practical consequences:
 
@@ -219,9 +238,9 @@ data = (await client.get_dns_settings())["data"]
 print(data["dns"]["mode"], data["dns"]["custom"]["ips"])
 ```
 
-### I set IPv6 DNS servers with `set_ipv6_dns` and nothing happened
+### `set_ipv6_dns` is gone
 
-`set_ipv6_dns` does not set DNS servers. It toggles `ipv6_upstream`, the network-level IPv6 connectivity setting, and always has — the name is misleading (issue #125). Use `set_custom_dns_ipv6()`.
+`set_ipv6_dns` was removed in v8.0.0. It never set DNS servers — it toggled `ipv6_upstream`, the network-level IPv6 connectivity setting, and the name was misleading (issue #125). Use `set_ipv6()` for the connectivity toggle, or `set_custom_dns_ipv6()` for IPv6 DNS servers.
 
 IPv6 DNS works independently of `ipv6_upstream`: the IPv6 servers can be configured and active while `ipv6_upstream` is `false`.
 
@@ -265,7 +284,7 @@ _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
 # Output: Response: {'user_token': 'secr...[REDACTED:9chars]', 'status': 'ok'}
 ```
 
-> ⚠️ **Warning:** This SDK's own logging goes through `SecureLoggerAdapter`, which automatically redacts sensitive fields (tokens, cookies, passwords — see `src/eero/logging.py`). But calling `logging.basicConfig(level=logging.DEBUG)` also turns on DEBUG logging for third-party libraries like `aiohttp`, which are **not** redacted and can print raw session tokens and cookies to your logs. Scope DEBUG level to your own loggers in production rather than the root logger. See [Logging and Security](Logging-and-Security) for details.
+> ⚠️ **Warning:** This SDK's own logging goes through `SecureLoggerAdapter`, which automatically redacts sensitive fields (tokens, cookies, passwords — see `src/eero/logging.py`). But calling `logging.basicConfig(level=logging.DEBUG)` also turns on DEBUG logging for third-party libraries like `aiohttp`, which are **not** redacted and can print the raw `X-User-Token` and `Cookie` request headers — your live session token — to your logs. Scope DEBUG level to your own loggers in production rather than the root logger. See [Logging and Security](Logging-and-Security) for details.
 
 ---
 

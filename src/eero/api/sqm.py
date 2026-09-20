@@ -2,24 +2,38 @@
 
 IMPORTANT: This module returns RAW responses from the Eero Cloud API.
 All data extraction, field mapping, and transformation must be done by downstream clients.
+
+SQM is a single boolean toggle on the network's ``settings`` resource,
+written as a query parameter with no body -- there is no API counterpart for
+per-direction bandwidth limits or an explicit "auto" mode.
 """
 
-import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
+from ..logging import get_secure_logger
+from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
+from .links import Envelope, resource_url, self_url, sub_resource_url
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_secure_logger(__name__)
+
+
+def _network_own_url(network_id: str, parent: Optional[Envelope]) -> str:
+    """Resolve a network's own URL, preferring its parent envelope's ``url``."""
+    if parent is not None:
+        own = self_url(parent)
+        if own is not None:
+            return own
+    return resource_url(network_id, "networks/{id}")
 
 
 class SqmAPI(AuthenticatedAPI):
     """SQM/QoS API for Eero.
 
-    Manages Smart Queue Management (SQM) settings for traffic
-    optimization and Quality of Service (QoS) configuration.
+    Manages the Smart Queue Management (SQM) on/off toggle.
 
     All methods return raw, unmodified JSON responses from the Eero Cloud API.
     Response format: {"meta": {...}, "data": {...}}
@@ -33,14 +47,18 @@ class SqmAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
-    async def get_sqm_settings(self, network_id: str) -> Dict[str, Any]:
+    async def get_sqm_settings(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Get SQM/QoS settings for a network - returns raw Eero API response.
 
-        SQM settings are included in the network data. Look for fields like:
-        sqm, bandwidth_control, qos, etc.
+        SQM settings are included in the network data, under the ``sqm``
+        field.
 
         Args:
-            network_id: ID of the network
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            parent: The network's own cached envelope, if the caller has
+                one. Read only; never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -54,14 +72,33 @@ class SqmAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         _LOGGER.debug("Getting SQM settings for network %s", network_id)
-        return await self.get(f"networks/{network_id}", auth_token=auth_token)
+        return await self.get(
+            _network_own_url(network_id, as_envelope(parent)), auth_token=auth_token
+        )
 
-    async def set_sqm_enabled(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+    async def set_sqm(
+        self, network_id: str, enabled: bool, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Enable or disable SQM (Smart Queue Management) - returns raw Eero API response.
 
+        Issues a PUT with no request body to the network's ``settings``
+        link, carrying the new value as the ``sqm`` query parameter
+        (``true``/``false``).
+
+        .. warning::
+            This is a settings-class write: it has not been confirmed
+            against a live network, and -- like other writes to this
+            endpoint -- may trigger a mesh reboot. Follow the
+            read-compare-skip discipline: read `get_sqm_settings` first, and
+            only issue this write when the stored value differs from the
+            desired one. Never retry on failure.
+
         Args:
-            network_id: ID of the network
-            enabled: True to enable SQM, False to disable
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            enabled: True to enable SQM, False to disable.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``settings`` link is used
+                instead of the default template. Read only; never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -74,131 +111,12 @@ class SqmAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug(
-            "%s SQM for network %s",
-            "Enabling" if enabled else "Disabling",
-            network_id,
+        url = sub_resource_url(
+            network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
-
+        warn_uncharacterised_write(_LOGGER, "set SQM for network")
         return await self.put(
-            f"networks/{network_id}/settings",
+            url,
             auth_token=auth_token,
-            json={"sqm": enabled},
-        )
-
-    async def set_sqm_bandwidth(
-        self,
-        network_id: str,
-        upload_mbps: Optional[int] = None,
-        download_mbps: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Set SQM bandwidth limits - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network
-            upload_mbps: Upload bandwidth limit in Mbps
-            download_mbps: Download bandwidth limit in Mbps
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        sqm_payload: Dict[str, Any] = {"enabled": True}
-
-        if upload_mbps is not None:
-            sqm_payload["upload_bandwidth"] = upload_mbps
-
-        if download_mbps is not None:
-            sqm_payload["download_bandwidth"] = download_mbps
-
-        _LOGGER.debug(
-            "Setting SQM bandwidth for network %s: up=%s, down=%s",
-            network_id,
-            upload_mbps,
-            download_mbps,
-        )
-
-        # TODO: Verify whether bandwidth payload should be flattened (e.g. {"sqm": true,
-        # "upload_bandwidth": N}) rather than nested ({"sqm": {...}}) — pending live API
-        # verification against the /settings endpoint.
-        return await self.put(
-            f"networks/{network_id}/settings",
-            auth_token=auth_token,
-            json={"sqm": sqm_payload},
-        )
-
-    async def configure_sqm(
-        self,
-        network_id: str,
-        enabled: bool,
-        upload_mbps: Optional[int] = None,
-        download_mbps: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Configure SQM settings in one call - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network
-            enabled: True to enable SQM, False to disable
-            upload_mbps: Upload bandwidth limit in Mbps
-            download_mbps: Download bandwidth limit in Mbps
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-
-        Raises:
-            EeroAuthenticationException: If not authenticated
-            EeroAPIException: If the API returns an error
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        sqm_payload: Dict[str, Any] = {"enabled": enabled}
-
-        if enabled:
-            if upload_mbps is not None:
-                sqm_payload["upload_bandwidth"] = upload_mbps
-            if download_mbps is not None:
-                sqm_payload["download_bandwidth"] = download_mbps
-
-        _LOGGER.debug("Configuring SQM for network %s: %s", network_id, sqm_payload)
-
-        # TODO: Verify whether combined enable+bandwidth payload should be flattened rather
-        # than nested ({"sqm": {...}}) — pending live API verification against the /settings
-        # endpoint.
-        return await self.put(
-            f"networks/{network_id}/settings",
-            auth_token=auth_token,
-            json={"sqm": sqm_payload},
-        )
-
-    async def set_sqm_auto(self, network_id: str) -> Dict[str, Any]:
-        """Set SQM to automatic mode (auto-detect bandwidth) - returns raw Eero API response.
-
-        Args:
-            network_id: ID of the network
-
-        Returns:
-            Raw API response: {"meta": {...}, "data": {...}}
-        """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        _LOGGER.debug("Setting SQM to auto mode for network %s", network_id)
-
-        # TODO: Verify whether auto-mode payload should be flattened (e.g. {"sqm": true,
-        # "mode": "auto"}) rather than nested ({"sqm": {"enabled": true, "mode": "auto"}}) —
-        # pending live API verification against the /settings endpoint.
-        return await self.put(
-            f"networks/{network_id}/settings",
-            auth_token=auth_token,
-            json={"sqm": {"enabled": True, "mode": "auto"}},
+            params={"sqm": "true" if enabled else "false"},
         )
