@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.0](https://github.com/fulviofreitas/eero-api/compare/v7.0.0...v8.0.0) (2026-09-20)
+
+### ⚠ BREAKING CHANGES
+
+* session transport, auth encodings and the credential record change; dead surface is
+removed; several signatures, write encodings and exception classes change. See wiki/Migration.md.
+
+### ✨ Features
+
+* converge the SDK on what the eero cloud API actually accepts (8.0.0) ([05a2b07](https://github.com/fulviofreitas/eero-api/commit/05a2b07547ab9036a0cdb9c9a98fd916e4cd4124))
+
 ## [7.0.0](https://github.com/fulviofreitas/eero-api/compare/v6.2.0...v7.0.0) (2026-09-12)
 
 ### ⚠ BREAKING CHANGES
