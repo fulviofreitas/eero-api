@@ -7,11 +7,14 @@ exactly one implementation each rather than one copy per module.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Optional, Sequence
+from urllib.parse import urlsplit
 
 from ..const import API_VERSION_DEFAULT
 from ..exceptions import EeroValidationException
 from ._writes import as_envelope
+from .base import id_from_url
 from .links import child_url, resolve_link, resource_url, self_url
 
 #: Valid values for a `cadence` query/body parameter, shared by every family
@@ -156,12 +159,61 @@ def resolve_nested_url(
             return resolved
 
     if isinstance(child, str) and child.startswith(("http://", "https://", "/")):
-        return resource_url(child, "{id}" + suffix, version=version)
+        resolved = resource_url(child, "{id}" + suffix, version=version)
+        return _require_nested_family(resolved, network, prefix, suffix)
     if not isinstance(child, str) or not child:
         raise EeroValidationException("child", "must be a non-empty string")
 
     network_url = resolve_network_url(network, version=version)
     return child_url(f"{network_url}/{prefix}", child) + suffix
+
+
+def _require_nested_family(url: str, network: str, prefix: str, suffix: str) -> str:
+    """Check that a caller-supplied nested path names the expected resource.
+
+    A path or absolute URL passed as the ``child`` of
+    :func:`resolve_nested_url` is accepted verbatim by
+    :func:`eero.api.links.resource_url`, which only checks the host and
+    scheme. That is the right rule for a link the API published, but a
+    caller-supplied path could just as well name any other resource on the
+    host (``"/2.2/account"``), carry a query or fragment, or belong to a
+    different network. This check pins the path to the family the calling
+    method addresses: ``/<version>/networks/<network>/<prefix>/<child><suffix>``
+    with single-segment ids and nothing after the suffix.
+
+    Args:
+        url: The absolute URL ``resource_url`` produced for the child.
+        network: The network the caller addressed (bare id, path or URL).
+        prefix: The literal segment(s) between the network and the child.
+        suffix: The literal suffix after the child id (may be empty).
+
+    Returns:
+        ``url`` unchanged, once validated.
+
+    Raises:
+        EeroValidationException: If the path names a different resource
+            family, a different network, carries a query or fragment, or
+            has extra path components.
+    """
+    parts = urlsplit(url)
+    if parts.query or parts.fragment:
+        raise EeroValidationException("child", "must not carry a query or fragment")
+    pattern = re.compile(
+        r"^/\d+\.\d+/networks/(?P<network>[A-Za-z0-9._:-]+)/"
+        + re.escape(prefix)
+        + r"/(?P<child>[A-Za-z0-9._:-]+)"
+        + re.escape(suffix)
+        + r"$"
+    )
+    match = pattern.match(parts.path)
+    if match is None:
+        raise EeroValidationException(
+            "child", f"must be a path under networks/{{id}}/{prefix} on the API host"
+        )
+    expected_network = id_from_url(network) if isinstance(network, str) and network else None
+    if expected_network and match.group("network") != expected_network:
+        raise EeroValidationException("child", "must belong to the addressed network")
+    return url
 
 
 __all__ = [

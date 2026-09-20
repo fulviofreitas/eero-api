@@ -83,3 +83,53 @@ class TestResolveNestedUrlChildValidation:
         assert (
             url == "https://api-user.e2ro.com/2.3/networks/network_123/profiles/profile_1/schedules"
         )
+
+
+class TestResolveNestedUrlPathChildFamily:
+    """A path or URL child must name the addressed network's nested resource."""
+
+    @pytest.mark.parametrize(
+        "child",
+        [
+            "/2.2/account",
+            "/2.2/networks/network_123/forwards/f_1",
+            "/2.2/networks/other_net/profiles/profile_1",
+            "/2.2/networks/network_123/profiles/profile_1?x=1",
+            "/2.2/networks/network_123/profiles/profile_1#frag",
+            "/2.2/networks/network_123/profiles/profile_1/extra",
+            "https://api-user.e2ro.com/2.2/networks/network_123/profiles",
+        ],
+        ids=[
+            "other-resource",
+            "other-family",
+            "other-network",
+            "query",
+            "fragment",
+            "extra",
+            "no-child",
+        ],
+    )
+    def test_path_outside_the_family_is_rejected(self, child):
+        with pytest.raises(EeroValidationException):
+            resolve_nested_url("network_123", child, prefix="profiles", suffix="/schedules")
+
+    def test_path_child_in_the_family_is_accepted(self):
+        url = resolve_nested_url(
+            "network_123",
+            "/2.3/networks/network_123/profiles/profile_1",
+            prefix="profiles",
+            suffix="/schedules",
+        )
+        assert (
+            url == "https://api-user.e2ro.com/2.3/networks/network_123/profiles/profile_1/schedules"
+        )
+
+    def test_path_network_and_path_child_must_agree(self):
+        with pytest.raises(EeroValidationException):
+            resolve_nested_url(
+                "/2.2/networks/network_123", "/2.2/networks/other_net/profiles/p", prefix="profiles"
+            )
+        url = resolve_nested_url(
+            "/2.2/networks/network_123", "/2.2/networks/network_123/profiles/p", prefix="profiles"
+        )
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/profiles/p"

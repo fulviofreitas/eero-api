@@ -1654,18 +1654,20 @@ class TestNewWriteWrapperCacheInvalidation:
         """
         self._seed_devices_cache(client)
         self._seed_profiles_cache(client)
-        client._cache["profiles"]["network_123_profile_1"] = {
-            "data": {},
-            "timestamp": time.monotonic(),
-        }
+        for key in ("network_123_profile_1", "network_123_profile_2", "other_net_profile_9"):
+            client._cache["profiles"][key] = {"data": {}, "timestamp": time.monotonic()}
 
         await client.update_device_via_link(
             "dev_1",
             profile="/2.2/networks/network_123/profiles/profile_1",
         )
 
+        # The destination profile, the (unknown) previous profile and the
+        # list are all stale; another network's profiles are untouched.
         assert "network_123_profile_1" not in client._cache["profiles"]
+        assert "network_123_profile_2" not in client._cache["profiles"]
         assert "network_123_profiles" not in client._cache["profiles"]
+        assert "other_net_profile_9" in client._cache["profiles"]
 
     @pytest.mark.asyncio
     async def test_update_device_via_link_without_profile_leaves_profile_cache(self, client):

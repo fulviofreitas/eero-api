@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Mapping, Optional
 from aiohttp import ClientSession
 
 from .api import EeroAPI
-from .api.base import id_from_url
 from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
 
@@ -857,10 +856,11 @@ class EeroClient:
         )
         self._invalidate_device_cache(network_id, device_id)
         if profile is not None:
-            # Mirror set_profile_devices: a device's profile assignment
-            # changed, so both the single cached profile and the cached
-            # profiles list may now be stale.
-            self._invalidate_profile_cache(network_id, id_from_url(profile))
+            # A device's profile assignment changed. The destination profile
+            # and the profile the device left both report a different
+            # membership now, and the previous profile is not known here, so
+            # every cached profile of this network is dropped.
+            self._invalidate_all_profile_caches(network_id)
         return response
 
     async def set_device_type(
@@ -1022,6 +1022,18 @@ class EeroClient:
         cache_key = f"{network_id}_profiles"
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
+
+    def _invalidate_all_profile_caches(self, network_id: str) -> None:
+        """Invalidate every cached profile of a network, and its profiles list.
+
+        Used when a membership change touches a profile the caller did not
+        name (a device moving between profiles leaves the previous profile
+        unknown), so no single-profile entry of that network can be trusted.
+        """
+        prefix = f"{network_id}_"
+        profiles = self._cache.get("profiles", {})
+        for cache_key in [key for key in profiles if key.startswith(prefix)]:
+            del profiles[cache_key]
 
     async def create_profile(
         self,
