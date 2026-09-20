@@ -140,7 +140,8 @@ class TestSubnetsAPIDeleteSubnet:
         call_args = mock_session.request.call_args
         assert call_args.args[0] == "DELETE"
         assert call_args.args[1].endswith("/2.2/networks/network_123/subnets_config/guest")
-        assert any("delete subnet guest for network" in message for message in caplog.messages)
+        assert any("delete subnet for network" in message for message in caplog.messages)
+        assert not any("guest" in message for message in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_delete_subnet_not_authenticated(self, subnets_api):

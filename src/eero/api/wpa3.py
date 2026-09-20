@@ -155,5 +155,5 @@ class Wpa3API(AuthenticatedAPI):
             link="wpa3_per_band",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"set per-band WPA3 mode for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set per-band WPA3 mode for network")
         return await self.put(url, auth_token=auth_token, json=payload)

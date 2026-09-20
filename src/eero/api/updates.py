@@ -98,9 +98,7 @@ class UpdatesAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/updates", link="updates", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(
-            _LOGGER, f"apply update for network {network_id} — reboots every node"
-        )
+        warn_uncharacterised_write(_LOGGER, "apply update for network — reboots every node")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )

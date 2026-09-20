@@ -88,7 +88,8 @@ class TestReservationsAPICreateReservation:
         with caplog.at_level(logging.WARNING, logger="eero.api.reservations"):
             await reservations_api.create_reservation("network_123", {"ip": "192.168.1.100"})
 
-        assert any("create reservation for network network_123" in m for m in caplog.messages)
+        assert any("create reservation for network" in m for m in caplog.messages)
+        assert not any("network_123" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_create_reservation_not_authenticated(self, reservations_api):
@@ -132,7 +133,8 @@ class TestReservationsAPIDeleteReservation:
         with caplog.at_level(logging.WARNING, logger="eero.api.reservations"):
             await reservations_api.delete_reservation("network_123", "reservation_id")
 
-        assert any("delete reservation for network network_123" in m for m in caplog.messages)
+        assert any("delete reservation for network" in m for m in caplog.messages)
+        assert not any("network_123" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

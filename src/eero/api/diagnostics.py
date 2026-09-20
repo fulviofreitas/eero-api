@@ -120,5 +120,5 @@ class DiagnosticsAPI(AuthenticatedAPI):
         if symptom is not None:
             payload["symptom"] = symptom
 
-        warn_uncharacterised_write(_LOGGER, f"run diagnostics for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "run diagnostics for network")
         return await self.post(url, auth_token=auth_token, json=payload)

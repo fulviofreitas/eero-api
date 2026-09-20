@@ -99,7 +99,7 @@ class BackupAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/backupinternet")
-        warn_uncharacterised_write(_LOGGER, f"set backup internet for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set backup internet for network")
         return await self.put(url, auth_token=auth_token, json={"backup_internet_enabled": enabled})
 
     async def get_cellular_backup_usage(

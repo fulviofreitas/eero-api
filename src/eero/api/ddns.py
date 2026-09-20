@@ -76,7 +76,7 @@ class DdnsAPI(AuthenticatedAPI):
             link="ddns_enable",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"enable DDNS for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "enable DDNS for network")
         return await self.put(url, auth_token=auth_token)
 
     async def disable(
@@ -118,5 +118,5 @@ class DdnsAPI(AuthenticatedAPI):
             link="ddns_disable",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"disable DDNS for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "disable DDNS for network")
         return await self.put(url, auth_token=auth_token)

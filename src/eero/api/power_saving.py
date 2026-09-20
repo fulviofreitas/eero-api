@@ -98,7 +98,7 @@ class PowerSavingAPI(AuthenticatedAPI):
             link="power_saving",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"set power saving for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set power saving for network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def get_schedules(
@@ -177,9 +177,7 @@ class PowerSavingAPI(AuthenticatedAPI):
             "end_time": end_time,
             "enabled": enabled,
         }
-        warn_uncharacterised_write(
-            _LOGGER, f"create power saving schedule for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "create power saving schedule for network")
         return await self.post(url, auth_token=auth_token, json=payload)
 
     async def update_schedule(
@@ -253,7 +251,7 @@ class PowerSavingAPI(AuthenticatedAPI):
         url = resource_url(network_id, _SCHEDULE_TEMPLATE.format(schedule_id=schedule_id))
         warn_uncharacterised_write(
             _LOGGER,
-            f"update power saving schedule {schedule_id} for network {network_id}",
+            "update power saving schedule for network",
         )
         return await self.put(url, auth_token=auth_token, json=payload)
 
@@ -285,6 +283,6 @@ class PowerSavingAPI(AuthenticatedAPI):
         url = resource_url(network_id, _SCHEDULE_TEMPLATE.format(schedule_id=schedule_id))
         warn_uncharacterised_write(
             _LOGGER,
-            f"delete power saving schedule {schedule_id} for network {network_id}",
+            "delete power saving schedule for network",
         )
         return await self.delete(url, auth_token=auth_token)

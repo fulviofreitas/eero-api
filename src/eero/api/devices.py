@@ -8,10 +8,14 @@ Device mutation writes are split across two paths:
 * The nickname/pause write (``PUT networks/{id}/devices/{mac}`` on API
   version 2.3) is live-verified (issue #102): the identical write on the
   default 2.2 endpoint is a silent no-op.
-* `update_device_via_link`, `set_device_type`, `get_device_labels`, and
-  `set_device_labels` follow the API's declared request shape recovered
-  from static analysis, but have not themselves been confirmed live. Each
-  logs a warning via `eero.api._writes.warn_uncharacterised_write`.
+* `set_device_type` is live-verified (2026-09-20): the new value persists
+  and reads back.
+* `set_device_labels` is a verified NO-OP as of 2026-09-20: the PUT
+  returns HTTP 200 with the labels echoed in the response, but the value
+  never shows up on a read-back.
+* `update_device_via_link` follows the API's declared request shape
+  recovered from static analysis, but has not itself been confirmed live.
+  It logs a warning via `eero.api._writes.warn_uncharacterised_write`.
 
 Blocking/unblocking a device is delegated to `eero.api.blacklist.
 BlacklistAPI`, which owns the ``networks/{id}/blacklist`` request building
@@ -312,10 +316,10 @@ class DevicesAPI(AuthenticatedAPI):
     async def set_device_type(self, network: str, mac: str, device_type: str) -> Dict[str, Any]:
         """Set a device's type - returns raw Eero API response.
 
-        .. warning::
-            This write has not been verified against a live network. Follow
-            the read-compare-skip discipline: read the device back
-            afterwards and do not retry on failure.
+        Live-verified on 2026-09-20: this write's value persisted and read
+        back correctly, and the response echoes the new type. Read the
+        device back first and skip the write when the stored type already
+        matches; never retry it in a loop.
 
         Args:
             network: ID of the network the device belongs to.
@@ -334,7 +338,6 @@ class DevicesAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = self._device_url(network, mac)
-        warn_uncharacterised_write(_LOGGER, "set_device_type")
         _LOGGER.debug("Setting device type to '%s'", device_type)
         return await self.put(url, auth_token=auth_token, json={"device_type": device_type})
 
@@ -376,9 +379,12 @@ class DevicesAPI(AuthenticatedAPI):
         form body.
 
         .. warning::
-            This write has not been verified against a live network. Follow
-            the read-compare-skip discipline: call `get_device_labels`
-            afterwards and do not retry on failure.
+            Verified NO-OP as of 2026-09-20: the PUT with these query
+            parameters returns HTTP 200 with all four label keys echoed
+            back in the response envelope, but the read-back
+            (`get_device_labels`) never shows the new value -- the 200
+            proves nothing about whether the write applied. Do not rely on
+            this method to change a device's labels.
 
         Args:
             network: ID of the network the device belongs to.

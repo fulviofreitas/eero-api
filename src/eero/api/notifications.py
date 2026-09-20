@@ -107,7 +107,7 @@ class NotificationsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = f"{resolve_network_url(network_id, parent)}/notifications"
-        warn_uncharacterised_write(_LOGGER, f"set notification settings for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set notification settings for network")
         return await self.put(url, auth_token=auth_token, json=dict(settings))
 
     async def has_unread(
@@ -172,7 +172,7 @@ class NotificationsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = f"{resolve_network_url(network_id, parent)}/notifications/mark_read"
-        warn_uncharacterised_write(_LOGGER, f"mark notifications read for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "mark notifications read for network")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )

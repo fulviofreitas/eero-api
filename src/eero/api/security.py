@@ -125,8 +125,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set WPA3 for network {network_id} "
-            "-- may reboot every eero, like the confirmed DNS write path",
+            "set WPA3 for network " "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,
@@ -180,7 +179,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set band steering for network {network_id} "
+            "set band steering for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
@@ -235,8 +234,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set UPnP for network {network_id} "
-            "-- may reboot every eero, like the confirmed DNS write path",
+            "set UPnP for network " "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,
@@ -287,8 +285,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set IPv6 for network {network_id} "
-            "-- may reboot every eero, like the confirmed DNS write path",
+            "set IPv6 for network " "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,
@@ -367,7 +364,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"configure security settings for network {network_id} "
+            "configure security settings for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
@@ -422,7 +419,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set MLO mode for network {network_id} "
+            "set MLO mode for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json={"mlo_mode": mode})
@@ -501,7 +498,7 @@ class SecurityAPI(AuthenticatedAPI):
             link="fast_transition",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"set fast transition for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set fast transition for network")
         return await self.put(url, auth_token=auth_token, json={"fast_transition": enabled})
 
     async def set_passpoint_enabled(
@@ -540,7 +537,7 @@ class SecurityAPI(AuthenticatedAPI):
             link="passpoint",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"set Passpoint enabled for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set Passpoint enabled for network")
         return await self.put(url, auth_token=auth_token, json={"enabled": enabled})
 
     async def set_proxied_nodes(
@@ -580,5 +577,5 @@ class SecurityAPI(AuthenticatedAPI):
             link="proxied_nodes",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"set proxied nodes for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set proxied nodes for network")
         return await self.put(url, auth_token=auth_token, json={"enabled": enabled})

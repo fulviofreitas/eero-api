@@ -189,9 +189,9 @@ class TestPowerSavingAPIUpdateSchedule:
         )
         assert call_args.kwargs["json"] == {"enabled": False}
         assert any(
-            "update power saving schedule schedule_001 for network" in message
-            for message in caplog.messages
+            "update power saving schedule for network" in message for message in caplog.messages
         )
+        assert not any("schedule_001" in message for message in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_update_schedule_rejects_no_fields(self, power_saving_api):
@@ -227,9 +227,9 @@ class TestPowerSavingAPIDeleteSchedule:
             "/2.2/networks/network_123/power_saving/schedules/schedule_001"
         )
         assert any(
-            "delete power saving schedule schedule_001 for network" in message
-            for message in caplog.messages
+            "delete power saving schedule for network" in message for message in caplog.messages
         )
+        assert not any("schedule_001" in message for message in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_delete_schedule_not_authenticated(self, power_saving_api):

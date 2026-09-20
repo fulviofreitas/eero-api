@@ -119,9 +119,7 @@ class WanAPI(AuthenticatedAPI):
         url = resource_url(
             network_id, "networks/{id}/multistaticip", version=API_VERSION_MULTISTATICIP
         )
-        warn_uncharacterised_write(
-            _LOGGER, f"set multi-static-IP configuration for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "set multi-static-IP configuration for network")
         return await self.put(url, auth_token=auth_token, json=dict(config))
 
     async def set_secondary_wan_config(
@@ -168,7 +166,7 @@ class WanAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set secondary WAN configuration for network {network_id} "
+            "set secondary WAN configuration for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json=dict(config))
@@ -214,7 +212,7 @@ class WanAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set secondary WAN access for device {mac} on network {network_id} "
+            "set secondary WAN access for device on network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json={"secondary_wan_deny_access": deny})

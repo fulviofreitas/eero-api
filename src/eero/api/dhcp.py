@@ -158,7 +158,7 @@ class DhcpAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set DHCP configuration for network {network_id} "
+            "set DHCP configuration for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json={"dhcp": dhcp})
@@ -215,7 +215,7 @@ class DhcpAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set connection mode for network {network_id} "
+            "set connection mode for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json={"connection": {"mode": mode}})
@@ -263,7 +263,7 @@ class DhcpAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"set NAT port randomization for network {network_id} "
+            "set NAT port randomization for network "
             "-- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(url, auth_token=auth_token, json={"nat_port_randomization": enabled})
@@ -307,9 +307,7 @@ class DhcpAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(eero_serial_or_id, "eeros/{id}/pppoe")
-        warn_uncharacterised_write(
-            _LOGGER, f"encrypt PPPoE credentials for eero {eero_serial_or_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "encrypt PPPoE credentials for eero")
         return await self.post(
             url,
             auth_token=auth_token,

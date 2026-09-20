@@ -240,6 +240,11 @@ class EerosAPI(AuthenticatedAPI):
         API accepts for this parameterless operation -- to the eero's
         ``reboot`` link.
 
+        Live-verified on 2026-09-20: this write returned HTTP 201, and only
+        the targeted eero's reboot marker (``last_reboot`` /
+        ``uptime.since_last_reboot_s`` via `get_eeros`) moved -- the
+        network's other eeros did not reboot.
+
         Args:
             network_id: ID of the network the Eero belongs to (unused, kept for API compatibility)
             eero_id: A bare eero ID, API-returned path, or absolute URL.
@@ -261,7 +266,6 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/reboot", link="reboot", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, "reboot eero")
         _LOGGER.debug("Rebooting eero")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
@@ -361,11 +365,10 @@ class EerosAPI(AuthenticatedAPI):
         Issues a form-encoded PUT (``led_brightness=<decimal string>``) to
         the eero's ``led_action`` link.
 
-        .. warning::
-            This write has not been confirmed against a live network to
-            change the node's light. Follow the read-compare-skip
-            discipline: read `get_led_status` first, and only issue this
-            write when the stored value differs from the desired one.
+        Live-verified on 2026-09-20: this write changed a node's LED
+        brightness and the read-back (``get_led_status``) matched; no node
+        rebooted. Read ``get_led_status`` first and skip the write when the
+        stored value already matches; never retry it in a loop.
 
         Args:
             network_id: ID of the network the Eero belongs to (unused, kept for API compatibility)
@@ -392,7 +395,6 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/led", link="led_action", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, "set LED brightness for eero")
         return await self.put(
             url,
             auth_token=auth_token,
@@ -739,10 +741,7 @@ class EerosAPI(AuthenticatedAPI):
             )
 
         url = resource_url(eero_id, _PORT_ACTION_TEMPLATE.format(interface_number=interface_number))
-        warn_uncharacterised_write(
-            _LOGGER,
-            f"perform port action {action!r} on eero port {interface_number}",
-        )
+        warn_uncharacterised_write(_LOGGER, f"perform port action {action!r} on eero port")
         return await self.post(url, auth_token=auth_token, json={"action": action})
 
     async def led_cycle(

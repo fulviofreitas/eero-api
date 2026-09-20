@@ -147,7 +147,7 @@ class ReservationsAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
-        warn_uncharacterised_write(_LOGGER, f"create reservation for network {network}")
+        warn_uncharacterised_write(_LOGGER, "create reservation for network")
         _LOGGER.debug("Creating reservation for network %s: %s", network, sorted(reservation_data))
         return await self.post(url, auth_token=auth_token, json=reservation_data)
 
@@ -217,6 +217,6 @@ class ReservationsAPI(AuthenticatedAPI):
         if delete_forwards is not None:
             params = {"delete_forwards": "true" if delete_forwards else "false"}
 
-        warn_uncharacterised_write(_LOGGER, f"delete reservation for network {network}")
+        warn_uncharacterised_write(_LOGGER, "delete reservation for network")
         _LOGGER.debug("Deleting reservation %s for network %s", reservation, network)
         return await self.delete(url, auth_token=auth_token, params=params)

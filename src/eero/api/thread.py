@@ -99,7 +99,7 @@ class ThreadAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/thread")
-        warn_uncharacterised_write(_LOGGER, f"set thread enabled for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set thread enabled for network")
         return await self.put(url, auth_token=auth_token, json={"enabled": enabled})
 
     async def update_thread(
@@ -155,7 +155,7 @@ class ThreadAPI(AuthenticatedAPI):
             )
 
         url = resource_url(network_id, "networks/{id}/thread")
-        warn_uncharacterised_write(_LOGGER, f"update thread config for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "update thread config for network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def regenerate_thread_credentials(
@@ -189,9 +189,7 @@ class ThreadAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/thread")
-        warn_uncharacterised_write(
-            _LOGGER, f"regenerate thread credentials for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "regenerate thread credentials for network")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )

@@ -109,10 +109,10 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `set_network_password` | `async def set_network_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects; form-encoded to the `password` link |
 | `clear_network_password` | `async def clear_network_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects; DELETE on the `password` link |
 | `get_guest_network` | `async def get_guest_network(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read |
-| `set_guest_network` | `async def set_guest_network(self, enabled: bool, name: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects guest clients; no `password=` — see `set_guest_password` |
-| `set_guest_password` | `async def set_guest_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects guest clients |
-| `clear_guest_password` | `async def clear_guest_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects guest clients |
-| `run_speed_test` | `async def run_speed_test(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | POST `""` to the `speedtest` link |
+| `set_guest_network` | `async def set_guest_network(self, enabled: bool, name: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients; no `password=` — see `set_guest_password` |
+| `set_guest_password` | `async def set_guest_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients |
+| `clear_guest_password` | `async def clear_guest_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients |
+| `run_speed_test` | `async def run_speed_test(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20): POST `""` to the `speedtest` link; returns 202 with `data: null`, result appears in `get_speed_tests` about a minute later |
 | `get_speed_tests` | `async def get_speed_tests(self, network_id: Optional[str]=None, *, limit: Optional[int]=None, start_time: Optional[str]=None, end_time: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read; query params `limit`, `startTime`, `endTime` |
 | `get_diagnostics` | `async def get_diagnostics(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `run_diagnostics` | `async def run_diagnostics(self, network_id: Optional[str]=None, *, device: Optional[str]=None, symptom: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified body shape |
@@ -142,7 +142,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 |--------|-----------|---------|-------|
 | `get_eeros` | `async def get_eeros(self, network_id: Optional[str]=None, refresh_cache: bool=False) -> Dict[str, Any]` | `Dict[str, Any]` | Cached; the matching entry becomes `parent=` for eero calls |
 | `get_eero` | `async def get_eero(self, eero_id: str, network_id: Optional[str]=None, refresh_cache: bool=False) -> Dict[str, Any]` | `Dict[str, Any]` | Never cached (`refresh_cache` has no effect) |
-| `reboot_eero` | `async def reboot_eero(self, eero_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | POST `""` to the `reboot` link |
+| `reboot_eero` | `async def reboot_eero(self, eero_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20): POST `""` to the `reboot` link; only the targeted eero rebooted |
 | `set_location` | `async def set_location(self, eero_id: str, location: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; form-encoded |
 | `get_connections` | `async def get_connections(self, eero_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read |
 | `get_eero_support` | `async def get_eero_support(self, eero_serial: str) -> Dict[str, Any]` | `Dict[str, Any]` | Read; `EeroNotFoundException` on some nodes |
@@ -151,7 +151,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `led_cycle` | `async def led_cycle(self, eero_serial: str, *, colors: Any, duration: str, time_per_color: str) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; form-encoded `colors[]` |
 | `get_led_status` | `async def get_led_status(self, eero_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | The eero envelope (`led_on`, `led_brightness`) |
 | `set_led` | `async def set_led(self, eero_id: str, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20): form-encoded to the `led_action` link; turns the node's light off and on with no reboot. The pre-v8.0.0 write was verified to change nothing |
-| `set_led_brightness` | `async def set_led_brightness(self, eero_id: str, brightness: int, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; 0–100 |
+| `set_led_brightness` | `async def set_led_brightness(self, eero_id: str, brightness: int, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20, brightness changed and read back, no reboot); 0–100 |
 | `get_nightlight` | `async def get_nightlight(self, eero_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `EeroFeatureUnavailableException` without a nightlight |
 | `set_nightlight` | `async def set_nightlight(self, eero_id: str, enabled: Optional[bool]=None, brightness_percentage: Optional[int]=None, schedule: Optional[Dict[str, Any]]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; at least one field |
 | `set_nightlight_brightness` | `async def set_nightlight_brightness(self, eero_id: str, brightness_percentage: int, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Delegates to `set_nightlight` |
@@ -170,9 +170,9 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `block_device` | `async def block_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified (form-encoded `mac`); POST `networks/{id}/blacklist` |
 | `unblock_device` | `async def unblock_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified; DELETE `networks/{id}/blacklist/{mac}` |
 | `update_device_via_link` | `async def update_device_via_link(self, device_id: str, *, nickname: Optional[str]=None, paused: Optional[bool]=None, profile: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; JSON PUT to the device's own URL on `2.2`. Prefer the two verified methods for nickname/pause |
-| `set_device_type` | `async def set_device_type(self, device_id: str, device_type: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write |
+| `set_device_type` | `async def set_device_type(self, device_id: str, device_type: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20, value persists and reads back) |
 | `get_device_labels` | `async def get_device_labels(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read |
-| `set_device_labels` | `async def set_device_labels(self, device_id: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; labels sent as query parameters |
+| `set_device_labels` | `async def set_device_labels(self, device_id: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified NO-OP (2026-09-20): HTTP 200 with the labels echoed back, but the value never shows up on a read-back; labels sent as query parameters |
 | `set_device_secondary_wan_access` | `async def set_device_secondary_wan_access(self, mac: str, *, deny: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; `2.3` |
 | `get_device_priority` | `async def get_device_priority(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | No dedicated domain endpoint — internally calls `get_device()` and returns the full device payload |
 
@@ -582,15 +582,15 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `get_network` | `async def get_network(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
 | `get_premium_status` | `async def get_premium_status(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
 | `reboot_network` | `async def reboot_network(self, network_id: str, *, parent=None)` | POST `""` to the `reboot` link | write; no `EeroClient` wrapper |
-| `run_speed_test` | `async def run_speed_test(self, network_id: str, *, parent=None)` | POST `""` to the `speedtest` link | write |
+| `run_speed_test` | `async def run_speed_test(self, network_id: str, *, parent=None)` | POST `""` to the `speedtest` link | verified write (2026-09-20): 202 with `data: null`, result appears in `get_speed_tests` about a minute later |
 | `get_speed_tests` | `async def get_speed_tests(self, network_id: str, *, limit: Optional[int]=None, start_time: Optional[str]=None, end_time: Optional[str]=None, parent=None)` | GET the `speedtest` link, query `limit` / `startTime` / `endTime` | read |
 | `set_network_name` | `async def set_network_name(self, network_id: str, name: str, *, parent=None)` | PUT form `name=` to the `settings` link | disconnects; unverified |
 | `set_network_password` | `async def set_network_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the `password` link | disconnects; unverified |
 | `clear_network_password` | `async def clear_network_password(self, network_id: str, *, parent=None)` | DELETE the `password` link | disconnects; unverified |
 | `get_guest_network` | `async def get_guest_network(self, network_id: str, *, parent=None)` | GET the `guestnetwork` link | read |
-| `set_guest_network` | `async def set_guest_network(self, network_id: str, *, enabled: bool, name: Optional[str]=None, parent=None)` | PUT form `enabled=` (+ `name=`) to the `guestnetwork` link | disconnects guests; unverified |
-| `set_guest_password` | `async def set_guest_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the guest network's `password` link | disconnects guests; unverified |
-| `clear_guest_password` | `async def clear_guest_password(self, network_id: str, *, parent=None)` | DELETE the guest network's `password` link | disconnects guests; unverified |
+| `set_guest_network` | `async def set_guest_network(self, network_id: str, *, enabled: bool, name: Optional[str]=None, parent=None)` | PUT form `enabled=` (+ `name=`) to the `guestnetwork` link | verified write (2026-09-20); disconnects guests |
+| `set_guest_password` | `async def set_guest_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the guest network's `password` link | verified write (2026-09-20); disconnects guests |
+| `clear_guest_password` | `async def clear_guest_password(self, network_id: str, *, parent=None)` | DELETE the guest network's `password` link | verified write (2026-09-20); disconnects guests |
 
 </details>
 
@@ -603,10 +603,10 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 |--------|-----------|---------|--------|
 | `get_eeros` | `async def get_eeros(self, network_id: str, *, parent=None)` | GET the network's `eeros` link | read |
 | `get_eero` | `async def get_eero(self, network_id: str, eero_id: str, *, parent=None)` | GET the eero's own URL (`eeros/{id}`) | read |
-| `reboot_eero` | `async def reboot_eero(self, network_id: str, eero_id: str, *, parent=None)` | POST `""` to the `reboot` link | write |
+| `reboot_eero` | `async def reboot_eero(self, network_id: str, eero_id: str, *, parent=None)` | POST `""` to the `reboot` link | verified write (2026-09-20): 201, only the targeted node rebooted |
 | `get_led_status` | `async def get_led_status(self, network_id: str, eero_id: str, *, parent=None)` | GET the eero's own URL | read |
 | `set_led` | `async def set_led(self, network_id: str, eero_id: str, enabled: bool, *, parent=None)` | PUT form `led_on=true|false` to the `led_action` link (`eeros/{id}/led`) | verified write (2026-09-20, light off and on, no reboot); the previous JSON write was verified to change nothing |
-| `set_led_brightness` | `async def set_led_brightness(self, network_id: str, eero_id: str, brightness: int, *, parent=None)` | PUT form `led_brightness=<0-100>` to the `led_action` link | unverified write |
+| `set_led_brightness` | `async def set_led_brightness(self, network_id: str, eero_id: str, brightness: int, *, parent=None)` | PUT form `led_brightness=<0-100>` to the `led_action` link | verified write (2026-09-20, brightness changed and read back, no reboot) |
 | `set_location` | `async def set_location(self, network_id: str, eero_id: str, location: str, *, parent=None)` | PUT form `location=` to the eero's own URL | unverified write |
 | `get_nightlight` | `async def get_nightlight(self, network_id: str, eero_id: str, *, parent=None)` | GET `data.nightlight.url` (read from `parent`, else one eero read to discover it) | read; `EeroFeatureUnavailableException` without a nightlight |
 | `set_nightlight` | `async def set_nightlight(self, network_id: str, eero_id: str, *, enabled: Optional[bool]=None, brightness_percentage: Optional[int]=None, schedule: Optional[Mapping[str, Any]]=None, parent=None)` | PUT JSON of the supplied fields to the nightlight URL | unverified write |
@@ -633,9 +633,9 @@ The device parameter is named `mac` on every method. `parent` = the network enve
 | `set_device_nickname` | `async def set_device_nickname(self, network_id: str, mac: str, nickname: str)` | PUT JSON to `networks/{id}/devices/{mac}` on **2.3** | **verified** write |
 | `pause_device` | `async def pause_device(self, network_id: str, mac: str, paused: bool)` | PUT JSON to `networks/{id}/devices/{mac}` on **2.3** | **verified** write |
 | `update_device_via_link` | `async def update_device_via_link(self, network: str, mac: str, *, nickname: Optional[str]=None, paused: Optional[bool]=None, profile: Optional[str]=None, parent=None)` | PUT JSON of the supplied fields to the device's own URL on 2.2 | unverified write |
-| `set_device_type` | `async def set_device_type(self, network: str, mac: str, device_type: str)` | PUT JSON `{"device_type": ...}` to the device URL | unverified write |
+| `set_device_type` | `async def set_device_type(self, network: str, mac: str, device_type: str)` | PUT JSON `{"device_type": ...}` to the device URL | verified write (2026-09-20, value persists and reads back) |
 | `get_device_labels` | `async def get_device_labels(self, network: str, mac: str)` | GET `networks/{id}/devices/{mac}/labels` | read |
-| `set_device_labels` | `async def set_device_labels(self, network: str, mac: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None)` | PUT `.../labels` with the labels as query parameters | unverified write |
+| `set_device_labels` | `async def set_device_labels(self, network: str, mac: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None)` | PUT `.../labels` with the labels as query parameters | verified NO-OP (2026-09-20): 200 with labels echoed back, but the value never shows up on a read-back |
 | `block_device` | `async def block_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.add_to_blacklist` | unverified (form) |
 | `unblock_device` | `async def unblock_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.remove_from_blacklist` | verified |
 

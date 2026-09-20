@@ -139,7 +139,7 @@ class MembersAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/invites", version=API_VERSION_DEFAULT)
-        warn_uncharacterised_write(_LOGGER, f"create invite for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "create invite for network")
         return await self.post(url, auth_token=auth_token, json={"invite_role": normalised_role})
 
     async def update_invite(
@@ -167,7 +167,7 @@ class MembersAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(invite_id, _INVITE_TEMPLATE.format(network=network_id))
-        warn_uncharacterised_write(_LOGGER, f"update invite {invite_id} for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "update invite for network")
         return await self.put(url, auth_token=auth_token, json={"invite_nickname": invite_nickname})
 
     async def delete_invite(self, network_id: str, invite_id: str) -> Dict[str, Any]:
@@ -191,7 +191,7 @@ class MembersAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(invite_id, _INVITE_TEMPLATE.format(network=network_id))
-        warn_uncharacterised_write(_LOGGER, f"delete invite {invite_id} for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "delete invite for network")
         return await self.delete(url, auth_token=auth_token)
 
     async def respond_to_invite(
@@ -244,7 +244,7 @@ class MembersAPI(AuthenticatedAPI):
         else:
             payload["invite_code"] = invite_code
 
-        warn_uncharacterised_write(_LOGGER, f"respond to invite for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "respond to invite for network")
         return await self.post(url, auth_token=auth_token, json=payload)
 
     async def cancel_pending_admin(self, network_id: str) -> Dict[str, Any]:
@@ -271,9 +271,7 @@ class MembersAPI(AuthenticatedAPI):
         url = resource_url(
             network_id, "networks/{id}/invites/cancel_pending_admin", version=API_VERSION_DEFAULT
         )
-        warn_uncharacterised_write(
-            _LOGGER, f"cancel pending admin invites for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "cancel pending admin invites for network")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )
@@ -303,7 +301,7 @@ class MembersAPI(AuthenticatedAPI):
         url = resource_url(
             network_id, "networks/{id}/member_promotion", version=API_VERSION_DEFAULT
         )
-        warn_uncharacterised_write(_LOGGER, f"promote member for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "promote member for network")
         return await self.post(url, auth_token=auth_token, json={"member_id": member_id})
 
     async def remove_admin(self, network_id: str, user_id: str) -> Dict[str, Any]:
@@ -327,7 +325,7 @@ class MembersAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(user_id, _ADMIN_TEMPLATE.format(network=network_id))
-        warn_uncharacterised_write(_LOGGER, f"remove admin {user_id} from network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "remove admin from network")
         return await self.delete(url, auth_token=auth_token)
 
     async def query_invite(self, invite_code: str) -> Dict[str, Any]:

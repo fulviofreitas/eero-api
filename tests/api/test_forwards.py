@@ -88,7 +88,8 @@ class TestForwardsAPICreateForward:
         with caplog.at_level(logging.WARNING, logger="eero.api.forwards"):
             await forwards_api.create_forward("network_123", {"port": 80})
 
-        assert any("create forward for network network_123" in m for m in caplog.messages)
+        assert any("create forward for network" in m for m in caplog.messages)
+        assert not any("network_123" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_create_forward_not_authenticated(self, forwards_api):
@@ -132,7 +133,8 @@ class TestForwardsAPIDeleteForward:
         with caplog.at_level(logging.WARNING, logger="eero.api.forwards"):
             await forwards_api.delete_forward("network_123", "forward_id")
 
-        assert any("delete forward for network network_123" in m for m in caplog.messages)
+        assert any("delete forward for network" in m for m in caplog.messages)
+        assert not any("network_123" in m for m in caplog.messages)
 
 
 class TestForwardsAPIUpdateForward:

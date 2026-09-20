@@ -114,7 +114,7 @@ class SqmAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"set SQM for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set SQM for network")
         return await self.put(
             url,
             auth_token=auth_token,

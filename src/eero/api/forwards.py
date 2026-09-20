@@ -146,7 +146,7 @@ class ForwardsAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
-        warn_uncharacterised_write(_LOGGER, f"create forward for network {network}")
+        warn_uncharacterised_write(_LOGGER, "create forward for network")
         _LOGGER.debug("Creating forward for network %s: %s", network, sorted(forward_data))
         return await self.post(url, auth_token=auth_token, json=forward_data)
 
@@ -202,6 +202,6 @@ class ForwardsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(forward, _FORWARD_TEMPLATE.format(network=network))
-        warn_uncharacterised_write(_LOGGER, f"delete forward for network {network}")
+        warn_uncharacterised_write(_LOGGER, "delete forward for network")
         _LOGGER.debug("Deleting forward %s for network %s", forward, network)
         return await self.delete(url, auth_token=auth_token)

@@ -187,6 +187,21 @@ class TestEerosAPIReboot:
         with pytest.raises(EeroAuthenticationException):
             await eeros_api.reboot_eero("network_123", "eero_001")
 
+    @pytest.mark.asyncio
+    async def test_reboot_does_not_warn(self, eeros_api, mock_session, caplog):
+        """Test reboot_eero does not carry the uncharacterised-write warning.
+
+        The write is live-verified, so it must not carry the warning.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await eeros_api.reboot_eero("network_123", "eero_001")
+
+        assert not any("not been fully characterised" in m for m in caplog.messages)
+
 
 class TestEerosAPILedStatus:
     """Tests for LED status methods."""
@@ -270,7 +285,11 @@ class TestEerosAPILedBrightness:
     async def test_set_led_brightness_sends_form_encoded_value(
         self, eeros_api, mock_session, caplog
     ):
-        """Test set_led_brightness PUTs form-encoded led_brightness and warns."""
+        """Test set_led_brightness PUTs form-encoded led_brightness without warning.
+
+        The write is live-verified, so it must not carry the
+        uncharacterised-write warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -280,7 +299,7 @@ class TestEerosAPILedBrightness:
 
         call_args = mock_session.request.call_args
         assert call_args.kwargs["data"] == {"led_brightness": "50"}
-        assert any("set LED brightness for eero" in message for message in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("brightness", [-1, 101, 3.5])

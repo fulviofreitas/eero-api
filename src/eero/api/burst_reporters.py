@@ -69,7 +69,7 @@ class BurstReportersAPI(AuthenticatedAPI):
             link="burst_reporters",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, f"create burst reporter for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "create burst reporter for network")
         _LOGGER.debug("Creating burst reporter for network %s: %s", network_id, reporter_data)
         return await self.post(
             url,

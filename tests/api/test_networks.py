@@ -172,7 +172,8 @@ class TestNetworksAPIReboot:
         with caplog.at_level(logging.WARNING):
             await networks_api.reboot_network("network_123")
 
-        assert any("reboot network network_123" in m for m in caplog.messages)
+        assert any("reboot network" in m for m in caplog.messages)
+        assert not any("network_123" in m for m in caplog.messages)
 
 
 class TestNetworksAPISpeedTest:
@@ -193,10 +194,11 @@ class TestNetworksAPISpeedTest:
         assert call_args.kwargs["data"] == '""'
 
     @pytest.mark.asyncio
-    async def test_run_speed_test_warns_uncharacterised_write(
-        self, networks_api, mock_session, caplog
-    ):
-        """Test run_speed_test logs the uncharacterised-write warning once."""
+    async def test_run_speed_test_does_not_warn(self, networks_api, mock_session, caplog):
+        """Test run_speed_test does not carry the uncharacterised-write warning.
+
+        The write is live-verified, so it must not carry the warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, api_success_response({"down": {"value": 500.0}})
         )
@@ -204,7 +206,7 @@ class TestNetworksAPISpeedTest:
         with caplog.at_level(logging.WARNING):
             await networks_api.run_speed_test("network_123")
 
-        assert any("run speed test for network network_123" in m for m in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_get_speed_tests_sends_query_params(self, networks_api, mock_session):
@@ -337,7 +339,11 @@ class TestNetworksAPIGuestNetwork:
     async def test_set_guest_network_sends_form_encoded_payload(
         self, networks_api, mock_session, caplog
     ):
-        """Test set_guest_network PUTs form-encoded enabled/name and warns."""
+        """Test set_guest_network PUTs form-encoded enabled/name without warning.
+
+        The write is live-verified, so it must not carry the
+        uncharacterised-write warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -351,7 +357,7 @@ class TestNetworksAPIGuestNetwork:
         assert call_args.args[0] == "PUT"
         assert call_args.args[1].endswith("/2.2/networks/network_123/guestnetwork")
         assert call_args.kwargs["data"] == {"enabled": "true", "name": "My Guest Network"}
-        assert any("set guest network for network" in m for m in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_set_guest_network_omits_name_when_not_given(self, networks_api, mock_session):
@@ -386,7 +392,11 @@ class TestNetworksAPIGuestPassword:
     async def test_set_guest_password_uses_literal_template_with_no_parent(
         self, networks_api, mock_session, caplog
     ):
-        """Test set_guest_password falls back to the literal template with no parent."""
+        """Test set_guest_password falls back to the literal template with no parent.
+
+        The write is live-verified, so it must not carry the
+        uncharacterised-write warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -398,7 +408,7 @@ class TestNetworksAPIGuestPassword:
         assert call_args.args[0] == "PUT"
         assert call_args.args[1].endswith("/2.2/networks/network_123/guestnetwork/password")
         assert call_args.kwargs["data"] == {"password": "placeholder-password"}
-        assert any("set guest password for network" in m for m in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_set_guest_password_prefers_guest_parent_link(self, networks_api, mock_session):
@@ -423,7 +433,11 @@ class TestNetworksAPIGuestPassword:
     async def test_clear_guest_password_deletes_password_link(
         self, networks_api, mock_session, caplog
     ):
-        """Test clear_guest_password DELETEs the guest password link and warns."""
+        """Test clear_guest_password DELETEs the guest password link without warning.
+
+        The write is live-verified, so it must not carry the
+        uncharacterised-write warning.
+        """
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -434,4 +448,4 @@ class TestNetworksAPIGuestPassword:
         call_args = mock_session.request.call_args
         assert call_args.args[0] == "DELETE"
         assert call_args.args[1].endswith("/2.2/networks/network_123/guestnetwork/password")
-        assert any("clear guest password for network" in m for m in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)

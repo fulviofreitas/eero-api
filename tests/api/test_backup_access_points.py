@@ -169,9 +169,9 @@ class TestBackupAccessPointsAPIUpdate:
         )
         assert call_args.kwargs["json"] == {"enabled": False}
         assert any(
-            "update backup access point backup_001 for network" in message
-            for message in caplog.messages
+            "update backup access point for network" in message for message in caplog.messages
         )
+        assert not any("backup_001" in message for message in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_update_never_logs_password(self, backup_api, mock_session, caplog):
@@ -213,9 +213,9 @@ class TestBackupAccessPointsAPIDelete:
             "/2.2/networks/network_123/backup_access_points/backup_001"
         )
         assert any(
-            "delete backup access point backup_001 for network" in message
-            for message in caplog.messages
+            "delete backup access point for network" in message for message in caplog.messages
         )
+        assert not any("backup_001" in message for message in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_delete_not_authenticated(self, backup_api):

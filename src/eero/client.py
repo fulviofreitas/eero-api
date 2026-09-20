@@ -862,10 +862,8 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set a device's type - returns raw Eero API response.
 
-        .. warning::
-            This write has not been verified against a live network. Follow
-            the read-compare-skip discipline: read the device back
-            afterwards and do not retry on failure.
+        Live-verified on 2026-09-20: this write's value persisted and read
+        back correctly, and the response echoes the new type.
         """
         network_id = await self._ensure_network_id(network_id)
         response = await self._api.devices.set_device_type(network_id, device_id, device_type)
@@ -892,9 +890,10 @@ class EeroClient:
         """Set the hardware/manufacturer labels for a device - returns raw Eero API response.
 
         .. warning::
-            This write has not been verified against a live network. Follow
-            the read-compare-skip discipline: call `get_device_labels`
-            afterwards and do not retry on failure.
+            Verified NO-OP as of 2026-09-20: the PUT returns HTTP 200 with
+            all four label keys echoed back in the response envelope, but
+            the read-back (`get_device_labels`) never shows the new value.
+            Do not rely on this method to change a device's labels.
         """
         network_id = await self._ensure_network_id(network_id)
         response = await self._api.devices.set_device_labels(
@@ -1142,10 +1141,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set the guest network's password - returns raw Eero API response.
 
-        .. warning::
-            This write disconnects guest clients while it takes effect, and
-            has not been confirmed against a live network. Follow the
-            read-compare-skip discipline and do not retry on failure.
+        Live-verified on 2026-09-20: the new password read back correctly.
+        This write disconnects guest clients while it takes effect -- never
+        retry a failed write in a loop.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_guest_password(network_id, password)
@@ -1155,10 +1153,10 @@ class EeroClient:
     async def clear_guest_password(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Clear the guest network's password - returns raw Eero API response.
 
-        .. warning::
-            This write disconnects guest clients while it takes effect, and
-            has not been confirmed against a live network. Follow the
-            read-compare-skip discipline and do not retry on failure.
+        Live-verified on 2026-09-20: clearing and restoring the guest
+        password both read back correctly. This write disconnects guest
+        clients while it takes effect -- never retry a failed write in a
+        loop.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.clear_guest_password(network_id)

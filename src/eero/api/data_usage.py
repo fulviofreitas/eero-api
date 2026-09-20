@@ -602,9 +602,7 @@ class DataUsageAPI(AuthenticatedAPI):
         """
         _validate_cadence(cadence)
 
-        warn_uncharacterised_write(
-            _LOGGER, f"set data usage report settings for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "set data usage report settings for network")
 
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:

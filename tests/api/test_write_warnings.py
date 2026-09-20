@@ -83,6 +83,28 @@ _VERIFIED_WRITE_ALLOWLIST = {
     # write to the led link turned a node's light off and back on, the
     # cloud read-back and the app agreed, and no node rebooted.
     ("EerosAPI", "set_led"),
+    # eeros.py: set_led_brightness was live-verified on 2026-09-20: the
+    # form-encoded write to the led link changed the node's brightness and
+    # the read-back matched, with no reboot.
+    ("EerosAPI", "set_led_brightness"),
+    # eeros.py: reboot_eero was live-verified on 2026-09-20: the POST
+    # returned 201, and only the targeted node's reboot marker moved --
+    # the other nodes did not reboot.
+    ("EerosAPI", "reboot_eero"),
+    # devices.py: set_device_type was live-verified on 2026-09-20: the
+    # value persisted and read back, and the response echoes the new type.
+    ("DevicesAPI", "set_device_type"),
+    # networks.py: set_guest_network, set_guest_password, and
+    # clear_guest_password were live-verified on 2026-09-20: enable/
+    # disable, password set, clear, and restore all read back correctly,
+    # and the guest name was unchanged.
+    ("NetworksAPI", "set_guest_network"),
+    ("NetworksAPI", "set_guest_password"),
+    ("NetworksAPI", "clear_guest_password"),
+    # networks.py: run_speed_test was live-verified on 2026-09-20: it
+    # returns 202 with data: null, and a new result appears in
+    # get_speed_tests about a minute later.
+    ("NetworksAPI", "run_speed_test"),
 }
 
 # Per-(method name, parameter name) placeholder overrides for parameters
@@ -279,9 +301,18 @@ class TestEveryWriteWarnsOrIsAllowlisted:
                 # the warning already fired before the failure.
                 pass
 
-        assert any(
-            "not been fully characterised" in record.getMessage() for record in caplog.records
-        ), (
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if "not been fully characterised" in record.getMessage()
+        ]
+        assert not any(_DEFAULT_STRING_PLACEHOLDER in message for message in warnings), (
+            f"{cls.__name__}.{method_name} interpolated a caller-supplied "
+            "identifier into its uncharacterised-write warning. The "
+            "`operation` string must name the operation and the kind of "
+            "resource only; identifiers never belong in a WARNING line."
+        )
+        assert warnings, (
             f"{cls.__name__}.{method_name} issued a write without the "
             "uncharacterised-write warning. Either add a "
             "`warn_uncharacterised_write` call before its request, or add "

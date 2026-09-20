@@ -8,6 +8,7 @@ Tests cover:
 - Pausing device internet access
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -284,7 +285,7 @@ class TestDevicesAPIUpdateDeviceViaLink:
 
 
 class TestDevicesAPISetDeviceType:
-    """Tests for set_device_type (unverified, warns)."""
+    """Tests for set_device_type (live-verified 2026-09-20, does not warn)."""
 
     @pytest.fixture
     def devices_api(self, mock_session):
@@ -306,9 +307,29 @@ class TestDevicesAPISetDeviceType:
         assert url == "https://api-user.e2ro.com/2.2/networks/network_123/devices/aabbccddeeff"
         assert mock_session.request.call_args.kwargs["json"] == {"device_type": "gateway"}
 
+    @pytest.mark.asyncio
+    async def test_set_device_type_does_not_warn(self, devices_api, mock_session, caplog):
+        """Test set_device_type does not carry the uncharacterised-write warning.
+
+        The write is live-verified, so it must not carry the warning.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await devices_api.set_device_type("network_123", "aabbccddeeff", "gateway")
+
+        assert not any("not been fully characterised" in m for m in caplog.messages)
+
 
 class TestDevicesAPILabels:
-    """Tests for get_device_labels/set_device_labels (unverified writes)."""
+    """Tests for get_device_labels (read) / set_device_labels.
+
+    set_device_labels is a verified NO-OP as of 2026-09-20: the PUT
+    returns HTTP 200 but the value never shows up on a read-back, so it
+    still carries the uncharacterised-write warning.
+    """
 
     @pytest.fixture
     def devices_api(self, mock_session):

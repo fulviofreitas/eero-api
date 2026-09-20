@@ -444,14 +444,14 @@ network and logs one `WARNING` before the request**; see
 | Write | Before (v7.x) | After (v8.0.0) |
 |---|---|---|
 | `set_led(eero_id, enabled)` | JSON `{"led_on": bool}` PUT to the eero's own URL — **verified to change nothing**. Any caller who "successfully" set the LED through the SDK never did | Form-encoded `led_on=true|false` PUT to the eero's `led_action` link. Verified live on 2026-09-20 (light off and on, no reboot) |
-| `set_led_brightness(eero_id, brightness)` | JSON PUT to the eero's own URL | Form-encoded `led_brightness=<int>` PUT to the `led_action` link. Unverified |
+| `set_led_brightness(eero_id, brightness)` | JSON PUT to the eero's own URL | Form-encoded `led_brightness=<int>` PUT to the `led_action` link. Verified live on 2026-09-20 (brightness changed and read back, no reboot) |
 | `set_location(eero_id, location)` | *(new on `EeroClient`)* | Form-encoded `location=` PUT to the eero's own URL. Unverified |
 | `set_network_name(name)` | JSON `{"name": ...}` PUT to `settings` | Form-encoded `name=` PUT to the network's `settings` link. Disconnects clients while it takes effect; the form shape is unverified |
 | `set_network_password(password)` / `clear_network_password()` | *(new)* | Form-encoded `password=` PUT / DELETE on the network's `password` link. Disconnects clients; unverified |
-| `set_guest_network(enabled, name=, password=)` | One JSON PUT carrying the password | `set_guest_network(*, enabled, name=None)` — form-encoded PUT to the `guestnetwork` link with `enabled` and, when given, `name`. **`password=` is gone** — use `set_guest_password(password)` / `clear_guest_password()` (form PUT / DELETE on the *guest network's* `password` link). Unverified |
+| `set_guest_network(enabled, name=, password=)` | One JSON PUT carrying the password | `set_guest_network(*, enabled, name=None)` — form-encoded PUT to the `guestnetwork` link with `enabled` and, when given, `name`. **`password=` is gone** — use `set_guest_password(password)` / `clear_guest_password()` (form PUT / DELETE on the *guest network's* `password` link). All three verified live on 2026-09-20 |
 | `block_device(device_id, blocked)` | One method toggling both directions | `block_device(mac)` sends a form-encoded `mac` to `POST networks/{id}/blacklist`; `unblock_device(mac)` is a separate `DELETE networks/{id}/blacklist/{mac}`. The form encoding is unverified (a JSON body was verified in the past); the DELETE is verified |
 | `set_sqm_enabled` / `configure_sqm` / `set_sqm_bandwidth` / `set_sqm_auto` | JSON bodies with bandwidth / mode fields the API never declared | **Removed.** `set_sqm(enabled)` — PUT with no body to the `settings` link, value in the `sqm` query parameter. Settings-class: may reboot the mesh |
-| `reboot_network()`, `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `apply_update` is new on `EeroClient` and reboots every node |
+| `reboot_network()`, `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `reboot_eero` and `run_speed_test` are verified live on 2026-09-20 (only the targeted node rebooted; the speed test result appeared in `get_speed_tests` about a minute later). `apply_update` is new on `EeroClient` and reboots every node |
 | `set_nightlight(...)` | JSON PUT to the eero's own URL with `brightness`, `schedule_enabled`, `schedule_on`, `schedule_off`, `ambient_light_enabled` | JSON PUT to the nightlight sub-resource (`data.nightlight.url`) with only `enabled`, `brightness_percentage`, `schedule` — the fields the API declares. `set_nightlight_schedule(schedule)` forwards the schedule object unchanged; `set_nightlight_brightness(brightness_percentage)`. Raises `EeroFeatureUnavailableException` on an eero without a nightlight |
 | `run_diagnostics()` | Empty POST | JSON POST with whichever of `device=` / `symptom=` you supply (an empty object otherwise). Additive |
 | Thread writes | `SecurityAPI.set_thread` wrote a `thread` field the settings endpoint ignores | `set_thread_enabled(enabled)` (JSON `{"enabled": bool}`), `update_thread(*, thread_enable=, enable_credential_syncing=)`, `regenerate_thread_credentials()` (`""` POST) — all to the literal `networks/{id}/thread` path |
@@ -462,8 +462,10 @@ network and logs one `WARNING` before the request**; see
 | `set_device_nickname` / `pause_device` | 2.3 JSON PUT (verified) | Unchanged — still the verified 2.3 write. New alongside it: `update_device_via_link(device_id, *, nickname=, paused=, profile=)` — a JSON PUT of those fields to the device's own URL on the default version, **unverified**; prefer the two verified methods for nickname/pause |
 | `update_reservation(reservation_id, data)` / `update_forward(forward_id, data)` | Built the URL from `network_id` + ID | Domain signatures are now `update_reservation(reservation, data, *, network=None)` / `update_forward(forward, data, *, network=None)` — `reservation` / `forward` may be a bare ID (then `network=` is required), the resource's path/URL, or its envelope. `EeroClient` wrappers keep `(id, data, network_id=None)` |
 
-Added on `EeroClient` in the same change, all unverified writes unless marked: `set_device_type`,
-`get_device_labels` (read), `set_device_labels` (labels go as query parameters on the PUT),
+Added on `EeroClient` in the same change, all unverified writes unless marked: `set_device_type`
+(verified 2026-09-20: the value persists and reads back), `get_device_labels` (read),
+`set_device_labels` (labels go as query parameters on the PUT; verified 2026-09-20 to return 200
+without applying the value, so treat it as a no-op until the API changes),
 `get_connections` (read), `get_speed_tests(*, limit=, start_time=, end_time=)` (read),
 `get_guest_network` (read), `get_devices_insights` / `get_device_insights` /
 `get_profiles_insights` / `get_profile_insights` / `get_profile_devices_insights` (verified

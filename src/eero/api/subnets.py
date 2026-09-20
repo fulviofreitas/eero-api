@@ -114,7 +114,7 @@ class SubnetsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/subnets_config")
-        warn_uncharacterised_write(_LOGGER, f"set subnet configuration for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set subnet configuration for network")
         return await self.put(url, auth_token=auth_token, json=dict(config))
 
     async def delete_subnet(self, network_id: str, subnet_type: str) -> Dict[str, Any]:
@@ -144,7 +144,7 @@ class SubnetsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, _SUBNET_TYPE_TEMPLATE.format(subnet_type=subnet_type))
-        warn_uncharacterised_write(_LOGGER, f"delete subnet {subnet_type} for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "delete subnet for network")
         return await self.delete(url, auth_token=auth_token)
 
     async def set_content_filters(
@@ -182,7 +182,7 @@ class SubnetsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/subnets_config/dns_policies/content_filters")
-        warn_uncharacterised_write(_LOGGER, f"set subnet content filters for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set subnet content filters for network")
         return await self.put(url, auth_token=auth_token, json=dict(filters))
 
     async def get_content_filters(self, network_id: str, subnet_id: str) -> Dict[str, Any]:

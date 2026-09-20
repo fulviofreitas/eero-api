@@ -49,9 +49,15 @@ def warn_uncharacterised_write(logger: _Logger, operation: str) -> None:
         logger: The calling module's secure logger, so any sensitive value
             named in ``operation`` is still redacted.
         operation: A short, human-readable description of the write being
-            issued, e.g. ``"set nightlight for eero eero-id-placeholder"``
-            or ``"set network name for network network-id-placeholder"``.
-            Included verbatim in the log line.
+            issued, naming the operation and the kind of resource only --
+            never a caller-supplied identifier (network ID, profile,
+            invite ID, user ID, subnet type, MAC, eero serial, schedule ID,
+            etc.), which would otherwise end up in a WARNING-level log line.
+            For example ``"set nightlight for eero"`` or ``"set network
+            name for network"``. A value validated against a small, fixed
+            vocabulary (e.g. a node/port ``action``, a DNS ``mode``) is not
+            an identifier and may be included. Included verbatim in the log
+            line.
 
     Returns:
         None.

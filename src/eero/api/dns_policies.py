@@ -216,7 +216,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             is_delete=is_delete,
             keep_profiles=keep_profiles,
         )
-        warn_uncharacterised_write(_LOGGER, f"allow domain for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "allow domain for network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def allow_cnames(
@@ -258,7 +258,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
-        warn_uncharacterised_write(_LOGGER, f"allow CNAMEs for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "allow CNAMEs for network")
         return await self.put(url, auth_token=auth_token, json={"domains": domains})
 
     async def block_domain(
@@ -310,7 +310,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             version=API_VERSION_DEFAULT,
         )
         payload = _payload({"domain": domain}, is_delete=is_delete, keep_profiles=keep_profiles)
-        warn_uncharacterised_write(_LOGGER, f"block domain for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "block domain for network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def allow_domain_for_profiles(
@@ -375,7 +375,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             reason_to_allow=reason_to_allow,
             is_delete=is_delete,
         )
-        warn_uncharacterised_write(_LOGGER, f"allow domain for profiles on network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "allow domain for profiles on network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def allow_cnames_for_profiles(
@@ -418,7 +418,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
-        warn_uncharacterised_write(_LOGGER, f"allow CNAMEs for profiles on network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "allow CNAMEs for profiles on network")
         return await self.put(
             url, auth_token=auth_token, json={"domains": domains, "profiles": profiles}
         )
@@ -474,7 +474,7 @@ class DnsPoliciesAPI(AuthenticatedAPI):
         payload = _payload(
             {"domain": domain, "profiles": profiles}, is_delete=is_delete, override=override
         )
-        warn_uncharacterised_write(_LOGGER, f"block domain for profiles on network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "block domain for profiles on network")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def get_profile_applications(self, network_id: str, profile_id: str) -> Dict[str, Any]:
@@ -533,7 +533,5 @@ class DnsPoliciesAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = self._profile_applications_blocked_url(network_id, profile_id)
-        warn_uncharacterised_write(
-            _LOGGER, f"set blocked applications for profile {profile_id} on network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "set blocked applications for profile on network")
         return await self.put(url, auth_token=auth_token, json={"applications": applications})

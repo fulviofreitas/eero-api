@@ -115,7 +115,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
         if uuid is not None:
             payload["uuid"] = uuid
 
-        warn_uncharacterised_write(_LOGGER, f"add backup access point for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "add backup access point for network")
         return await self.post(url, auth_token=auth_token, json=payload)
 
     async def update(
@@ -192,7 +192,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
         url = resource_url(network_id, _BACKUP_TEMPLATE.format(backup_network_id=backup_network_id))
         warn_uncharacterised_write(
             _LOGGER,
-            f"update backup access point {backup_network_id} for network {network_id}",
+            "update backup access point for network",
         )
         return await self.put(url, auth_token=auth_token, json=payload)
 
@@ -226,7 +226,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
         url = resource_url(network_id, _BACKUP_TEMPLATE.format(backup_network_id=backup_network_id))
         warn_uncharacterised_write(
             _LOGGER,
-            f"delete backup access point {backup_network_id} for network {network_id}",
+            "delete backup access point for network",
         )
         return await self.delete(url, auth_token=auth_token)
 
@@ -257,9 +257,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/backup_access_points/rearrange")
-        warn_uncharacterised_write(
-            _LOGGER, f"rearrange backup access points for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "rearrange backup access points for network")
         return await self.post(url, auth_token=auth_token, json={"rearranged_ids": order})
 
     async def discover_ssids(self, network_id: str) -> Dict[str, Any]:
@@ -312,7 +310,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/backup_access_points/ssid_discovery")
-        warn_uncharacterised_write(_LOGGER, f"start SSID discovery for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "start SSID discovery for network")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )
@@ -344,9 +342,7 @@ class BackupAccessPointsAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(network_id, "networks/{id}/backup_access_points/connectivity_check")
-        warn_uncharacterised_write(
-            _LOGGER, f"start backup connectivity check for network {network_id}"
-        )
+        warn_uncharacterised_write(_LOGGER, "start backup connectivity check for network")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )

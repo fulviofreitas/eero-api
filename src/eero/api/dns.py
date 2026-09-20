@@ -205,9 +205,7 @@ class DnsAPI(AuthenticatedAPI):
             parent: The cached network envelope, if the caller has one.
                 Never mutated.
         """
-        warn_uncharacterised_write(
-            _LOGGER, f"write DNS settings for network {network_id} — reboots every eero"
-        )
+        warn_uncharacterised_write(_LOGGER, "write DNS settings for network — reboots every eero")
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")

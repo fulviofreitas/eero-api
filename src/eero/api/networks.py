@@ -177,7 +177,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/reboot", link="reboot", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"reboot network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "reboot network")
         _LOGGER.debug("Rebooting network %s", network_id)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
@@ -190,6 +190,10 @@ class NetworksAPI(AuthenticatedAPI):
 
         Issues a POST with the two-character body ``""`` to the network's
         ``speedtest`` link.
+
+        Live-verified on 2026-09-20: this write returned HTTP 202 with
+        ``data: null``, and a new result appeared in `get_speed_tests`
+        about a minute later.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -211,7 +215,6 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/speedtest", link="speedtest", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"run speed test for network {network_id}")
         _LOGGER.debug("Running speed test for network %s", network_id)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
@@ -304,7 +307,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"set network name for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set network name for network")
         return await self.put(url, auth_token=auth_token, data={"name": name})
 
     async def set_network_password(
@@ -342,7 +345,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/password", link="password", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"set network password for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "set network password for network")
         return await self.put(url, auth_token=auth_token, data={"password": password})
 
     async def clear_network_password(
@@ -377,7 +380,7 @@ class NetworksAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/password", link="password", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"clear network password for network {network_id}")
+        warn_uncharacterised_write(_LOGGER, "clear network password for network")
         return await self.delete(url, auth_token=auth_token)
 
     async def get_guest_network(
@@ -428,10 +431,11 @@ class NetworksAPI(AuthenticatedAPI):
         with the ``enabled`` field and, when supplied, the ``name`` field.
         Use `set_guest_password` to set the guest network's password.
 
-        .. warning::
-            This write disconnects guest clients while it takes effect, and
-            has not been confirmed against a live network. Follow the
-            read-compare-skip discipline and do not retry on failure.
+        Live-verified on 2026-09-20: enabling and disabling the guest
+        network read back correctly and the guest name was unchanged. This
+        write disconnects guest clients while it takes effect -- read
+        `get_guest_network` first and skip the write when the stored state
+        already matches; never retry a failed write in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -464,7 +468,6 @@ class NetworksAPI(AuthenticatedAPI):
         if name is not None:
             payload["name"] = name
 
-        warn_uncharacterised_write(_LOGGER, f"set guest network for network {network_id}")
         return await self.put(url, auth_token=auth_token, data=payload)
 
     async def set_guest_password(
@@ -480,10 +483,9 @@ class NetworksAPI(AuthenticatedAPI):
         network's own ``password`` link. The password value is never
         logged.
 
-        .. warning::
-            This write disconnects guest clients while it takes effect, and
-            has not been confirmed against a live network. Follow the
-            read-compare-skip discipline and do not retry on failure.
+        Live-verified on 2026-09-20: the new password read back correctly.
+        This write disconnects guest clients while it takes effect -- never
+        retry a failed write in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -506,7 +508,6 @@ class NetworksAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = _guest_password_url(network_id, as_envelope(parent))
-        warn_uncharacterised_write(_LOGGER, f"set guest password for network {network_id}")
         return await self.put(url, auth_token=auth_token, data={"password": password})
 
     async def clear_guest_password(
@@ -519,10 +520,10 @@ class NetworksAPI(AuthenticatedAPI):
 
         Issues a DELETE to the guest network's own ``password`` link.
 
-        .. warning::
-            This write disconnects guest clients while it takes effect, and
-            has not been confirmed against a live network. Follow the
-            read-compare-skip discipline and do not retry on failure.
+        Live-verified on 2026-09-20: clearing and restoring the guest
+        password both read back correctly. This write disconnects guest
+        clients while it takes effect -- never retry a failed write in a
+        loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -544,5 +545,4 @@ class NetworksAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = _guest_password_url(network_id, as_envelope(parent))
-        warn_uncharacterised_write(_LOGGER, f"clear guest password for network {network_id}")
         return await self.delete(url, auth_token=auth_token)

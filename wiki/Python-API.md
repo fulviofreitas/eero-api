@@ -143,13 +143,15 @@ Read this before automating any write.
    ```
 
    The writes that do *not* log this line are the ones whose request shape is verified or
-   unchanged from earlier releases: `set_device_nickname`, `pause_device` (both verified),
-   `unblock_device` (verified), the DNS writes (verified), `set_wpa3` / `set_band_steering` /
-   `set_upnp` / `set_ipv6` / `configure_security`, `reboot_eero`, `reboot_network`,
-   `run_speed_test`, the profile CRUD, `set_profile_devices`, `create_reservation` /
-   `create_forward` and their update/delete, `create_burst_reporter`, `request_support`.
-   Absence of the warning is not a claim that the write has been verified — the per-method
-   status column in the [API Reference](API-Reference) is.
+   unchanged from earlier releases: `set_device_nickname`, `pause_device`, `set_device_type`
+   (all verified 2026-09-20 or earlier), `unblock_device` (verified), the DNS writes (verified),
+   `set_wpa3` / `set_band_steering` / `set_upnp` / `set_ipv6` / `configure_security`,
+   `reboot_eero`, `set_led`, `set_led_brightness`, `run_speed_test`, `set_guest_network`,
+   `set_guest_password`, `clear_guest_password` (verified 2026-09-20), `reboot_network`, the
+   profile CRUD, `set_profile_devices`, `create_reservation` / `create_forward` and their
+   update/delete, `create_burst_reporter`, `request_support`. Absence of the warning is not a
+   claim that the write has been verified — the per-method status column in the
+   [API Reference](API-Reference) is.
 3. **Settings-class writes may reboot the whole mesh.** A DNS write is confirmed to restart
    every eero and drop every client a few minutes after the 200. The SDK treats every other
    write to the network's `settings` link, and its settings-class siblings, as capable of the
@@ -216,7 +218,7 @@ countries = await client.get_sms_countries()
 ```python
 eeros = await client.get_eeros(network_id=None, refresh_cache=False)
 eero = await client.get_eero(eero_id, network_id=None, refresh_cache=False)   # never cached
-await client.reboot_eero(eero_id, network_id=None)                 # POST "" to the eero's reboot link
+await client.reboot_eero(eero_id, network_id=None)                 # POST "" to the eero's reboot link; verified (2026-09-20): only the targeted node rebooted
 await client.set_location(eero_id, "Living Room", network_id=None) # form-encoded; unverified
 connections = await client.get_connections(eero_id, network_id=None)
 support = await client.get_eero_support("<eero-serial>")          # may 404 on some nodes
@@ -254,16 +256,16 @@ await client.block_device("<mac>", network_id=None)      # form-encoded mac to P
 await client.unblock_device("<mac>", network_id=None)    # DELETE networks/{id}/blacklist/{mac}
 ```
 
-Unverified device writes, each logging the warning:
-
 ```python
 # The API's declared device-update form: a JSON PUT of nickname / paused / profile to the
 # device's own URL on the default version. Prefer set_device_nickname / pause_device for
-# those two fields — only the 2.3 write is verified to persist.
+# those two fields — only the 2.3 write is verified to persist. Unverified; logs the warning.
 await client.update_device_via_link("<mac>", nickname="TV", profile="/2.2/networks/<network-id>/profiles/<profile-id>")
 
-await client.set_device_type("<mac>", "<device-type>", network_id=None)
+await client.set_device_type("<mac>", "<device-type>", network_id=None)  # verified (2026-09-20): value persists and reads back
 labels = await client.get_device_labels("<mac>", network_id=None)
+# Verified NO-OP (2026-09-20): returns 200 with the labels echoed back, but the read-back
+# (get_device_labels) never shows the new value. Still logs the warning.
 await client.set_device_labels("<mac>", make_label="...", model_label="...", network_id=None)  # sent as query parameters
 ```
 
@@ -328,15 +330,15 @@ await client.set_guest_password("<new-password>", network_id=None)              
 await client.clear_guest_password(network_id=None)                               # DELETE
 ```
 
-All three writes are unverified and disconnect guest clients while they take effect.
-`set_guest_network` no longer takes a password.
+All three writes are live-verified (2026-09-20) and disconnect guest clients while they take
+effect. `set_guest_network` no longer takes a password.
 
 ---
 
 ## Speed Test & Diagnostics
 
 ```python
-results = await client.run_speed_test(network_id=None)                          # POST "" to the speedtest link
+results = await client.run_speed_test(network_id=None)                          # POST "" to the speedtest link; verified (2026-09-20): 202 with data: null, result appears in get_speed_tests about a minute later
 history = await client.get_speed_tests(network_id=None, limit=10, start_time=None, end_time=None)  # GET on the same link
 diagnostics = await client.get_diagnostics(network_id=None)
 await client.run_diagnostics(network_id=None, device="<mac>", symptom="<symptom>")  # JSON body of the keys given; unverified
@@ -617,8 +619,9 @@ await client.led_cycle("<eero-serial>", colors=["red", "blue"], duration="<durat
 > nothing — any caller who "successfully" set the LED through this SDK never did. The
 > form-encoded write to the `led_action` link is the shape the API declares and was verified
 > live on 2026-09-20: the node's light went off and back on, the app agreed, and no node
-> rebooted. `set_led_brightness` uses the same link but has not been verified. Read
-> `get_led_status` first and skip when it already matches.
+> rebooted. `set_led_brightness` uses the same link and was live-verified the same day: the
+> node's brightness changed and the read-back matched, with no reboot. Read `get_led_status`
+> first and skip when it already matches.
 
 The nightlight (Beacon only) is its own sub-resource at `data.nightlight.url` on the eero
 envelope; it accepts exactly `enabled`, `brightness_percentage`, and `schedule`. An eero without
