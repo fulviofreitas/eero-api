@@ -593,6 +593,36 @@ class TestFileStorageAtomicSecurePermissions:
         assert real_target.read_text() == "untouched"
         assert symlink_path.is_symlink()
 
+    @pytest.mark.asyncio
+    async def test_interrupted_write_leaves_previous_record_intact(self, tmp_path):
+        """A failure while writing the temp file must not touch the previous record.
+
+        Simulates an interruption partway through the write (e.g. disk full,
+        process killed) by making ``os.fsync`` raise once the temp file has
+        already been opened and partially written. Because the write goes
+        through a temp file + ``os.replace()``, the destination is only ever
+        touched by the atomic rename -- an exception before that point must
+        leave the previously-saved record completely unchanged.
+        """
+        cookie_file = tmp_path / "cookies.json"
+        storage = FileStorage(str(cookie_file))
+
+        await storage.save(AuthCredentials(session_id="previous"))
+        previous_bytes = cookie_file.read_bytes()
+
+        with patch("os.fsync", side_effect=OSError("simulated interrupted write")):
+            # save() swallows the error internally (logs at ERROR) rather
+            # than propagating, consistent with the rest of this backend.
+            await storage.save(AuthCredentials(session_id="new-value-that-must-not-land"))
+
+        assert cookie_file.read_bytes() == previous_bytes
+        loaded = json.loads(cookie_file.read_text())
+        assert loaded["session_id"] == "previous"
+
+        # No leftover temp file from the failed attempt.
+        leftovers = [p for p in tmp_path.iterdir() if p.name != "cookies.json"]
+        assert leftovers == []
+
 
 # ================ Identifier Redaction in Error Logging Tests (item 4) ================
 
@@ -1384,6 +1414,149 @@ class TestCredentialMigration:
         }
         # Single-writer invariant: the fallback file no longer exists.
         assert not cookie_file.exists()
+
+
+# ================ Migration Read-Back Verification Tests (item 2) ================
+
+
+class TestCredentialMigrationReadback:
+    """Migration read-back is logged at DEBUG on match, WARNING on mismatch.
+
+    Neither outcome affects the credentials returned to the caller -- only
+    the log level differs. No credential value is ever asserted to appear
+    in ``caplog.text``; these tests only check outcome and log level.
+    """
+
+    @pytest.mark.asyncio
+    async def test_keyring_migration_readback_match_logs_debug(
+        self, mock_session, mock_keyring, legacy_session_data, caplog
+    ):
+        """Test a successful read-back after keyring migration logs DEBUG."""
+        stored: dict[str, str] = {}
+        mock_keyring.get_password.side_effect = lambda service, account: stored.get(
+            "record", json.dumps(legacy_session_data)
+        )
+        mock_keyring.set_password.side_effect = lambda service, account, value: stored.__setitem__(
+            "record", value
+        )
+
+        api = AuthAPI(session=mock_session, use_keyring=True)
+        api._session = mock_session
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            await api._load_credentials()
+
+        assert api._credentials.session_id == legacy_session_data["session_id"]
+        readback_records = [r for r in caplog.records if "Migration read-back" in r.getMessage()]
+        assert len(readback_records) == 1
+        assert readback_records[0].levelno == logging.DEBUG
+        assert legacy_session_data["session_id"] not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_keyring_migration_readback_mismatch_logs_warning(
+        self, mock_session, mock_keyring, legacy_session_data, caplog
+    ):
+        """Test a read-back that doesn't match the migrated record logs WARNING.
+
+        Simulates a keyring backend whose write silently fails to persist
+        (``set_password`` is a no-op) so the record read back after the
+        migration write is still the original legacy record, which
+        ``_parse_stored_record`` re-migrates to an equal-valued
+        ``AuthCredentials`` -- so instead the read-back is forced to return
+        ``None`` outright, guaranteeing a mismatch.
+        """
+        mock_keyring.get_password.side_effect = [
+            json.dumps(legacy_session_data),  # initial load
+            None,  # read-back after the migration save
+        ]
+
+        api = AuthAPI(session=mock_session, use_keyring=True)
+        api._session = mock_session
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            await api._load_credentials()
+
+        # In-memory credentials are still returned despite the mismatch.
+        assert api._credentials.session_id == legacy_session_data["session_id"]
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "Migration read-back" in r.getMessage()
+        ]
+        assert len(warning_records) == 1
+        assert legacy_session_data["session_id"] not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_file_migration_readback_match_logs_debug(
+        self, mock_session, legacy_session_data, tmp_path, caplog
+    ):
+        """Test a successful read-back after file migration logs DEBUG."""
+        cookie_file = tmp_path / "cookies.json"
+        cookie_file.write_text(json.dumps(legacy_session_data))
+
+        api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=False)
+        api._session = mock_session
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            await api._load_credentials()
+
+        assert api._credentials.session_id == legacy_session_data["session_id"]
+        readback_records = [r for r in caplog.records if "Migration read-back" in r.getMessage()]
+        assert len(readback_records) == 1
+        assert readback_records[0].levelno == logging.DEBUG
+        assert legacy_session_data["session_id"] not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_file_migration_readback_mismatch_logs_warning(
+        self, mock_session, legacy_session_data, tmp_path, caplog
+    ):
+        """Test a read-back that fails to reflect the migrated write logs WARNING.
+
+        The migration's own ``save()`` call is patched to a no-op so the
+        file on disk is left holding the pre-migration legacy record; the
+        subsequent read-back therefore parses to a matching ``session_id``
+        by coincidence only if the legacy field name matched, so the legacy
+        fixture is written with a *different* value than what migration
+        would have produced, forcing the comparison to fail deterministically
+        via a corrupted-on-disk copy instead.
+        """
+        cookie_file = tmp_path / "cookies.json"
+        cookie_file.write_text(json.dumps(legacy_session_data))
+
+        api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=False)
+        api._session = mock_session
+
+        original_save = FileStorage.save
+
+        async def _save_then_corrupt(self, credentials):
+            await original_save(self, credentials)
+            # Simulate the on-disk record silently diverging from what was
+            # just written (e.g. a concurrent writer, or the write not
+            # actually landing despite no exception being raised).
+            self_path = self.file_path
+            with open(self_path, "w") as f:
+                json.dump(
+                    {
+                        "session_id": "unexpectedly-different",
+                        "schema_version": CREDENTIAL_SCHEMA_VERSION,
+                    },
+                    f,
+                )
+
+        with patch.object(FileStorage, "save", _save_then_corrupt):
+            with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+                await api._load_credentials()
+
+        # In-memory credentials still reflect the migrated legacy record.
+        assert api._credentials.session_id == legacy_session_data["session_id"]
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "Migration read-back" in r.getMessage()
+        ]
+        assert len(warning_records) == 1
+        assert legacy_session_data["session_id"] not in caplog.text
+        assert "unexpectedly-different" not in caplog.text
 
 
 # ========================== Context Manager Tests ==========================

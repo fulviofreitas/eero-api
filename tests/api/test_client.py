@@ -1384,6 +1384,100 @@ class TestClientParentResolutionHelpers:
         )
 
 
+# ========================== Cache isolation (item 4) ==========================
+
+
+class TestCacheIsolation:
+    """The cache and the object returned to a caller are independent copies.
+
+    See the ``EeroClient`` class docstring for the full contract: every
+    cache write stores a deep copy, and every cache read (including the
+    internal ``parent=`` lookups) returns a deep copy.
+    """
+
+    def test_update_cache_stores_independent_copy(self):
+        """Mutating the source object after `_update_cache` must not affect the cache."""
+        client = EeroClient()
+        source = {"meta": {"code": 200}, "data": {"id": "network_123", "name": "original"}}
+
+        client._update_cache("network", "network_123", source)
+        source["data"]["name"] = "mutated-after-cache-write"
+        source["data"]["new_key"] = "leaked"
+
+        cached = client._cache["network"]["network_123"]["data"]
+        assert cached["data"]["name"] == "original"
+        assert "new_key" not in cached["data"]
+
+    def test_get_from_cache_returns_independent_copy(self):
+        """Mutating a value returned by `_get_from_cache` must not affect the cache."""
+        client = EeroClient()
+        envelope = {"meta": {"code": 200}, "data": {"id": "network_123", "name": "original"}}
+        client._update_cache("network", "network_123", envelope)
+
+        first_read = client._get_from_cache("network", "network_123")
+        first_read["data"]["name"] = "mutated-by-caller"
+        first_read["data"]["new_key"] = "leaked"
+
+        second_read = client._get_from_cache("network", "network_123")
+        assert second_read["data"]["name"] == "original"
+        assert "new_key" not in second_read["data"]
+
+    @pytest.mark.asyncio
+    async def test_mutating_returned_envelope_does_not_poison_next_cached_read(self, mock_session):
+        """Mutating a response returned from a public method leaves the cache untouched."""
+        client = EeroClient(session=mock_session)
+        network_id = "network_123"
+        client._api.networks.get_network = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"id": network_id, "name": "original"}}
+        )
+
+        response = await client.get_network(network_id)
+        response["data"]["name"] = "mutated-by-caller"
+        response["data"]["new_key"] = "leaked"
+
+        cached_again = await client.get_network(network_id)
+        assert cached_again["data"]["name"] == "original"
+        assert "new_key" not in cached_again["data"]
+        # The mutation on the first call's own return value is real and
+        # independent -- it simply never reached the cache.
+        assert response["data"]["name"] == "mutated-by-caller"
+
+    @pytest.mark.asyncio
+    async def test_mutating_returned_envelope_does_not_poison_parent_kwargs(self, mock_session):
+        """Mutating a returned network envelope leaves later `parent=` kwargs unaffected."""
+        client = EeroClient(session=mock_session)
+        network_id = "network_123"
+        client._api.networks.get_network = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"id": network_id, "name": "original"}}
+        )
+        client._api.eeros.get_eeros = AsyncMock(return_value={"meta": {"code": 200}, "data": []})
+
+        response = await client.get_network(network_id)
+        response["data"]["name"] = "mutated-by-caller"
+        response["data"]["new_key"] = "leaked"
+
+        await client.get_eeros(network_id)
+
+        _, kwargs = client._api.eeros.get_eeros.call_args
+        parent = kwargs["parent"]
+        assert parent["data"]["name"] == "original"
+        assert "new_key" not in parent["data"]
+
+    def test_eero_parent_kwargs_match_is_independent_of_cache(self):
+        """The eero entry returned via `_eero_parent_kwargs` is a copy, not a cache alias."""
+        client = EeroClient()
+        eero_entry = {"id": "eero_1", "url": "/2.2/networks/network_123/eeros/eero_1"}
+        client._update_cache(
+            "eeros", "network_123_eeros", {"meta": {"code": 200}, "data": [eero_entry]}
+        )
+
+        result = client._eero_parent_kwargs("network_123", "eero_1")
+        result["parent"]["id"] = "mutated"
+
+        second_result = client._eero_parent_kwargs("network_123", "eero_1")
+        assert second_result["parent"]["id"] == "eero_1"
+
+
 # ========================== Cache invalidation for new write wrappers ==========================
 
 

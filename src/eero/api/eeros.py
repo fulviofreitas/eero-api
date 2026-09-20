@@ -224,7 +224,7 @@ class EerosAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Getting eero %s", eero_id)
+        _LOGGER.debug("Getting eero")
         return await self.get(_eero_own_url(eero_id, as_envelope(parent)), auth_token=auth_token)
 
     async def reboot_eero(
@@ -261,8 +261,8 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/reboot", link="reboot", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"reboot eero {eero_id}")
-        _LOGGER.debug("Rebooting eero %s", eero_id)
+        warn_uncharacterised_write(_LOGGER, "reboot eero")
+        _LOGGER.debug("Rebooting eero")
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )
@@ -295,7 +295,7 @@ class EerosAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Getting LED status for eero %s", eero_id)
+        _LOGGER.debug("Getting LED status for eero")
         return await self.get(_eero_own_url(eero_id, as_envelope(parent)), auth_token=auth_token)
 
     async def set_led(
@@ -340,7 +340,7 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/led", link="led_action", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"set LED for eero {eero_id}")
+        warn_uncharacterised_write(_LOGGER, "set LED for eero")
         return await self.put(
             url,
             auth_token=auth_token,
@@ -391,7 +391,7 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/led", link="led_action", parent=as_envelope(parent)
         )
-        warn_uncharacterised_write(_LOGGER, f"set LED brightness for eero {eero_id}")
+        warn_uncharacterised_write(_LOGGER, "set LED brightness for eero")
         return await self.put(
             url,
             auth_token=auth_token,
@@ -437,7 +437,7 @@ class EerosAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = _eero_own_url(eero_id, as_envelope(parent))
-        warn_uncharacterised_write(_LOGGER, f"set location for eero {eero_id}")
+        warn_uncharacterised_write(_LOGGER, "set location for eero")
         return await self.put(url, auth_token=auth_token, data={"location": location})
 
     async def get_nightlight(
@@ -474,7 +474,7 @@ class EerosAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = await self._resolve_nightlight_url(eero_id, auth_token, as_envelope(parent))
-        _LOGGER.debug("Getting nightlight settings for eero %s", eero_id)
+        _LOGGER.debug("Getting nightlight settings for eero")
         return await self.get(url, auth_token=auth_token)
 
     async def set_nightlight(
@@ -545,7 +545,7 @@ class EerosAPI(AuthenticatedAPI):
             )
 
         url = await self._resolve_nightlight_url(eero_id, auth_token, as_envelope(parent))
-        warn_uncharacterised_write(_LOGGER, f"set nightlight for eero {eero_id}")
+        warn_uncharacterised_write(_LOGGER, "set nightlight for eero")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def set_nightlight_brightness(
@@ -635,7 +635,7 @@ class EerosAPI(AuthenticatedAPI):
         url = sub_resource_url(
             eero_id, "eeros/{id}/connections", link="connections", parent=as_envelope(parent)
         )
-        _LOGGER.debug("Getting connections for eero %s", eero_id)
+        _LOGGER.debug("Getting connections for eero")
         return await self.get(url, auth_token=auth_token)
 
     async def node_action(
@@ -687,7 +687,7 @@ class EerosAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            f"perform node action {action!r} on eero {eero_id} "
+            f"perform node action {action!r} on eero "
             "-- power-cycles ports and, for POWER_CYCLE_ALL_PORTS_AND_REBOOT, reboots the eero",
         )
         return await self.post(url, auth_token=auth_token, json={"action": action})
@@ -740,7 +740,7 @@ class EerosAPI(AuthenticatedAPI):
         url = resource_url(eero_id, _PORT_ACTION_TEMPLATE.format(interface_number=interface_number))
         warn_uncharacterised_write(
             _LOGGER,
-            f"perform port action {action!r} on eero {eero_id} port {interface_number}",
+            f"perform port action {action!r} on eero port {interface_number}",
         )
         return await self.post(url, auth_token=auth_token, json={"action": action})
 
@@ -783,7 +783,7 @@ class EerosAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(eero_serial, "eeros/{id}/led_cycle")
-        warn_uncharacterised_write(_LOGGER, f"cycle LED for eero {eero_serial}")
+        warn_uncharacterised_write(_LOGGER, "cycle LED for eero")
         return await self.post(
             url,
             auth_token=auth_token,
@@ -829,7 +829,7 @@ class EerosAPI(AuthenticatedAPI):
         brightness_percentage = _validate_brightness(brightness_percentage, "brightness_percentage")
 
         url = resource_url(eero_id, "eeros/{id}/nightlight/override")
-        warn_uncharacterised_write(_LOGGER, f"override nightlight preview for eero {eero_id}")
+        warn_uncharacterised_write(_LOGGER, "override nightlight preview for eero")
         return await self.post(
             url,
             auth_token=auth_token,
@@ -862,5 +862,5 @@ class EerosAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = resource_url(eero_serial, "eeros/{id}/support")
-        _LOGGER.debug("Getting support diagnostics for eero %s", eero_serial)
+        _LOGGER.debug("Getting support diagnostics for eero")
         return await self.get(url, auth_token=auth_token)

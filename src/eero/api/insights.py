@@ -229,7 +229,7 @@ class InsightsAPI(AuthenticatedAPI):
 
         url = resolve_nested_url(network, mac, prefix="insights/devices")
         params = _insights_params(start=start, end=end, cadence=cadence, insight_type=insight_type)
-        _LOGGER.debug("Getting insights for device %s in network %s", mac, network)
+        _LOGGER.debug("Getting insights for device in network %s", network)
         return await self.get(url, auth_token=auth_token, params=params)
 
     async def get_profiles_insights(

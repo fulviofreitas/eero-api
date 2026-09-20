@@ -67,6 +67,29 @@ class AuthCredentials:
         self.session_id = None
 
 
+def _log_migration_readback(backend_name: str, matched: bool) -> None:
+    """Log the outcome of a post-migration read-back check.
+
+    Never logs the credential values themselves -- only whether the record
+    read back from the backend after a legacy-record migration matches what
+    was just written.
+
+    Args:
+        backend_name: Human-readable name of the storage backend, used only
+            in the log message (e.g. ``"keyring"``, ``"file"``).
+        matched: Whether the read-back record's session token matched the
+            migrated in-memory credentials.
+    """
+    if matched:
+        _LOGGER.debug("Migration read-back verified for %s storage", backend_name)
+    else:
+        _LOGGER.warning(
+            "Migration read-back did not match for %s storage; "
+            "in-memory credentials are still returned to the caller",
+            backend_name,
+        )
+
+
 def _parse_stored_record(data: Dict[str, Any]) -> Tuple[AuthCredentials, bool]:
     """Parse a raw stored credential record, migrating legacy shapes.
 
@@ -123,7 +146,15 @@ class KeyringStorage(CredentialStorage):
     ACCOUNT_NAME = "auth-tokens"
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from keyring, migrating a legacy record in place."""
+        """Load credentials from keyring, migrating a legacy record in place.
+
+        When a legacy record is migrated, the write is read back and
+        compared against the migrated in-memory credentials; the outcome is
+        logged at DEBUG (match) or WARNING (mismatch), never the values
+        themselves (see :func:`_log_migration_readback`). The in-memory
+        credentials are returned to the caller either way -- a failed
+        read-back does not fail the load.
+        """
         try:
             token_data = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
             if token_data:
@@ -133,6 +164,13 @@ class KeyringStorage(CredentialStorage):
                 if migrated:
                     _LOGGER.debug("Migrated legacy credential record in keyring storage")
                     await self.save(credentials)
+                    readback_raw = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
+                    readback_matched = (
+                        readback_raw is not None
+                        and _parse_stored_record(json.loads(readback_raw))[0].session_id
+                        == credentials.session_id
+                    )
+                    _log_migration_readback("keyring", readback_matched)
 
                 return credentials
         except Exception as e:
@@ -179,7 +217,15 @@ class FileStorage(CredentialStorage):
         return self._file_path
 
     async def load(self) -> AuthCredentials:
-        """Load credentials from file, migrating a legacy record in place."""
+        """Load credentials from file, migrating a legacy record in place.
+
+        When a legacy record is migrated, the write is read back and
+        compared against the migrated in-memory credentials; the outcome is
+        logged at DEBUG (match) or WARNING (mismatch), never the values
+        themselves (see :func:`_log_migration_readback`). The in-memory
+        credentials are returned to the caller either way -- a failed
+        read-back does not fail the load.
+        """
         try:
             if not os.path.exists(self._file_path):
                 _LOGGER.debug("Cookie file not found: %s", self._file_path)
@@ -193,6 +239,16 @@ class FileStorage(CredentialStorage):
             if migrated:
                 _LOGGER.debug("Migrated legacy credential record in file storage")
                 await self.save(credentials)
+                readback_matched = False
+                try:
+                    with open(self._file_path, "r") as f:
+                        readback_data = json.load(f)
+                    readback_matched = (
+                        _parse_stored_record(readback_data)[0].session_id == credentials.session_id
+                    )
+                except (OSError, json.JSONDecodeError):
+                    readback_matched = False
+                _log_migration_readback("file", readback_matched)
 
             return credentials
 
@@ -206,31 +262,63 @@ class FileStorage(CredentialStorage):
     async def save(self, credentials: AuthCredentials) -> None:
         """Save credentials to file with restricted permissions.
 
-        The file is created (or truncated) via ``os.open`` with mode 0600
-        applied at creation time -- there is no window where the file is
-        briefly world/group readable, unlike ``open()`` + a later
-        ``chmod()``. ``O_NOFOLLOW`` refuses to write through a symlink at
-        ``file_path`` (e.g. one planted by another local user to redirect
-        the write elsewhere): the open fails with ``OSError`` and nothing is
-        written. The trailing ``chmod`` is kept as defense in depth in case
-        a restrictive mode passed to ``os.open`` is not honoured verbatim on
-        some platform/filesystem combination.
+        The record is first written to a fresh temporary file in the same
+        directory as the destination, created with
+        ``O_CREAT | O_EXCL | O_NOFOLLOW`` at mode 0600 (no window where the
+        file is briefly world/group readable, and no symlink can be
+        followed for the temporary name itself). Once the payload is fully
+        written and flushed, ``os.replace()`` atomically swaps it into
+        ``file_path`` -- a process interrupted mid-write (crash, kill -9,
+        power loss) leaves either the untouched previous record or nothing
+        at all; it can never leave a truncated/partial record at the final
+        path, unlike writing in place.
+
+        The final path is refused when it already exists as a symlink (the
+        same protection the previous in-place ``O_NOFOLLOW`` open provided):
+        a symlink planted by another local user to redirect the write
+        elsewhere is not followed, and nothing is written. The trailing
+        ``chmod`` is kept as defense in depth in case the mode passed to
+        ``os.open`` is not honoured verbatim on some platform/filesystem
+        combination.
         """
         try:
             # Ensure directory exists
-            cookie_dir = os.path.dirname(self._file_path)
-            if cookie_dir:
-                os.makedirs(cookie_dir, exist_ok=True)
+            cookie_dir = os.path.dirname(self._file_path) or "."
+            os.makedirs(cookie_dir, exist_ok=True)
+
+            # Refuse to write through a symlink at the final path -- same
+            # semantics as the previous O_NOFOLLOW in-place open.
+            if os.path.islink(self._file_path):
+                raise OSError(f"Refusing to write through symlink: {self._file_path}")
 
             payload = json.dumps(credentials.to_dict()).encode("utf-8")
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
-            fd = os.open(self._file_path, flags, 0o600)
-            with os.fdopen(fd, "wb") as f:
-                f.write(payload)
 
-            # Defense in depth: re-assert restrictive permissions (owner
-            # read/write only) in case the mode above wasn't fully honoured.
-            os.chmod(self._file_path, stat.S_IRUSR | stat.S_IWUSR)
+            tmp_name = f".{os.path.basename(self._file_path)}.{os.getpid()}.tmp"
+            tmp_path = os.path.join(cookie_dir, tmp_name)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            fd = os.open(tmp_path, flags, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Defense in depth: re-assert restrictive permissions (owner
+                # read/write only) in case the mode above wasn't fully
+                # honoured.
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+
+                os.replace(tmp_path, self._file_path)
+            except BaseException:
+                # Best-effort cleanup of the temporary file on any failure
+                # (including the atomic replace itself) so a half-written
+                # temp file never accumulates.
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+
             _LOGGER.debug("Saved authentication data to %s", self._file_path)
 
         except Exception as e:

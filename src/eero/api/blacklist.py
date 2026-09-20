@@ -133,7 +133,7 @@ class BlacklistAPI(AuthenticatedAPI):
 
         url = self._blacklist_url(network, parent)
         warn_uncharacterised_write(_LOGGER, "add_to_blacklist")
-        _LOGGER.debug("Adding MAC %s to blacklist at %s", mac, url)
+        _LOGGER.debug("Adding MAC to blacklist at %s", url)
         return await self.post(url, auth_token=auth_token, data={"mac": mac})
 
     async def remove_from_blacklist(

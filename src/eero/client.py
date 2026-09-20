@@ -5,6 +5,7 @@ All data extraction, field mapping, and transformation must be done by downstrea
 Response format: {"meta": {...}, "data": {...}}
 """
 
+import copy
 import logging
 import time
 from typing import Any, Dict, List, Mapping, Optional
@@ -30,6 +31,19 @@ class EeroClient:
     - Nested data extraction (e.g., geo_ip.isp → isp_name)
     - Status normalization
     - Model validation/conversion
+
+    Cache isolation contract: the in-memory cache and the object returned to
+    a caller are independent copies of each other. Every write into the
+    cache stores a ``copy.deepcopy`` of the response, and every read from
+    the cache returns a fresh ``copy.deepcopy`` of the stored entry
+    (including when a cached envelope is reused internally as a domain
+    call's ``parent=`` argument). A caller that mutates a dict/list it
+    received back from a method on this class can therefore never poison
+    the cache, and can never affect a ``parent=`` envelope built from that
+    cache on a later call. The one exception -- by design, not oversight --
+    is the value returned directly from a fresh (non-cached) domain-API
+    call: that object is handed to the caller exactly as the domain API
+    produced it, and only the copy stored in the cache is independent of it.
     """
 
     def __init__(
@@ -115,18 +129,32 @@ class EeroClient:
         return (current_time - cache_entry["timestamp"]) < self._cache_timeout
 
     def _update_cache(self, cache_key: str, subkey: Optional[str], data: Any) -> None:
-        """Update a cache entry."""
+        """Store a deep copy of ``data`` in the cache.
+
+        A deep copy is stored (rather than the object itself) so that any
+        later mutation of the object the caller received back from a public
+        method can never reach the cached entry. See the cache isolation
+        contract in the class docstring.
+        """
         current_time = time.monotonic()
+        stored = copy.deepcopy(data)
 
         if subkey is None:
-            self._cache[cache_key] = {"data": data, "timestamp": current_time}
+            self._cache[cache_key] = {"data": stored, "timestamp": current_time}
         else:
             if cache_key not in self._cache:
                 self._cache[cache_key] = {}
-            self._cache[cache_key][subkey] = {"data": data, "timestamp": current_time}
+            self._cache[cache_key][subkey] = {"data": stored, "timestamp": current_time}
 
     def _get_from_cache(self, cache_key: str, subkey: Optional[str] = None) -> Any:
-        """Get data from cache."""
+        """Return a deep copy of a cached entry.
+
+        A deep copy is returned (rather than the cached object itself) so
+        that a caller mutating the result -- whether it reaches them
+        directly or via a ``parent=`` kwarg built from it -- can never
+        poison the cache. See the cache isolation contract in the class
+        docstring.
+        """
         if cache_key not in self._cache:
             return None
 
@@ -137,7 +165,7 @@ class EeroClient:
                 return None
             cache_entry = self._cache[cache_key][subkey]
 
-        return cache_entry.get("data")
+        return copy.deepcopy(cache_entry.get("data"))
 
     def clear_cache(self) -> None:
         """Clear all cached data."""

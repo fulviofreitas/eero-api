@@ -184,7 +184,7 @@ class DevicesAPI(AuthenticatedAPI):
             self._device_url(network, mac)
         )
 
-        _LOGGER.debug("Getting device %s in network %s", mac, network)
+        _LOGGER.debug("Getting device in network %s", network)
         return await self.get(url, auth_token=auth_token)
 
     async def set_device_nickname(self, network_id: str, mac: str, nickname: str) -> Dict[str, Any]:
@@ -209,7 +209,7 @@ class DevicesAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("Setting nickname for device %s to '%s'", mac, nickname)
+        _LOGGER.debug("Setting nickname for device")
 
         return await self._update_device(network_id, mac, {"nickname": nickname}, auth_token)
 
@@ -241,7 +241,7 @@ class DevicesAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        _LOGGER.debug("%s device %s", "Pausing" if paused else "Unpausing", mac)
+        _LOGGER.debug("%s device", "Pausing" if paused else "Unpausing")
 
         return await self._update_device(network_id, mac, {"paused": paused}, auth_token)
 
@@ -306,7 +306,7 @@ class DevicesAPI(AuthenticatedAPI):
             payload["profile"] = profile
 
         warn_uncharacterised_write(_LOGGER, "update_device_via_link")
-        _LOGGER.debug("Updating device %s via its own link: %s", mac, sorted(payload))
+        _LOGGER.debug("Updating device via its own link: %s", sorted(payload))
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def set_device_type(self, network: str, mac: str, device_type: str) -> Dict[str, Any]:
@@ -335,7 +335,7 @@ class DevicesAPI(AuthenticatedAPI):
 
         url = self._device_url(network, mac)
         warn_uncharacterised_write(_LOGGER, "set_device_type")
-        _LOGGER.debug("Setting device type for %s to '%s'", mac, device_type)
+        _LOGGER.debug("Setting device type to '%s'", device_type)
         return await self.put(url, auth_token=auth_token, json={"device_type": device_type})
 
     async def get_device_labels(self, network: str, mac: str) -> Dict[str, Any]:
@@ -357,7 +357,7 @@ class DevicesAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = f"{self._device_url(network, mac)}/labels"
-        _LOGGER.debug("Getting labels for device %s", mac)
+        _LOGGER.debug("Getting labels for device")
         return await self.get(url, auth_token=auth_token)
 
     async def set_device_labels(
@@ -411,7 +411,7 @@ class DevicesAPI(AuthenticatedAPI):
             params["type_label"] = type_label
 
         warn_uncharacterised_write(_LOGGER, "set_device_labels")
-        _LOGGER.debug("Setting labels for device %s: %s", mac, sorted(params))
+        _LOGGER.debug("Setting labels for device: %s", sorted(params))
         return await self.put(url, auth_token=auth_token, params=params)
 
     async def block_device(self, network: str, mac: str) -> Dict[str, Any]:
