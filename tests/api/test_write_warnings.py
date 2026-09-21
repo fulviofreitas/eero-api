@@ -41,6 +41,8 @@ _WRITE_PREFIXES = (
     "unblock_",
     "apply_",
     "reboot_",
+    "pause_",
+    "rename_",
     "run_",
     "regenerate_",
     "enable_",
