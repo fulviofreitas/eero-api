@@ -30,13 +30,13 @@ If your Eero account uses Amazon for login (Sign in with Amazon), this library m
 
 **Workaround:**
 
-1. Have someone in your household create a standard Eero account using email and password (not Amazon login)
+1. Have someone in your household create a standard Eero account with an email address or phone number (not Sign in with Amazon)
 2. In the Eero app, invite that account as an admin to your network
 3. Use those new credentials to authenticate with this library
 
 ```python
 async with EeroClient() as client:
-    # Use the new email/password account, not your Amazon-linked account
+    # Use the new email/phone account, not your Amazon-linked account
     await client.login("new-admin@example.com")
     code = input("Enter verification code: ")
     await client.verify(code)
@@ -65,7 +65,7 @@ async with EeroClient() as client:
         await client.verify(code)
 ```
 
-> **Note**: A token that the server rejects during a refresh is already cleared from storage by the SDK (except for `error.verification.required`, which means the OTP flow was never completed — call `verify()`). The `clear_session_token()` above is harmless in that case.
+> **Note**: A token that the server rejects during a refresh is already cleared from storage by the SDK — credentials are kept only for the verification group (`error.verification.*`, `error.login.*`, `error.too.many.resends`, `error.email.unverified`, meaning the OTP flow was never completed — call `verify()`) or `error.session.refresh`. The `clear_session_token()` above is harmless in that case.
 
 > 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`logout()` directly — use these public methods instead of reaching into `client._api` for auth. `client._api.<domain>` is private (not covered by semver) but it IS the documented escape hatch for domain methods that have no `EeroClient` wrapper — see [API Reference](API-Reference).
 
@@ -102,7 +102,7 @@ async with EeroClient() as client:
 
 ### API Timeouts
 
-Request timeouts are **not configurable** — `EeroClient` has no `timeout` constructor argument. Every request uses a fixed `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`).
+Every request defaults to `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`). There is no `timeout` constructor argument on `EeroClient`, `EeroAPI` or `BaseAPI`; the only way to change it is a per-call `timeout=` kwarg on the `BaseAPI` transport methods, which `EeroClient` does not expose.
 
 If you're on a slow or unreliable connection, retry with backoff in your own code and catch `EeroTimeoutException`:
 
@@ -141,11 +141,11 @@ Exception names all end in `Exception`, not `Error` — there is no `EeroAuthent
 
 ### My `except EeroAPIException` block stopped catching 404s / 403s / 400s
 
-It still catches 404s and `error.access.denied` 403s — since v8.0.0 those raise `EeroNotFoundException` and `EeroAccessDeniedException`, both **subclasses** of `EeroAPIException`. What it no longer catches is an API `400` carrying a form-error string (`error.form.errors`, `error.form.email.malformed`, …): that now raises `EeroValidationException`, which derives from `EeroException` only. Add an `except EeroValidationException` clause (or catch `EeroException`). See [Error Handling](Error-Handling#the-error-catalogue-eeroerrors).
+It still catches 404s and `error.access.denied` 403s — since v8.0.0 those raise `EeroNotFoundException` and `EeroAccessDeniedException`, both **subclasses** of `EeroAPIException`. What it no longer catches is an API `400` carrying a form-error string (`error.form.errors`, `error.form.email.malformed`, …): that now raises `EeroValidationException`, which derives from `EeroException` only. Add an `except EeroValidationException` clause (or catch `EeroException`). The one exception is `login()`: a server-rejected identifier (400, `error.form.*`) is re-wrapped there and surfaces as `EeroAuthenticationException`, with the `error.form.*` string on `error_code`. See [Error Handling](Error-Handling#the-error-catalogue-eeroerrors).
 
 ### My code matched on `str(exc)` and no longer works
 
-Exception messages no longer contain the response body — only the status plus the recognised catalogue string, or the fixed label `unrecognised error string`. Match on `exc.error_code` (the exact `meta.error` string) or on the exception class instead, and read `exc.envelope` for the API's full error metadata. See [Migration](Migration#error-classes-and-attributes).
+Exception messages no longer contain the response body. The message is the recognised `meta.error` catalogue string (trimmed, lowercased) or the fixed label `unrecognised error string`; `EeroAPIException` and its subclasses prefix it with `API error <status>: `, while `EeroAuthenticationException` (all 401s), `EeroRateLimitException` and API-reported `EeroValidationException` carry no status in the message at all. `meta.code`, the raw body and the URL are never embedded. Match on `exc.error_code` (the exact `meta.error` string) or on the exception class instead, and read `exc.envelope` for the API's full error metadata. See [Migration](Migration#error-classes-and-attributes).
 
 ### `ModuleNotFoundError: No module named 'eero.models'`
 
@@ -277,14 +277,16 @@ For detailed logging when troubleshooting issues, enable Python's standard loggi
 import logging
 from eero.logging import get_secure_logger
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("eero").setLevel(logging.DEBUG)
+logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
 _LOGGER = get_secure_logger(__name__)
 _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
-# Output: Response: {'user_token': 'secr...[REDACTED:9chars]', 'status': 'ok'}
+# Output: Response: {'user_token': '[REDACTED:9chars]', 'status': 'ok'}
 ```
 
-> ⚠️ **Warning:** This SDK's own logging goes through `SecureLoggerAdapter`, which automatically redacts sensitive fields (tokens, cookies, passwords — see `src/eero/logging.py`). But calling `logging.basicConfig(level=logging.DEBUG)` also turns on DEBUG logging for third-party libraries like `aiohttp`, which are **not** redacted and can print the raw `X-User-Token` and `Cookie` request headers — your live session token — to your logs. Scope DEBUG level to your own loggers in production rather than the root logger. See [Logging and Security](Logging-and-Security) for details.
+> ⚠️ **Warning:** Most of this SDK's own logging (the transport, auth, storage and the majority of domain APIs) goes through `SecureLoggerAdapter`, which automatically redacts sensitive fields (tokens, cookies, passwords — see `src/eero/logging.py`). But calling `logging.basicConfig(level=logging.DEBUG)` also turns on DEBUG logging for third-party libraries like `aiohttp`, which are **not** redacted and can print the raw `X-User-Token` and `Cookie` request headers — your live session token — to your logs. Scope DEBUG level to your own loggers in production rather than the root logger. See [Logging and Security](Logging-and-Security) for details.
 
 ---
 

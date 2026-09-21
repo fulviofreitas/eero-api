@@ -13,10 +13,11 @@ In practice, the modules that handle credentials or response bodies directly opt
 | Module | Logger | Why |
 |---|---|---|
 | `src/eero/api/auth.py` | `get_secure_logger(__name__)` | Handles login, verify, refresh, session tokens |
-| `src/eero/api/base.py` (the transport) | `get_secure_logger(__name__)` | Logs parsed error envelopes at `DEBUG`/`ERROR` — never the raw body text — so any credential-shaped field in an error envelope is redacted |
-| Domain APIs and `client.py` | plain `logging.getLogger(__name__)` unless a module opts in | Log request method/URL/status and identifiers, not raw payload bodies |
+| `src/eero/api/base.py` (the transport) | `get_secure_logger(__name__)` | Logs parsed error envelopes at `DEBUG` only (the `ERROR` line carries just the status and method) — never the raw body text — so any credential-shaped field in an error envelope is redacted |
+| `src/eero/api/auth_storage.py` and almost every domain API | `get_secure_logger(__name__)` | Credential persistence, and domain modules whose envelopes may echo identifiers |
+| `client.py`, `dns.py`, `security.py`, `support.py`, `transfer.py`, `ac_compat.py`, `burst_reporters.py` | plain `logging.getLogger(__name__)` | Log method/URL/status and identifiers, not payloads |
 
-> **Note**: If you add your own debug logging around SDK calls — e.g. logging the raw envelope returned by `get_account()` or `get_devices()` — use `get_secure_logger()` yourself. The SDK's internal loggers only protect the modules listed above.
+> **Note**: If you add your own debug logging around SDK calls — e.g. logging the raw envelope returned by `get_account()` or `get_devices()` — use `get_secure_logger()` yourself. The SDK's internal loggers only protect the SDK's own log lines.
 
 ---
 
@@ -30,7 +31,7 @@ from eero.logging import get_secure_logger
 _LOGGER = get_secure_logger(__name__)
 
 _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
-# Output: Response: {'user_token': 'secr...[REDACTED:9chars]', 'status': 'ok'}
+# Output: Response: {'user_token': '[REDACTED:9chars]', 'status': 'ok'}
 ```
 
 `get_secure_logger(name, sensitive_patterns=None, visible_chars=4)` is `@lru_cache`d — repeated calls with the same `(name, sensitive_patterns, visible_chars)` return the same adapter instance.
@@ -65,7 +66,7 @@ Both the positional dict argument and the `extra` dict are redacted independentl
 from eero.logging import redact_sensitive
 
 redact_sensitive({"password": "hunter2", "username": "alice"})
-# {'password': 'hunt...[REDACTED:7chars]', 'username': 'alice'}
+# {'password': '[REDACTED:7chars]', 'username': 'alice'}
 ```
 
 Behavior, verified against `src/eero/logging.py`:
@@ -82,8 +83,11 @@ Behavior, verified against `src/eero/logging.py`:
     "session_id", "session", "cookie", "auth", "api_key", "apikey",
     "access_token", "refresh_token", "user_token", "bearer",
     "authorization", "private",
+    "login", "email", "phone", "sms", "serial", "mac", "mac_address", "ssid",
 }
 ```
+
+The first eighteen are *credential-shaped* (`_ZERO_VISIBILITY_PATTERNS`) and never show any of the value; the last eight are *identifier-shaped* and keep a short visible prefix.
 
 ### Redacted value format
 
@@ -96,6 +100,8 @@ Behavior, verified against `src/eero/logging.py`:
 | `"abc"` (≤ `visible_chars`) | `[REDACTED:3chars]` |
 | `"secret123"` (> `visible_chars`) | `secr...[REDACTED:9chars]` |
 
+The `secr...` prefix form applies only to identifier-shaped keys (`email`, `phone`, `login`, `mac`, `ssid`, `serial`, `sms`); credential-shaped keys always produce `[REDACTED:Nchars]` regardless of `visible_chars`.
+
 ### Before / after
 
 ```python
@@ -104,10 +110,10 @@ raw = {"session_id": "s_9f8a7b6c5d4e", "email": "you@example.com", "status": "ok
 
 ```text
 Before: {'session_id': 's_9f8a7b6c5d4e', 'email': 'you@example.com', 'status': 'ok'}
-After:  {'session_id': 's_9f...[REDACTED:14chars]', 'email': 'you@example.com', 'status': 'ok'}
+After:  {'session_id': '[REDACTED:14chars]', 'email': 'you@...[REDACTED:15chars]', 'status': 'ok'}
 ```
 
-> **Note**: `email` isn't in `DEFAULT_SENSITIVE_PATTERNS`, so it's logged in full. If your own logging touches account emails or phone numbers, extend the pattern set with `add_sensitive_pattern()` below.
+> **Note**: `email`/`phone`/`login` are identifier-shaped patterns: the first 4 characters remain visible. Credential-shaped keys (`token`, `session*`, `cookie`, `auth*`, `password`, `secret`, `key`, …) show only the length. To redact additional field names of your own, extend the pattern set with `add_sensitive_pattern()` below.
 
 ---
 
@@ -128,12 +134,8 @@ logger.debug("Config: %s", {"my_webhook_url": "https://hooks.example.com/T00/B00
 # Config: {'my_webhook_url': 'http...[REDACTED:38chars]'}
 ```
 
-> ⚠️ **Warning:** `add_sensitive_pattern()` mutates **process-global** state: it resets
-> `_SENSITIVE_REGEX` to `None`, so the *very next* sensitive-key check anywhere in the process
-> (across every `SecureLoggerAdapter`, not just yours) recompiles against whatever pattern set
-> happens to be passed to it. Call it once at startup — e.g. alongside your logging
-> configuration — rather than per-request, and be aware it affects every logger in the process,
-> not just the one you're configuring.
+> **Note**: `add_sensitive_pattern()` is pure — it touches no global state and has no effect on
+> any existing logger; only loggers you build with the returned set use it.
 
 ---
 
@@ -164,7 +166,7 @@ Before pasting logs into a GitHub issue:
 
 - [ ] Confirm you did **not** set the root logger to `DEBUG` (see the warning above) — if you did, re-run with `logging.getLogger("eero").setLevel(logging.DEBUG)` instead and capture fresh output
 - [ ] Search the log for `X-User-Token:`, `Cookie:`, `Set-Cookie:`, `s=`, or any `session_id`/`user_token` value and redact manually — the SDK's redaction only covers what passes through `get_secure_logger()`
-- [ ] Scrub the account email address / phone number used for login — it's not in `DEFAULT_SENSITIVE_PATTERNS`
+- [ ] Scrub the account email / phone from any `aiohttp` or plain-logger output — the secure logger redacts them only when they appear as dict keys
 - [ ] Scrub the network's Wi-Fi password and guest network password if present in a `get_network()` response dump
 - [ ] Truncate or omit full response bodies where possible — device MACs, hostnames, and nicknames are personally identifying
 - [ ] Double-check any `extra={...}` dicts you added yourself for custom debug statements
@@ -182,8 +184,8 @@ Verified in `src/eero/api/base.py` and `src/eero/const.py`:
 | 🧹 Header validation | Every header value must be printable ASCII with no CR/LF (`EeroValidationException` otherwise) — header injection is impossible by construction |
 | 🔁 Redirects | Never followed — `allow_redirects=False` is forced on every request and cannot be re-enabled (`allow_redirects=True` raises `EeroValidationException`); any `3xx` response is rejected as an `EeroAPIException` rather than letting the token travel to a different host |
 | 📏 Response size cap | `MAX_RESPONSE_BYTES = 10 * 1024 * 1024` (10 MiB) — the body is streamed in 64 KiB chunks and the request is aborted with `EeroAPIException` if the cap is exceeded |
-| 🙈 Error bodies | The raw text of an error response is never embedded in an exception message or log line. The message carries the HTTP status plus `meta.code` / `meta.error` (or a byte count for a non-JSON body); the parsed envelope is attached as `err.envelope` and logged only through the secure logger |
-| 🔒 HTTPS only | `API_HOST = "https://api-user.e2ro.com"`, `API_ENDPOINT = f"{API_HOST}/2.2"` (two device-mutation writes use `f"{API_HOST}/2.3"`, see [API Reference](API-Reference#constants)) — HTTPS-only hardcoded hosts; there is no HTTP fallback |
+| 🙈 Error bodies | The raw text of an error response is never embedded in an exception message or log line. The exception message is the recognised `meta.error` catalogue string (trimmed, lowercased) or the fixed label `unrecognised error string`; `EeroAPIException` and its subclasses prefix it with `API error <status>: `, while `EeroAuthenticationException` (all 401s), `EeroRateLimitException` and API-reported `EeroValidationException` carry no status in the message at all. `meta.code`, the raw body and the URL are never embedded (a byte count appears only for a 2xx whose body is not valid JSON). Read `err.envelope` / `err.error_code` / `err.status_code` for details; the parsed envelope is logged only through the secure logger |
+| 🔒 HTTPS only | `API_HOST = "https://api-user.e2ro.com"`; `API_ENDPOINT = api_endpoint("2.2")`; device writes (`DEVICE_UPDATE_ENDPOINT`), multi-static-IP and secondary-WAN use `api_endpoint("2.3")` (see [API Reference](API-Reference#constants)) — HTTPS-only hardcoded hosts; there is no HTTP fallback |
 
 See [Error Handling](Error-Handling#http-status--exception-mapping) for the full status-to-exception mapping these behaviors feed into.
 

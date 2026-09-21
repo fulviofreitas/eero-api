@@ -110,8 +110,12 @@ await client.get_eeros(network_id="<network-id>")     # explicit network
 Every resource argument — `network_id`, `eero_id`, `device_id`, `profile_id`, `forward_id`,
 `reservation_id`, `invite_id`, a `schedule` — accepts a bare ID, the resource's API path (the
 `url` value from its envelope), or that path joined onto the API host. A URL on any other host
-or scheme raises `EeroValidationException` before any request. Domain methods additionally take
-a keyword-only `parent=` envelope so the link the API published is used instead of a template;
+or scheme raises `EeroValidationException` before any request. A path or URL for a *child*
+resource (profile, device, invite, reservation, forward, admin) must also sit under the
+addressed network in the matching family — `/2.2/networks/<network-id>/profiles/<profile-id>`
+for a profile, with nothing after the id — or it is rejected before any request; a bare ID
+must be a single path segment (letters, digits, `.`, `_`, `:`, `-`). Domain methods
+additionally take a keyword-only `parent=` envelope so the link the API published is used instead of a template;
 `EeroClient` passes its cached envelopes as `parent=` for you. Full description:
 [Network Targeting — Resource links](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
 
@@ -142,16 +146,16 @@ Read this before automating any write.
    never retry a failed write in a loop.
    ```
 
-   The writes that do *not* log this line are the ones whose request shape is verified or
-   unchanged from earlier releases: `set_device_nickname`, `pause_device`, `set_device_type`
-   (all verified 2026-09-20 or earlier), `unblock_device` (verified), the DNS writes (verified),
-   `set_wpa3` / `set_band_steering` / `set_upnp` / `set_ipv6` / `configure_security`,
+   The only writes that do *not* log this line are the live-verified ones in the SDK's
+   allowlist (`tests/api/test_write_warnings.py`): `set_device_nickname`, `pause_device`,
+   `set_device_type`, `unblock_device` (via `BlacklistAPI.remove_from_blacklist`),
    `reboot_eero`, `set_led`, `set_led_brightness`, `run_speed_test`, `set_guest_network`,
-   `set_guest_password`, `clear_guest_password` (verified 2026-09-20), `reboot_network`, the
-   profile CRUD, `set_profile_devices`, `create_reservation` / `create_forward` and their
-   update/delete, `create_burst_reporter`, `request_support`. Absence of the warning is not a
-   claim that the write has been verified — the per-method status column in the
-   [API Reference](API-Reference) is.
+   `set_guest_password`, `clear_guest_password`. **Every other write logs it**, including the
+   DNS writes (their field paths are confirmed, but each one reboots the mesh, so the warning
+   stays), the security toggles, `NetworksAPI.reboot_network`, the profile writes,
+   `block_device`, the reservation and forward CRUD, `create_burst_reporter`, and
+   `request_support`. Absence of the warning is not a claim that the write has been verified —
+   the per-method status column in the [API Reference](API-Reference) is.
 3. **Settings-class writes may reboot the whole mesh.** A DNS write is confirmed to restart
    every eero and drop every client a few minutes after the 200. The SDK treats every other
    write to the network's `settings` link, and its settings-class siblings, as capable of the
@@ -411,10 +415,12 @@ await client.clear_custom_dns(network_id=None)                 # both
 await client.set_dns_mode("custom", network_id=None)
 ```
 
+DNS methods never auto-discover — pass `network_id=` or call `get_networks()` first.
+
 Reading the result:
 
 ```python
-data = (await client.get_dns_settings())["data"]
+data = (await client.get_dns_settings(network_id="<network-id>"))["data"]
 
 data["dns"]["mode"]                     # "custom" | "automatic"
 data["dns"]["custom"]["ips"]            # IPv4 servers
@@ -433,13 +439,13 @@ The SDK deliberately has no built-in provider list. The API serves its own catal
 is authoritative and stays current — build a picker from it rather than hardcoding addresses:
 
 ```python
-data = (await client.get_dns_settings())["data"]
+data = (await client.get_dns_settings(network_id="<network-id>"))["data"]
 
 for provider in data["dns"]["default_test_servers"]:
     print(provider["name"], provider["ipv4"], provider["ipv6"])
 
 chosen = data["dns"]["default_test_servers"][0]
-await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"])
+await client.set_custom_dns(chosen["ipv4"] + chosen["ipv6"], network_id="<network-id>")
 ```
 
 > **Note**: `set_ipv6_dns()` was removed in v8.0.0 — it never set IPv6 DNS servers, only
@@ -899,7 +905,7 @@ Full hierarchy and per-exception guidance: [Error Handling](Error-Handling).
 
 ## Caching
 
-`EeroClient` keeps a `cache_timeout`-second in-memory cache (default 60s) for read methods that accept `refresh_cache`. Pass `refresh_cache=True` to bypass it for a single call, or call `client.clear_cache()` to drop everything. The cached network, eero, and device envelopes are also what the facade passes as `parent=` to the domain methods.
+`EeroClient` keeps a `cache_timeout`-second in-memory cache (default 60s) for eight reads — `get_account`, `get_networks`, `get_network`, `get_eeros`, `get_devices`, `get_device`, `get_profiles`, `get_profile`. (`get_eero` accepts `refresh_cache` for signature symmetry but is never cached.) Pass `refresh_cache=True` to bypass it for a single call, or call `client.clear_cache()` to drop everything. The cached network, eero, and device envelopes are also what the facade passes as `parent=` to the domain methods.
 
 ```python
 await client.get_networks(refresh_cache=True)

@@ -581,7 +581,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `get_networks` | `async def get_networks(self)` | GET `networks` | read |
 | `get_network` | `async def get_network(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
 | `get_premium_status` | `async def get_premium_status(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
-| `reboot_network` | `async def reboot_network(self, network_id: str, *, parent=None)` | POST `""` to the `reboot` link | write; no `EeroClient` wrapper |
+| `reboot_network` | `async def reboot_network(self, network_id: str, *, parent=None)` | POST `""` to the `reboot` link | unverified write; no `EeroClient` wrapper |
 | `run_speed_test` | `async def run_speed_test(self, network_id: str, *, parent=None)` | POST `""` to the `speedtest` link | verified write (2026-09-20): 202 with `data: null`, result appears in `get_speed_tests` about a minute later |
 | `get_speed_tests` | `async def get_speed_tests(self, network_id: str, *, limit: Optional[int]=None, start_time: Optional[str]=None, end_time: Optional[str]=None, parent=None)` | GET the `speedtest` link, query `limit` / `startTime` / `endTime` | read |
 | `set_network_name` | `async def set_network_name(self, network_id: str, name: str, *, parent=None)` | PUT form `name=` to the `settings` link | disconnects; unverified |
@@ -650,12 +650,12 @@ The device parameter is named `mac` on every method. `parent` = the network enve
 |--------|-----------|---------|--------|
 | `get_profiles` | `async def get_profiles(self, network: str, *, parent=None)` | GET the `profiles` link | read |
 | `get_profile` | `async def get_profile(self, network: str, profile: str, *, parent=None)` | GET the profile's own URL | read |
-| `pause_profile` | `async def pause_profile(self, network: str, profile: str, paused: bool, *, parent=None)` | PUT JSON to the profile's own URL | write |
+| `pause_profile` | `async def pause_profile(self, network: str, profile: str, paused: bool, *, parent=None)` | PUT JSON to the profile's own URL | unverified write |
 | `get_profile_devices` | `async def get_profile_devices(self, network: str, profile: str, *, parent=None)` | GET the profile's own URL | read |
-| `set_profile_devices` | `async def set_profile_devices(self, network: str, profile: str, device_urls: List[str], *, parent=None)` | PUT JSON `{"devices": [...]}` | write |
-| `create_profile` | `async def create_profile(self, network: str, name: str, *, devices: Optional[List[str]]=None, paused: Optional[bool]=None, parent=None)` | POST JSON (`name`, `devices` as `[{"url": ...}]`, `paused`) to the `profiles` link | write |
-| `rename_profile` | `async def rename_profile(self, network: str, profile: str, name: str, *, parent=None)` | PUT JSON to the profile's own URL | write |
-| `delete_profile` | `async def delete_profile(self, network: str, profile: str)` | DELETE the profile's own URL | write |
+| `set_profile_devices` | `async def set_profile_devices(self, network: str, profile: str, device_urls: List[str], *, parent=None)` | PUT JSON `{"devices": [...]}` | unverified write |
+| `create_profile` | `async def create_profile(self, network: str, name: str, *, devices: Optional[List[str]]=None, paused: Optional[bool]=None, parent=None)` | POST JSON (`name`, `devices` as `[{"url": ...}]`, `paused`) to the `profiles` link | unverified write |
+| `rename_profile` | `async def rename_profile(self, network: str, profile: str, name: str, *, parent=None)` | PUT JSON to the profile's own URL | unverified write |
+| `delete_profile` | `async def delete_profile(self, network: str, profile: str)` | DELETE the profile's own URL | unverified write |
 
 > The former profile content-filter, block-list, and blocked-applications writes were removed
 > in v8.0.0 — see `DnsPoliciesAPI` below and [Deprecations](Deprecations#800--removals).
@@ -688,12 +688,12 @@ Scheduled pauses live at `networks/{id}/profiles/{profile}/schedules` (the profi
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_dns_settings` | `async def get_dns_settings(self, network_id: str)` | GET `networks/{id}` | read |
-| `set_dns_caching` | `async def set_dns_caching(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | verified write; reboots |
-| `set_custom_dns` | `async def set_custom_dns(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON, split by family | verified write; reboots |
-| `set_custom_dns_ipv4` | `async def set_custom_dns_ipv4(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON `dns.custom.ips` | verified write; reboots |
-| `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON `ipv6.name_servers.custom` | verified write; reboots |
-| `clear_custom_dns` | `async def clear_custom_dns(self, network_id: str, family: Optional[str]=None, *, parent=None)` | PUT JSON mode `automatic` | verified write; reboots |
-| `set_dns_mode` | `async def set_dns_mode(self, network_id: str, mode: str, custom_servers: Optional[List[str]]=None, *, parent=None)` | PUT JSON | verified write; reboots |
+| `set_dns_caching` | `async def set_dns_caching(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
+| `set_custom_dns` | `async def set_custom_dns(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON, split by family | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
+| `set_custom_dns_ipv4` | `async def set_custom_dns_ipv4(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON `dns.custom.ips` | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
+| `set_custom_dns_ipv6` | `async def set_custom_dns_ipv6(self, network_id: str, dns_servers: List[str], *, parent=None)` | PUT JSON `ipv6.name_servers.custom` | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
+| `clear_custom_dns` | `async def clear_custom_dns(self, network_id: str, family: Optional[str]=None, *, parent=None)` | PUT JSON mode `automatic` | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
+| `set_dns_mode` | `async def set_dns_mode(self, network_id: str, mode: str, custom_servers: Optional[List[str]]=None, *, parent=None)` | PUT JSON | settings-class (reboots the mesh; field paths confirmed 2026-09-12, warning still logged) |
 
 </details>
 
@@ -736,11 +736,11 @@ Not exposed: network/profile DNS-policy settings and ad-block settings — no en
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_security_settings` | `async def get_security_settings(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
-| `set_wpa3` | `async def set_wpa3(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | write; settings link |
-| `set_band_steering` | `async def set_band_steering(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | write; settings link |
-| `set_upnp` | `async def set_upnp(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | write; settings link |
-| `set_ipv6` | `async def set_ipv6(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | write; settings link |
-| `configure_security` | `async def configure_security(self, network_id: str, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, *, parent=None)` | PUT JSON to the `settings` link | write; settings link |
+| `set_wpa3` | `async def set_wpa3(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
+| `set_band_steering` | `async def set_band_steering(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
+| `set_upnp` | `async def set_upnp(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
+| `set_ipv6` | `async def set_ipv6(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
+| `configure_security` | `async def configure_security(self, network_id: str, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
 | `set_mlo_mode` | `async def set_mlo_mode(self, network_id: str, mode: str, *, parent=None)` | PUT JSON `{"mlo_mode": ...}` to the `mlo_mode` link | settings-class |
 | `get_fast_transition` | `async def get_fast_transition(self, network_id: str, *, parent=None)` | GET the `fast_transition` link | verified read |
 | `set_fast_transition` | `async def set_fast_transition(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON `{"fast_transition": bool}` | unverified write |
@@ -808,7 +808,7 @@ Literal paths (not published links); `parent` unused.
 |--------|-----------|---------|--------|
 | `list` | `async def list(self, network_id: str, *, parent=None)` | GET the `backup_access_points` link | verified read |
 | `add` | `async def add(self, network_id: str, *, ssid: str, password: str, uuid: Optional[str]=None)` | POST JSON to `networks/{id}/backup_access_points` | unverified write |
-| `update` | `async def update(self, network_id: str, backup_network_id: str, *, ssid=None, password=None, enabled=None, uuid=None, connectivity=None, created=None, last_updated_at=None)` | PUT JSON of the supplied fields to `.../backup_access_points/{backup_network_id}` | unverified write |
+| `update` | `async def update(self, network_id: str, backup_network_id: str, *, ssid: Optional[str]=None, password: Optional[str]=None, enabled: Optional[bool]=None, uuid: Optional[str]=None, connectivity: Optional[Mapping[str, Any]]=None, created: Optional[str]=None, last_updated_at: Optional[str]=None)` | PUT JSON of the supplied fields to `.../backup_access_points/{backup_network_id}` | unverified write |
 | `delete_backup_access_point` | `async def delete_backup_access_point(self, network_id: str, backup_network_id: str)` | DELETE `.../backup_access_points/{backup_network_id}` | unverified write |
 | `rearrange` | `async def rearrange(self, network_id: str, order: List[str])` | POST JSON `{"rearranged_ids": [...]}` to `.../rearrange` | unverified write |
 | `discover_ssids` | `async def discover_ssids(self, network_id: str)` | GET `.../ssid_discovery` | verified read |
@@ -823,9 +823,9 @@ Literal paths (not published links); `parent` unused.
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_reservations` | `async def get_reservations(self, network: str, *, parent=None)` | GET the `reservations` link | read |
-| `create_reservation` | `async def create_reservation(self, network: str, reservation_data: Dict[str, Any], *, parent=None)` | POST JSON (passed through) to the `reservations` link | write |
-| `update_reservation` | `async def update_reservation(self, reservation: Any, data: Dict[str, Any], *, network: Optional[str]=None)` | PUT JSON to the reservation's own URL; `reservation` is a bare ID (needs `network=`), path/URL, or envelope | write |
-| `delete_reservation` | `async def delete_reservation(self, network: str, reservation: str, *, delete_forwards: Optional[bool]=None)` | DELETE `networks/{network}/reservations/{id}`, query `delete_forwards` when supplied | write |
+| `create_reservation` | `async def create_reservation(self, network: str, reservation_data: Dict[str, Any], *, parent=None)` | POST JSON (passed through) to the `reservations` link | unverified write |
+| `update_reservation` | `async def update_reservation(self, reservation: Any, data: Dict[str, Any], *, network: Optional[str]=None)` | PUT JSON to the reservation's own URL; `reservation` is a bare ID (needs `network=`), path/URL, or envelope | unverified write |
+| `delete_reservation` | `async def delete_reservation(self, network: str, reservation: str, *, delete_forwards: Optional[bool]=None)` | DELETE `networks/{network}/reservations/{id}`, query `delete_forwards` when supplied | unverified write |
 
 </details>
 
@@ -835,9 +835,9 @@ Literal paths (not published links); `parent` unused.
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_forwards` | `async def get_forwards(self, network: str, *, parent=None)` | GET the `forwards` link | read |
-| `create_forward` | `async def create_forward(self, network: str, forward_data: Dict[str, Any], *, parent=None)` | POST JSON (passed through) to the `forwards` link | write |
-| `update_forward` | `async def update_forward(self, forward: Any, data: Dict[str, Any], *, network: Optional[str]=None)` | PUT JSON to the forward's own URL; `forward` is a bare ID (needs `network=`), path/URL, or envelope | write |
-| `delete_forward` | `async def delete_forward(self, network: str, forward: str)` | DELETE `networks/{network}/forwards/{id}` | write |
+| `create_forward` | `async def create_forward(self, network: str, forward_data: Dict[str, Any], *, parent=None)` | POST JSON (passed through) to the `forwards` link | unverified write |
+| `update_forward` | `async def update_forward(self, forward: Any, data: Dict[str, Any], *, network: Optional[str]=None)` | PUT JSON to the forward's own URL; `forward` is a bare ID (needs `network=`), path/URL, or envelope | unverified write |
+| `delete_forward` | `async def delete_forward(self, network: str, forward: str)` | DELETE `networks/{network}/forwards/{id}` | unverified write |
 
 </details>
 
@@ -857,7 +857,7 @@ Reached through the network's `device_blacklist` link when `parent` is supplied.
 <details>
 <summary>📦 InsightsAPI (<code>client._api.insights</code>)</summary>
 
-All reads take `start`, `end`, `cadence`, `insight_type` as query parameters. `cadence` is validated locally (`daily` / `hourly`; `get_insights` also accepts `weekly`).
+All reads take `start`, `end`, `cadence`, `insight_type` as query parameters. `cadence` is validated locally (`daily` / `hourly` only).
 
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
@@ -937,7 +937,7 @@ Account deletion is deliberately not exposed. Identifier values passed to `Accou
 | `PowerSavingAPI` | `set_power_saving` | `async def set_power_saving(self, network_id: str, *, enable: Optional[bool]=None, power_saving_schedule_enabled: Optional[bool]=None, parent=None)` | PUT JSON of the supplied fields to the `power_saving` link | unverified write (settings-class on the facade) |
 | `PowerSavingAPI` | `get_schedules` | `async def get_schedules(self, network_id: str, *, parent=None)` | GET `networks/{id}/power_saving/schedules` | verified read |
 | `PowerSavingAPI` | `create_schedule` | `async def create_schedule(self, network_id: str, *, name: str, days: Any, start_time: str, end_time: str, enabled: bool=True)` | POST JSON to `.../power_saving/schedules` | unverified write |
-| `PowerSavingAPI` | `update_schedule` | `async def update_schedule(self, network_id: str, schedule_id: str, *, name=None, days=None, start_time=None, end_time=None, enabled=None)` | PUT JSON of the supplied fields to `.../schedules/{schedule_id}` | unverified write |
+| `PowerSavingAPI` | `update_schedule` | `async def update_schedule(self, network_id: str, schedule_id: str, *, name: Optional[str]=None, days: Optional[Any]=None, start_time: Optional[str]=None, end_time: Optional[str]=None, enabled: Optional[bool]=None)` | PUT JSON of the supplied fields to `.../schedules/{schedule_id}` | unverified write |
 | `PowerSavingAPI` | `delete_schedule` | `async def delete_schedule(self, network_id: str, schedule_id: str)` | DELETE `.../schedules/{schedule_id}` | unverified write |
 | `DdnsAPI` | `enable` | `async def enable(self, network_id: str, *, parent=None)` | PUT, no body, to the `ddns_enable` link (`networks/{id}/ddns/enable`) | unverified write |
 | `DdnsAPI` | `disable` | `async def disable(self, network_id: str, *, parent=None)` | PUT, no body, to the `ddns_disable` link | unverified write |
@@ -962,11 +962,11 @@ Account deletion is deliberately not exposed. Identifier values passed to `Accou
 | `DiagnosticsAPI` | `run_diagnostics` | `async def run_diagnostics(self, network_id: str, *, device: Optional[str]=None, symptom: Optional[str]=None, parent=None)` | POST JSON of the supplied keys (`{}` otherwise) to the `diagnostics` link | unverified body shape |
 | `RoutingAPI` | `get_routing` | `async def get_routing(self, network: str, *, parent=None)` | GET the `routing` link (served on `2.3`; template fallback `2.2`) | read |
 | `SupportAPI` | `get_support` | `async def get_support(self, network_id: str, *, parent=None)` | GET the `support` link | read |
-| `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | write; no `EeroClient` wrapper |
+| `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | unverified write; no `EeroClient` wrapper |
 | `UpdatesAPI` | `get_updates` | `async def get_updates(self, network_id: str, *, parent=None)` | GET the `updates` link | read |
 | `UpdatesAPI` | `apply_update` | `async def apply_update(self, network_id: str, *, parent=None)` | POST `""` to the `updates` link | unverified write; reboots every node |
 | `TransferAPI` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None, *, parent=None)` | GET the `transfer` link, or `networks/{id}/devices/{device_id}/transfer` | read |
-| `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any], *, parent=None)` | POST to the `burst_reporters` link | write; no `EeroClient` wrapper |
+| `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any], *, parent=None)` | POST to the `burst_reporters` link | unverified write; no `EeroClient` wrapper |
 | `ACCompatAPI` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str, *, parent=None)` | GET the `ac_compat` link | read |
 | `OUICheckAPI` | `get_ouicheck` | `async def get_ouicheck(self, network_id: str, *, serial: str, version: str, parent=None)` | GET `networks/{id}/ouicheck`, query `serial` / `version` (404 without them) | read |
 
@@ -1013,9 +1013,9 @@ has an `EeroClient` wrapper (listed under [Stats & Usage](#stats--usage)).
 | `EeroAPIException` | `EeroException` | `__init__(self, status_code: Optional[int], message: str, *, envelope=None, error_code=None)`; `str(err)` is `API error <status>: <catalogue string or "unrecognised error string">`; `is_auth_error()` → `status_code == 401` (never produced by the transport, which raises `EeroAuthenticationException` for 401). Raised for 3xx, oversized/invalid bodies, every `DOMAIN` string, and any status not claimed by a subclass |
 | `EeroAccessDeniedException` | `EeroAPIException` | HTTP 403 with `error.access.denied`; not an auth error |
 | `EeroClientBlockedException` | `EeroAPIException` | `error.app.version.blocked` on any status |
-| `EeroNotFoundException` | `EeroAPIException` | Every HTTP 404. `__init__(self, resource_type: str, resource_id: str, *, envelope=None, error_code=None)` for direct construction; `from_response(message, *, status_code: int=404, envelope=None, error_code=None)` (both resource attributes `None`) is what the transport uses |
-| `EeroPremiumRequiredException` | `EeroAPIException` | A `PREMIUM` string on any status. `__init__(self, feature: str='This feature', *, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` |
-| `EeroFeatureUnavailableException` | `EeroAPIException` | A `FEATURE_UNAVAILABLE` string on any status, and locally when an eero has no nightlight. `__init__(self, feature: str, reason: str='not supported on this device', *, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` sets `feature` to the `error_code` and `reason` to the message |
+| `EeroNotFoundException` | `EeroAPIException` | Every HTTP 404. `__init__(self, resource_type: str, resource_id: str, *, status_code: int=404, envelope=None, error_code=None)` for direct construction; `from_response(message, *, status_code: int=404, envelope=None, error_code=None)` (both resource attributes `None`) is what the transport uses |
+| `EeroPremiumRequiredException` | `EeroAPIException` | A `PREMIUM` string on any status. `__init__(self, feature: str='This feature', *, status_code: Optional[int]=None, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` |
+| `EeroFeatureUnavailableException` | `EeroAPIException` | A `FEATURE_UNAVAILABLE` string on any status, and locally when an eero has no nightlight. `__init__(self, feature: str, reason: str='not supported on this device', *, status_code: Optional[int]=None, envelope=None, error_code=None)`; `from_response(message, *, status_code: Optional[int]=None, envelope=None, error_code=None)` sets `feature` to the `error_code` and `reason` to the message |
 
 Full hierarchy, the catalogue groups, and handling patterns: [Error Handling](Error-Handling).
 

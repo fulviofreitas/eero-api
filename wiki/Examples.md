@@ -217,7 +217,7 @@ asyncio.run(main())
 
 ## Speed Test and Report
 
-Run a speed test and read the download/upload result directly from the response.
+Trigger a speed test, wait for the result to land, and read it from the history.
 
 ```python
 """Run a speed test and print the download/upload results."""
@@ -230,14 +230,17 @@ from eero import EeroClient, EeroException
 async def main() -> None:
     async with EeroClient() as client:
         try:
-            result = await client.run_speed_test()
+            await client.run_speed_test()   # 202 with data: null; the result is not in this response
         except EeroException as err:
             print(f"Speed test failed: {err}")
             return
 
-        data = result.get("data", {})
-        down = data.get("down", {})
-        up = data.get("up", {})
+        await asyncio.sleep(90)              # the result lands in the history about a minute later
+        history = await client.get_speed_tests(limit=1)
+        data = history.get("data") or []
+        latest = data[0] if isinstance(data, list) and data else {}
+        down = latest.get("down") or {}
+        up = latest.get("up") or {}
         print(f"Download: {down.get('value')} {down.get('units', 'Mbps')}")
         print(f"Upload:   {up.get('value')} {up.get('units', 'Mbps')}")
 
@@ -432,7 +435,7 @@ asyncio.run(main())
 
 Read the guest network config, enable it if needed, set a new password, and read it back.
 The password is its own resource (`set_guest_password`), separate from the enable/name write.
-Both writes are unverified and disconnect guest clients while they take effect.
+Both writes are live-verified (2026-09-20) and log no warning, but they still disconnect guest clients while they take effect — read first and skip when the state already matches.
 
 ```python
 """Read the guest network config, rotate its password, and read the result back."""

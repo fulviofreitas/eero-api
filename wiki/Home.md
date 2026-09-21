@@ -29,7 +29,7 @@ Welcome! Everything you need to master the Eero API Python client.
 | Page | What you'll learn |
 |------|-------------------|
 | **[📚 API Reference](API-Reference)** | Every domain API and method signature |
-| **[🔀 Migration](Migration)** | Upgrading from pre-v2.0 (Pydantic) releases |
+| **[🔀 Migration](Migration)** | Upgrade guide for every breaking release, v1.x → v8.0.0 |
 | **[⚠️ Deprecations](Deprecations)** | No-op and removed surface, and what replaces it |
 | **[💡 Examples](Examples)** | End-to-end runnable scripts |
 

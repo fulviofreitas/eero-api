@@ -209,6 +209,14 @@ When a template continues past the resource (for example `networks/{id}/settings
 substituted into the whole template, while a path or URL is taken to identify the *parent*
 resource and the suffix is appended to it.
 
+For a *child* argument — `profile`, `mac`/`device_id`, `invite_id`, `user_id`, and
+`reservation`/`forward` on `delete_*` — a path or URL is additionally checked against the
+network you addressed: it must be `/<version>/networks/<that network>/<family>/<id>` with a
+single-segment id and no query or fragment, otherwise `EeroValidationException` is raised
+before any request (`must belong to the addressed network` / `must be a path under
+networks/{id}/<family>`). A bare ID anywhere must be one path segment matching
+`[A-Za-z0-9][A-Za-z0-9._:-]*` with no `..`.
+
 ```python
 from eero import EeroAPI
 
@@ -257,7 +265,9 @@ await api.networks.set_guest_password("<network-id>", "<new-password>", parent=g
 Which envelope a method expects for `parent=` is stated in its docstring and in the
 [API Reference](API-Reference) tables: network-scoped methods want the network envelope; eero
 methods want the eero's own envelope; `get_device` / `update_device_via_link` want the device's
-envelope; profile methods want the profile's; `update_forward` / `update_reservation` /
+envelope; `get_profiles` / `create_profile` want the network envelope; the single-profile
+methods (`get_profile`, `pause_profile`, `rename_profile`, `get_profile_devices`,
+`set_profile_devices`, `get_schedules`, `create_schedule`) want the profile's own; `update_forward` / `update_reservation` /
 `update_schedule` / `delete_schedule` accept the resource's envelope *as the resource argument
 itself*. A few methods accept `parent=` purely for signature consistency and ignore it
 (`BackupAPI`, the Thread writes) — their docstrings say so.

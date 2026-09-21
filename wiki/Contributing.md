@@ -21,8 +21,8 @@ The `[dev]` extra installs `pytest`, `pytest-asyncio`, `pytest-cov`, `black`, `i
 
 ## ✅ The Checks
 
-Run all of these before opening a pull request — CI runs the same commands and a failure in any
-of them blocks the merge.
+Run all of these before opening a pull request — CI runs these plus a Semgrep security scan; a
+failure in any of them blocks the merge.
 
 ```bash
 pytest                                          # full suite
@@ -37,6 +37,7 @@ mypy src/                                       # type-check
 | 🔍 `ruff check .` | Lint |
 | 🎨 `black .` | Formatting |
 | 🏷️ `mypy src/` | Type-checking of the package source |
+| 🛡️ Semgrep (`p/python p/security-audit` on `src/`) | Security scan — CI-only; run `semgrep --config p/python --config p/security-audit src/` locally if you have it |
 
 ### Useful test invocations
 
@@ -104,8 +105,8 @@ cz commit
 - **Composition over inheritance.** New functionality becomes a domain API class composed into
   `EeroAPI`, not a deeper inheritance chain.
 - **One domain per module.** `src/eero/api/<domain>.py` holds one focused class.
-- **`network_id` is a trailing optional kwarg**, never the first positional argument. See
-  [Network Targeting](Network-Targeting).
+- **`network_id` is a trailing optional kwarg on `EeroClient`** and a required leading positional
+  on `EeroAPI` / domain-API methods. See [Network Targeting](Network-Targeting).
 - **Naming:** `snake_case` for functions and modules, `PascalCase` for classes,
   `SCREAMING_SNAKE_CASE` for constants.
 - **Never log secrets.** Route logging through the helpers in `src/eero/logging.py`. See
