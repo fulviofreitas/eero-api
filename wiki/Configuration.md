@@ -68,7 +68,7 @@ Storage backend selection is handled by `create_storage()` in `eero.api.auth_sto
 
 | `use_keyring` | `cookie_file` | Backend selected |
 |---|---|---|
-| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; falls back to `FileStorage(cookie_file)` on **load** failure only |
+| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; `FileStorage(cookie_file)` is consulted only when the keyring holds no record, and the record is then promoted into the keyring and removed from the file. `save()` writes the keyring only |
 | `True` | `None` (default) | `KeyringStorage` only |
 | `False` | set | `FileStorage(cookie_file)` only |
 | `False` | `None` | `MemoryStorage` |
@@ -105,8 +105,8 @@ client = EeroClient(cookie_file="/data/eero-cookies.json")
 ```
 
 - **No default path exists.** `cookie_file` is never inferred from `~/.config`, `$XDG_CONFIG_HOME`, or anything else — you must pass it explicitly for file-based persistence to happen at all.
-- The parent directory is created with `os.makedirs(..., exist_ok=True)` if missing.
-- After every write, permissions are set to **owner read/write only** (`0600`, via `os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)`).
+- `save()` creates the parent directory (`os.makedirs(..., exist_ok=True)`), refuses to write if `file_path` is a symlink, writes `json.dumps(credentials.to_dict())` to a fresh `tempfile.mkstemp()` file in the same directory (created `0600`), `fsync`s it, re-asserts `0600` with `os.chmod`, then atomically swaps it into place with `os.replace()`. A crash mid-write leaves the previous file or nothing — never a partial record.
+- Any failure during `save()` is logged at `ERROR` and swallowed; `save()` never raises.
 - `FileStorage.file_path` (property) returns the resolved absolute path (`~` expanded).
 - The file holds `{"session_id": ..., "schema_version": 2}` and nothing else. A file written by an earlier release (with the extra fields 7.x wrote, or the pre-v3.0.0 `user_token` key) is migrated to this shape the first time it is loaded. See [Credential Storage](Credential-Storage#-the-credentialstorage-abstraction) and [Migration](Migration#the-credential-record).
 
@@ -143,6 +143,8 @@ await client.clear_session_token()
 ```
 
 Both are `async` methods on `EeroClient` (delegating to `AuthAPI.set_session_token` / `clear_session_token`) — never constructor kwargs. Each call also invalidates the client's in-memory response cache.
+
+`set_session_token()` raises `EeroValidationException` for an empty or non-string token, and for a token containing any character outside printable ASCII (including CR/LF) — the same rule the transport applies to every header value, since the token is sent verbatim as `X-User-Token`. A rejected token is never persisted, so strip any trailing newline from a secret read out of a file or env var before passing it in.
 
 ---
 
@@ -203,7 +205,7 @@ Rate limiting (`429`) is likewise never retried by the SDK — see [Caching and 
 
 ## ⏱️ Timeouts
 
-Every HTTP request made by `BaseAPI._request` uses a hardcoded `aiohttp.ClientTimeout`:
+Every request made by `BaseAPI._request` defaults to this `aiohttp.ClientTimeout`:
 
 ```python
 aiohttp.ClientTimeout(total=30, sock_read=10)
@@ -214,7 +216,7 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 | `total` | 30s | Overall wall-clock budget for the request |
 | `sock_read` | 10s | Max time to wait for any single chunk of the response body (guards against a slow-trickle/"slowloris" upstream even if `total` hasn't elapsed) |
 
-> ⚠️ **Warning:** These values are **not configurable** — there is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`. A request that exceeds either bound raises `EeroTimeoutException`.
+> ⚠️ **Warning:** There is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`; the only way to change it is a per-call `timeout=` kwarg on the `BaseAPI` transport methods, which `EeroClient` does not expose. A request that exceeds either bound raises `EeroTimeoutException`.
 
 ---
 
@@ -224,7 +226,7 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 - **File storage** is `0600` (owner-only), but is still plaintext JSON — treat the containing volume/host as sensitive.
 - **`MemoryStorage`** never touches disk, but also never survives process restart — see the warning above about the silent fallback.
 - All API responses are capped at `MAX_RESPONSE_BYTES` (10 MiB) to prevent unbounded memory growth from a hostile or misbehaving upstream.
-- Error response bodies are never embedded raw in exception messages or log lines. The message carries the HTTP status plus `meta.code` / `meta.error`; the parsed envelope is available as `err.envelope` for your own handling, and is logged only through the redacting secure logger. See [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
+- Error response bodies are never embedded raw in exception messages or log lines. The exception message is the recognised `meta.error` catalogue string (trimmed, lowercased) or the fixed label `unrecognised error string`; `EeroAPIException` and its subclasses prefix it with `API error <status>: `, while `EeroAuthenticationException` (all 401s), `EeroRateLimitException` and API-reported `EeroValidationException` carry no status in the message at all. `meta.code`, the raw body and the URL are never embedded. Read `err.envelope` / `err.error_code` / `err.status_code` for details; the envelope is logged only through the redacting secure logger. See [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
 - The session token is sent only to the API host over `https`, never to any other host or scheme, and never via the shared cookie jar — see [Request Headers and Transport](#-request-headers-and-transport).
 - Redirects are never followed (`allow_redirects=False`, and it cannot be re-enabled) — any 3xx response is rejected outright so the session token can never leak to an unintended host.
 - For log redaction behavior (how tokens/cookies are masked in log output), see [Logging and Security](Logging-and-Security).

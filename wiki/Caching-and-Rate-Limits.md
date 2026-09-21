@@ -44,9 +44,16 @@ Only these `EeroClient` read methods check and populate the cache. Every other `
 
 Beyond serving repeat reads, three cached entries are reused as the `parent=` envelope for
 domain calls (see [Network Targeting](Network-Targeting#parent--use-the-link-the-api-published)):
-a fresh `network` entry is passed to every network-scoped call, a fresh `eeros` list supplies
-the matching eero's envelope to the eero calls, and a fresh single-device entry is passed to
-`update_device_via_link`. This is read-only — the cached envelope is forwarded as-is and never
+a fresh `network` entry is passed to the network-scoped calls whose domain method resolves a
+published network link (network reads, the settings-class writes, guest network, speed test,
+diagnostics, updates, notifications, DNS writes and DNS policies, members, events, permissions,
+WPA3, power saving, subnets/multi-static-IP reads, blacklist, the eero/device/profile lists,
+the network-wide device and profile insights, reservations/forwards list+create); calls that
+address a child resource (a device, profile, schedule, invite, reservation or forward by id)
+or a literal sub-path (DNS read, data usage, the network/per-device/per-profile insights,
+entitlements, Thread writes, backup, subnet/WAN writes) run without it. A fresh `eeros` list
+supplies the matching eero's envelope to the eero calls, and a fresh single-device entry is
+passed to `update_device_via_link`. This is read-only — the cached envelope is forwarded as-is and never
 merged into a response. When the entry is stale or absent the call simply falls back to the
 template URL; nothing is fetched to populate `parent=`.
 
@@ -80,11 +87,12 @@ The SDK also calls `clear_cache()` for you automatically after `verify()`, `logo
 
 ## Automatic Invalidation on Writes
 
-Write methods invalidate the specific cache entries they affect via internal helpers (`_invalidate_network_cache`, `_invalidate_eeros_cache`, `_invalidate_device_cache`, `_invalidate_profile_cache`, `_invalidate_profiles_list_cache`). Confirmed from `src/eero/client.py` at v8.0.0:
+Write methods invalidate the specific cache entries they affect via internal helpers (`_invalidate_network_cache`, `_invalidate_eeros_cache`, `_invalidate_device_cache`, `_invalidate_profile_cache`, `_invalidate_profiles_list_cache`, `_invalidate_all_profile_caches`). Confirmed from `src/eero/client.py` at v8.0.0:
 
 | Write method | Invalidates |
 |---|---|
-| `set_device_nickname`, `block_device`, `unblock_device`, `pause_device`, `update_device_via_link`, `set_device_type`, `set_device_labels`, `set_device_secondary_wan_access` | that device's cache entry + the network's device list |
+| `set_device_nickname`, `block_device`, `unblock_device`, `pause_device`, `set_device_type`, `set_device_labels`, `set_device_secondary_wan_access` | that device's cache entry + the network's device list |
+| `update_device_via_link` | that device's cache entry + the network's device list; when `profile=` is given, also every cached profile of the network and the profile list (the previous profile is unknown, so all are dropped) |
 | `pause_profile`, `set_profile_devices`, `set_profile_blocked_applications` | that profile's cache entry + the network's profile list |
 | `create_profile`, `allow_domain_for_profiles`, `allow_cnames_for_profiles`, `block_domain_for_profiles` | the network's profile list |
 | `rename_profile`, `delete_profile` | that profile's cache entry + the network's profile list |
@@ -97,12 +105,12 @@ Invalidating the network entry also means the next network-scoped call runs with
 > ⚠️ **Gotcha:** Not every write invalidates a related read. Confirmed **not** invalidated by this SDK version, despite mutating server-side state that a cached read reflects:
 > - `create_schedule`, `update_schedule`, `delete_schedule`, `clear_profile_schedule`, `enable_bedtime` — do **not** invalidate the profile cache (the profile envelope is what `get_profile` caches; the schedules themselves are never cached)
 > - `set_nightlight_brightness` / `set_nightlight_schedule` — these delegate to `set_nightlight`, so they *do* invalidate the eeros list; listed here only because their names are not in the table
-> - The account writes (`set_account_name`, `set_account_email`, …, `set_push_settings`) — do **not** invalidate the `account` entry
+> - `set_account_email`, `set_account_phone`, `set_push_settings` — do **not** invalidate the `account` entry (the first two only *start* a change; the matching `verify_*` call does invalidate it). `set_account_name`, `verify_account_email`, `verify_account_phone` and `set_account_consents` *do* reset the `account` entry.
 > - `mark_notifications_read`, the invite/member writes, the power-saving schedule writes, the backup-access-point writes, `set_subnet_content_filters`, `set_pppoe`, `led_cycle` — nothing is invalidated; none of the reads they affect are cached anyway
 >
 > **Workaround**: after any write whose effect you need to see immediately, call the corresponding getter with `refresh_cache=True` (or, for uncached reads, simply call it — it is always fresh) rather than trusting the cache to have been cleared for you:
 > ```python
-> await client.set_account_name("<name>")
+> await client.set_push_settings({"<setting>": True})
 > account = await client.get_account(refresh_cache=True)
 > ```
 

@@ -58,8 +58,9 @@ Checklist:
 ## v2.x → v3.0.0
 
 **What broke**: Credential storage was simplified — `AuthCredentials` no longer stores redundant
-legacy fields. If you have an older `cookies.json` on disk, `AuthCredentials.from_dict()`
-transparently upgrades any legacy `user_token` field to `session_id` when the file is next
+legacy fields. If you have an older `cookies.json` on disk, the storage backends
+(`KeyringStorage.load` / `FileStorage.load`, via the module-level `_parse_stored_record`)
+transparently upgrade any legacy `user_token` field to `session_id` when the record is next
 loaded.
 
 > **Note**: This is a backward-compatible read-side migration, not a forced re-authentication.
@@ -72,7 +73,7 @@ Checklist:
       `FileStorage`/`KeyringStorage`), stop looking for a `user_token` key — read `session_id`
       instead.
 - [ ] No code changes required if you only ever go through `AuthAPI` / `EeroClient` /
-      `CredentialStorage` — the migration is internal to `from_dict()`.
+      `CredentialStorage` — the migration is internal to the storage backends' `load()`.
 
 ---
 
@@ -81,7 +82,8 @@ Checklist:
 **What broke**: `preferred_network_id` is no longer part of credential storage.
 `AuthCredentials` dropped the field, `AuthAPI` dropped the property/setter and
 `save_preferred_network()`, and `cookies.json` now contains only `session_id`, `refresh_token`,
-and `session_expiry`. Preferred-network selection moved to in-memory state on `EeroAPI` /
+and `session_expiry` (as of v8.0.0 the record is `{"session_id": …, "schema_version": 2}` only —
+see [The credential record](#the-credential-record)). Preferred-network selection moved to in-memory state on `EeroAPI` /
 `EeroClient` — nothing about it is persisted by the SDK anymore.
 
 | Before (v3.x) | After (v4.0.0+) |
@@ -189,7 +191,7 @@ await client.get_insights(
 | `start` | yes (keyword-only) | ISO 8601 timestamp |
 | `end` | yes (keyword-only) | ISO 8601 timestamp |
 | `insight_type` | yes (keyword-only) | e.g. `"adblock"`, `"blocked"`, `"inspected"` |
-| `cadence` | no (keyword-only) | `"hourly"` \| `"daily"` \| `"weekly"`, defaults to `"daily"` |
+| `cadence` | no (keyword-only) | `"hourly"` \| `"daily"`, defaults to `"daily"`; any other value raises `EeroValidationException` locally |
 
 Checklist:
 
@@ -437,8 +439,10 @@ aliases). Full description: [Network Targeting](Network-Targeting#resource-links
 A set of existing writes were re-pointed to the path, encoding, and field names the API
 declares for the operation. Several of the old writes could not have applied — the API accepts
 unrecognised JSON keys with a 200 and discards them — so "it returned 200 before" is not
-evidence that your call site worked. **Every re-pointed write is unverified against a live
-network and logs one `WARNING` before the request**; see
+evidence that your call site worked. **Every re-pointed write not marked "verified" below is
+unverified against a live network and logs one `WARNING` before the request**; the live-verified
+ones (`set_led`, `set_led_brightness`, `set_guest_network`, `set_guest_password`,
+`clear_guest_password`, `reboot_eero`, `run_speed_test`, `unblock_device`) do not. See
 [Writes and safety](Python-API#writes-and-safety) for the discipline this implies.
 
 | Write | Before (v7.x) | After (v8.0.0) |
@@ -451,7 +455,7 @@ network and logs one `WARNING` before the request**; see
 | `set_guest_network(enabled, name=, password=)` | One JSON PUT carrying the password | `set_guest_network(*, enabled, name=None)` — form-encoded PUT to the `guestnetwork` link with `enabled` and, when given, `name`. **`password=` is gone** — use `set_guest_password(password)` / `clear_guest_password()` (form PUT / DELETE on the *guest network's* `password` link). All three verified live on 2026-09-20 |
 | `block_device(device_id, blocked)` | One method toggling both directions | `block_device(mac)` sends a form-encoded `mac` to `POST networks/{id}/blacklist`; `unblock_device(mac)` is a separate `DELETE networks/{id}/blacklist/{mac}`. The form encoding is unverified (a JSON body was verified in the past); the DELETE is verified |
 | `set_sqm_enabled` / `configure_sqm` / `set_sqm_bandwidth` / `set_sqm_auto` | JSON bodies with bandwidth / mode fields the API never declared | **Removed.** `set_sqm(enabled)` — PUT with no body to the `settings` link, value in the `sqm` query parameter. Settings-class: may reboot the mesh |
-| `reboot_network()`, `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `reboot_eero` and `run_speed_test` are verified live on 2026-09-20 (only the targeted node rebooted; the speed test result appeared in `get_speed_tests` about a minute later). `apply_update` is new on `EeroClient` and reboots every node |
+| `reboot_network()` (domain API only — `client._api.networks.reboot_network(...)`), `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `reboot_eero` and `run_speed_test` are verified live on 2026-09-20 (only the targeted node rebooted; the speed test result appeared in `get_speed_tests` about a minute later). `apply_update` is new on `EeroClient` and reboots every node |
 | `set_nightlight(...)` | JSON PUT to the eero's own URL with `brightness`, `schedule_enabled`, `schedule_on`, `schedule_off`, `ambient_light_enabled` | JSON PUT to the nightlight sub-resource (`data.nightlight.url`) with only `enabled`, `brightness_percentage`, `schedule` — the fields the API declares. `set_nightlight_schedule(schedule)` forwards the schedule object unchanged; `set_nightlight_brightness(brightness_percentage)`. Raises `EeroFeatureUnavailableException` on an eero without a nightlight |
 | `run_diagnostics()` | Empty POST | JSON POST with whichever of `device=` / `symptom=` you supply (an empty object otherwise). Additive |
 | Thread writes | `SecurityAPI.set_thread` wrote a `thread` field the settings endpoint ignores | `set_thread_enabled(enabled)` (JSON `{"enabled": bool}`), `update_thread(*, thread_enable=, enable_credential_syncing=)`, `regenerate_thread_credentials()` (`""` POST) — all to the literal `networks/{id}/thread` path |
@@ -604,7 +608,7 @@ server-driven refresh signal could not succeed. In v8.0.0 refresh is
 | Endpoint | `/2.2/login/refresh` only; the `account/refresh` fallback is gone |
 | Concurrency | Coalesced: one refresh in flight, concurrent callers wait for its result, then their original request is replayed once |
 | Return value | `True` on HTTP 200, `False` on any API error from the refresh endpoint (401, 429, 5xx, …); a network or timeout failure still raises |
-| Stored credentials | Cleared when the refresh endpoint answers 401 with `error.session.expired`, `.invalid`, `.revoked`, or an unrecognised/absent `error_code`. **Kept** for a recognised non-session code such as `error.verification.required` |
+| Stored credentials | Cleared when the refresh endpoint answers 401 with any string outside the `VERIFICATION` / `SESSION_REFRESH` groups — including `error.session.expired` / `.invalid` / `.revoked`, any other recognised group, and an unrecognised/absent `error_code`. **Kept** only for a `VERIFICATION` string (e.g. `error.verification.required`) or `error.session.refresh` |
 | Token in the refresh response | Deliberately ignored — the current token stays in use |
 
 For a daemon, exporter, or scheduled job this is the practical change: the process can now
@@ -618,9 +622,10 @@ or run the OTP flow. Catch it, re-authenticate, continue — do not add your own
 ### Error classes and attributes
 
 The SDK now classifies every error response against the API's closed catalogue of
-`meta.error` strings (`eero.errors`, matched case-insensitively): the HTTP status picks the
-class first, the string second, and an unrecognised or free-text string never changes the
-status-chosen class. Every `EeroException` carries `envelope` (the raw, unmodified JSON
+`meta.error` strings (`eero.errors`, matched case-insensitively): a 401 always wins; otherwise
+a string in one of the status-independent groups (premium / feature-unavailable /
+client-blocked / rate-limit) picks the class regardless of status; otherwise the HTTP status
+picks the class, and an unrecognised or free-text string never changes it. Every `EeroException` carries `envelope` (the raw, unmodified JSON
 response body, or `None`) and `error_code` (`meta.error`, or `None`). The exception
 **message** no longer contains the response body — it is the status plus the recognised
 catalogue string, or the fixed label `unrecognised error string` — and `MAX_ERROR_BODY_CHARS`
@@ -637,7 +642,7 @@ catalogue string, or the fixed label `unrecognised error string` — and `MAX_ER
 | Feature-unavailable strings (`error.eero.offline`, `error.network.unavailable`, …), any status | `EeroAPIException` | `EeroFeatureUnavailableException` (now a subclass of `EeroAPIException`) |
 | `error.app.version.blocked`, any status | `EeroAPIException` | `EeroClientBlockedException` (new; subclass of `EeroAPIException`) |
 | `error.rate.limit` on a non-429 status | `EeroAPIException` | `EeroRateLimitException` |
-| Any 401 | `EeroAuthenticationException` | Unchanged — always `EeroAuthenticationException`. Stored credentials are cleared only for a session-group string (`error.session.expired` / `.invalid` / `.revoked`) or an unrecognised 401 from the refresh endpoint; verification-state and `error.session.refresh` strings never clear them |
+| Any 401 | `EeroAuthenticationException` | Unchanged — always `EeroAuthenticationException`. Stored credentials are cleared for any 401 from the refresh endpoint except one carrying a `VERIFICATION` or `error.session.refresh` string — those never clear them |
 | Everything else (including every recognised domain string) | `EeroAPIException` | Unchanged — `EeroAPIException` with `error_code` set |
 
 `EeroNotFoundException`, `EeroPremiumRequiredException`, and `EeroFeatureUnavailableException`

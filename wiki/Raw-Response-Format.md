@@ -109,11 +109,13 @@ three different shapes:
 | `data["networks"]` is an **object** wrapping `{"count": N, "data": [...]}` | Seen in the wild on the live Cloud API, but **not** supported by the SDK's auto-discovery |
 | `data` is a **bare list** | Seen on some accounts |
 
-> ⚠️ **Warning:** The SDK's internal auto-discovery does `networks = data.get("networks") or
-> data.get("data") or []` and then indexes `networks[0]`. It assumes `data["networks"]` is a
-> **list**. If your account returns the nested `{"count": N, "data": [...]}` container, that
-> indexing raises `KeyError: 0` — auto-discovery does not probe for this shape. If you hit this,
-> pass `network_id=` explicitly instead of relying on auto-discovery; see
+> ⚠️ **Warning:** The SDK does `networks = data.get("networks") or data.get("data") or []` and
+> then indexes `networks[0]` — both in `_ensure_network_id` auto-discovery and inside
+> `get_networks()` itself when it seeds the preferred network. It assumes `data["networks"]` is
+> a **list**. If your account returns the nested `{"count": N, "data": [...]}` container,
+> `get_networks()` raises `KeyError: 0` on its first call, not just auto-discovery. If you hit
+> this, call `client.set_preferred_network("<network-id>")` *before* `get_networks()` (which
+> skips the seeding step) and pass `network_id=` explicitly everywhere else; see
 > [Network Targeting](Network-Targeting).
 
 In your own code, use the `as_list()` helper below — it handles all three shapes correctly for

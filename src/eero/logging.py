@@ -227,7 +227,7 @@ class SecureLoggerAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
     Example:
         logger = get_secure_logger(__name__)
         logger.debug("User data: %s", {"user_token": "abc123", "name": "John"})
-        # Logs: "User data: {'user_token': 'abc1...[REDACTED:6chars]', 'name': 'John'}"
+        # Logs: "User data: {'user_token': '[REDACTED:6chars]', 'name': 'John'}"
     """
 
     def __init__(
@@ -347,7 +347,7 @@ def get_secure_logger(
 
         # Sensitive fields are automatically redacted
         _LOGGER.debug("Response: %s", {"user_token": "secret123", "status": "ok"})
-        # Output: Response: {'user_token': 'secr...[REDACTED:9chars]', 'status': 'ok'}
+        # Output: Response: {'user_token': '[REDACTED:9chars]', 'status': 'ok'}
     """
     patterns = sensitive_patterns or DEFAULT_SENSITIVE_PATTERNS
     logger = logging.getLogger(name)

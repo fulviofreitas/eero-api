@@ -37,7 +37,7 @@ asyncio.run(main())
 
 `EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and stores it as the (not-yet-verified) `session_id`. Any previously stored credentials are cleared first — starting a new login always discards the old session.
 
-Returns `True` when the response carried a token, `False` when it did not. Raises `EeroAuthenticationException` if the API rejects the request (the exception carries the response `envelope` and `error_code`), `EeroNetworkException` on a transport-level failure.
+Returns `True` when the response carried a token, `False` when it did not. Raises `EeroAuthenticationException` if the API rejects the request — including a server-rejected identifier (HTTP 400 with an `error.form.*` code, which the transport raises as `EeroValidationException` and `login()` re-wraps); the exception carries the response `envelope` and `error_code`. Raises `EeroRateLimitException` if the login endpoint rate-limits, and `EeroNetworkException`/`EeroTimeoutException` on transport failure.
 
 ### `verify(verification_code)`
 
@@ -50,11 +50,11 @@ await client.verify("123456")
 
 Raises `EeroAuthenticationException("No session token available. Login first.")` if you call `verify()` before `login()`.
 
-A wrong code surfaces as `EeroAuthenticationException` raised by the transport for the API's `401`. The exception message carries only the HTTP status and `meta.code`/`meta.error`; the full response envelope is on `err.envelope` and the `meta.error` string on `err.error_code`. Branch on `error_code`, not on the message text — see [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
+A wrong code surfaces as `EeroAuthenticationException` raised by the transport for the API's `401`. The exception message is the recognised `meta.error` catalogue string (trimmed, lowercased) or the fixed label `unrecognised error string` — `EeroAuthenticationException` carries no HTTP status in the message, and `meta.code`, the raw body and the URL are never embedded. The full response envelope is on `err.envelope` and the `meta.error` string on `err.error_code`. Branch on `error_code`, not on the message text — see [Error Handling](Error-Handling#common-attributes-envelope-error_code-message).
 
 ### `resend_verification_code()`
 
-Available on `AuthAPI` (not exposed on `EeroClient`/`EeroAPI` — call it via `client._api.auth.resend_verification_code()` if you need it, though this reaches into a private attribute that is not covered by semver). POSTs an empty JSON object (`{}`) to `/2.2/login/resend`, authenticated with the pending `session_id` from `login()`. Returns `False` on API failure instead of raising; raises `EeroAuthenticationException` if no login is in progress, `EeroNetworkException` on a transport error.
+Available on `AuthAPI` (not exposed on `EeroClient`/`EeroAPI` — call it via `client._api.auth.resend_verification_code()` if you need it, though this reaches into a private attribute that is not covered by semver). POSTs an empty JSON object (`{}`) to `/2.2/login/resend`, authenticated with the pending `session_id` from `login()`. Returns `False` on an `EeroAPIException` (any status other than 401/429/400-validation); raises `EeroAuthenticationException` if the pending token is rejected with a 401 or if no login is in progress, `EeroRateLimitException` on 429, `EeroNetworkException` on transport error.
 
 ---
 
@@ -93,8 +93,8 @@ Consequences:
 | Outcome | Return / raise |
 |---|---|
 | HTTP 200 | returns `True` |
-| 401 with a recognised `error_code` outside the session group (e.g. `error.verification.required`) | returns `False`; stored credentials are **kept** (the session is mid-verification — finish `verify()`) |
-| 401 with `error.session.expired`, `.invalid`, `.revoked`, or an unrecognised/absent `error_code` | returns `False`; stored credentials are **cleared** from memory and storage |
+| 401 whose `error_code` is in the verification group (`error.verification.*`, `error.login.unknown`, `error.login.blocked`, `error.too.many.resends`, `error.email.unverified`) or is `error.session.refresh` | returns `False`; stored credentials are **kept** (the session is mid-verification — finish `verify()` — or merely due for a refresh) |
+| Any other 401 — `error.session.expired` / `.invalid` / `.revoked`, any other recognised catalogue string, or an unrecognised/absent `error_code` | returns `False`; stored credentials are **deleted** from memory and every storage backend |
 | Any other API error from the refresh endpoint (any status, including 429) | returns `False` |
 | Network or timeout failure | raises `EeroNetworkException` / `EeroTimeoutException` |
 | No session token present | raises `EeroAuthenticationException("No session token available. Login first.")` |
@@ -135,17 +135,17 @@ These are not the same operation:
 
 | Method | Calls the remote API? | What it clears |
 |---|---|---|
-| `logout()` | **Yes** — POSTs a form-encoded body to `/2.2/logout` whose single field is literally named `Cookie` and carries `s=<token>`, authenticated with the same token | Local `AuthCredentials` and storage. If not currently authenticated it returns `False` immediately without an API call. A `401` from the server (session already invalid), any other API error, or a transport failure during the POST is swallowed — local credentials are cleared regardless, and `True` is returned |
-| `clear_session_token()` | **No** | Sets `session_id` to `None` and re-saves the (now empty) record to storage |
+| `logout()` | **Yes** — POSTs a form-encoded body to `/2.2/logout` whose single field is literally named `Cookie` and carries `s=<token>`, authenticated with the same token | Local `AuthCredentials` and storage. If not currently authenticated it returns `False` immediately without an API call. A `401` from the server (session already invalid), any other `EeroAPIException`, or a transport failure during the POST is swallowed — local credentials are still deleted, and `True` is returned. An `EeroRateLimitException` (429) or `EeroValidationException` (400) propagates and local credentials are **not** cleared |
+| `clear_session_token()` | **No** | Clears `session_id` in memory and calls `storage.clear()`, deleting the keyring entry / credential file in every backend of the chain |
 
 ```python
 await client.logout()             # tells the server, then wipes local state
 await client.clear_session_token() # wipes local state only, no network call
 ```
 
-`EeroClient.logout()` and `EeroClient.set_session_token()` / `clear_session_token()` additionally call `clear_cache()` so the in-memory response cache never serves data from a different session.
+`EeroClient.set_session_token()` / `clear_session_token()` additionally call `clear_cache()`, and `EeroClient.logout()` clears the cache when it returns `True` (i.e. whenever credentials were actually present), so the in-memory response cache never serves data from a different session.
 
-There is also `AuthAPI.clear_auth_data()` (not exposed on `EeroClient`/`EeroAPI`), which clears in-memory credentials **and** calls `storage.clear()` to delete the underlying keyring entry or file entirely — a stronger operation than `clear_session_token()`, which re-saves an emptied record rather than deleting it.
+There is also `AuthAPI.clear_auth_data()` (not exposed on `EeroClient`/`EeroAPI`); it does the same as `clear_session_token()` (clears memory and deletes the stored record in every backend) and additionally resets the internal login-in-progress flag.
 
 ---
 
@@ -157,7 +157,7 @@ For headless environments where you can't sit through an OTP prompt each run, se
 await client.set_session_token(token)
 ```
 
-This writes the token into `AuthCredentials.session_id` and persists it via the configured storage backend; from then on every request carries it as described above. Raises `EeroValidationException("token", "must be a non-empty string")` for an empty or non-string token.
+This writes the token into `AuthCredentials.session_id` and persists it via the configured storage backend; from then on every request carries it as described above. Raises `EeroValidationException` for an empty or non-string token, and for a token containing any character outside printable ASCII (including CR/LF) — the same rule the transport applies to every header value, since the token is sent verbatim as `X-User-Token`. A rejected token is never persisted.
 
 See [Configuration](Configuration#-headless--container--ci-recipes) for the full recipe (reading the token from your own env var and picking a storage backend).
 
@@ -193,10 +193,11 @@ If your Eero account was created via "Sign in with Amazon," this SDK's email/pho
 | Scenario | Exception |
 |---|---|
 | `verify()` called with a wrong code (API returns 401) | `EeroAuthenticationException` — inspect `err.error_code` / `err.envelope` |
+| `login()` with an identifier the server rejects (400, `error.form.*`) | `EeroAuthenticationException` (wrapping the transport's `EeroValidationException`; `error_code` is the `error.form.*` string) |
 | `verify()` / `resend_verification_code()` / `refresh_session()` called before `login()` (no session token) | `EeroAuthenticationException` (`"No session token available. Login first."`) |
-| `refresh_session()` receives any API error (401, 429, 5xx, …) | Returns `False` — does not raise. Credentials are cleared only for a session-group or unrecognised 401 |
+| `refresh_session()` receives any API error (401, 429, 5xx, …) | Returns `False` — does not raise. On a 401, credentials are kept only for the verification group or `error.session.refresh`; every other 401 deletes them |
 | `refresh_session()` hits a network or timeout failure | `EeroNetworkException` / `EeroTimeoutException` |
-| `set_session_token()` with an empty/non-string token | `EeroValidationException` |
+| `set_session_token()` with an empty/non-string token, or one containing non-printable-ASCII characters (including CR/LF) | `EeroValidationException` |
 | Any request whose session the server reports as expired, invalid, or revoked | `EeroAuthenticationException` (stored credentials cleared when this happens during a refresh) |
 | A `headers=` dict containing `X-User-Token`, `Cookie`, or `Authorization` | `EeroValidationException` |
 | Transport-level failure during login/verify/refresh | `EeroNetworkException` / `EeroTimeoutException` |

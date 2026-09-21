@@ -151,6 +151,7 @@ class ProfilesAPI(AuthenticatedAPI):
         url = (self_url(resolved_parent) if resolved_parent is not None else None) or (
             self._profile_url(network, profile)
         )
+        warn_uncharacterised_write(_LOGGER, "update profile")
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def pause_profile(

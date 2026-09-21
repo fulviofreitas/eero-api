@@ -59,7 +59,7 @@ except EeroAPIException as err:
 
 Branch on `error_code` (or on the exception class), never on the message string — the message is a fixed, leak-safe label; `error_code` is what the API sent. The envelope is the API's exact response; the SDK does not rewrite or trim it.
 
-The same rule applies to log output: the transport logs the parsed envelope through the redacting secure logger (`DEBUG` for 401/404/429, `ERROR` for other statuses) and never the raw body text. See [Logging and Security](Logging-and-Security#other-transport-security-behavior).
+The same rule applies to log output: the transport logs the parsed envelope through the redacting secure logger at `DEBUG` for every error status (plus a status-and-method-only `ERROR` line for statuses other than 401/404/429) and never the raw body text. See [Logging and Security](Logging-and-Security#other-transport-security-behavior).
 
 ---
 
@@ -88,7 +88,7 @@ An unrecognised or free-text `meta.error` **never changes the class chosen by th
 
 | `ErrorGroup` | Catalogue strings | Class raised | Notes |
 |---|---|---|---|
-| `SESSION` | `error.session.expired`, `error.session.invalid`, `error.session.revoked` | `EeroAuthenticationException` | Terminal. When the refresh endpoint returns one of these, stored credentials are **cleared** (likewise for an unrecognised/absent string on a 401 from refresh) |
+| `SESSION` | `error.session.expired`, `error.session.invalid`, `error.session.revoked` | `EeroAuthenticationException` | Terminal. When the refresh endpoint returns one of these, stored credentials are **cleared** — as they are for any 401 from refresh whose string is not in `VERIFICATION` or `SESSION_REFRESH`, including unrecognised/absent strings |
 | `SESSION_REFRESH` | `error.session.refresh` | `EeroAuthenticationException` — only if the refresh fails | On a 401 the transport calls `refresh_session()` and replays the request once; credentials are never cleared by this string. See [Authentication](Authentication#-transparent-refresh-and-replay) |
 | `VERIFICATION` | `error.verification.required`, `.invalid`, `.expired`, `.failure`, `.blocked`, `error.login.unknown`, `error.login.blocked`, `error.too.many.resends`, `error.email.unverified` | `EeroAuthenticationException` | The account is mid-verification or blocked from completing login. Never clears stored credentials |
 | `ACCESS_DENIED` | `error.access.denied` | `EeroAccessDeniedException` (on 403) | Authenticated but not permitted. **Not** an auth error; credentials kept |
@@ -140,7 +140,7 @@ What `BaseAPI._request()` (via `exception_for_error`) does for each response:
 | `200`–`299` | *(none — success)* | `204` or an empty body returns `{}`; invalid JSON on a 2xx raises `EeroAPIException` |
 | `300`–`399` | `EeroAPIException` | Redirects are never followed (`allow_redirects=False`, not overridable) and are always rejected, to stop the session token leaking to another host |
 | `400` | `EeroValidationException` if `meta.error` is a `VALIDATION` string, else `EeroAPIException` | `field == "request"`; API detail in `envelope` |
-| `401` | `EeroAuthenticationException` | Always, whatever the string. `error.session.refresh` first triggers a transparent refresh + single replay; the exception is raised only if there's no refresh hook or the refresh fails. Stored credentials are cleared only when the **refresh endpoint** answers with a `SESSION` string or an unrecognised/absent string — never for `VERIFICATION` or `SESSION_REFRESH` strings |
+| `401` | `EeroAuthenticationException` | Always, whatever the string. `error.session.refresh` first triggers a transparent refresh + single replay; the exception is raised only if there's no refresh hook or the refresh fails. Stored credentials are cleared whenever the **refresh endpoint** answers 401 with anything other than a `VERIFICATION` or `SESSION_REFRESH` string (a `SESSION` string, any other recognised group, or an unrecognised/absent string) |
 | `403` | `EeroAccessDeniedException` with `error.access.denied`, else `EeroAPIException` | Not an auth error; credentials kept |
 | `404` | `EeroNotFoundException` | Always — with a catalogue string, a free-text sentence, or no `meta.error` at all |
 | `429` | `EeroRateLimitException` | See [Caching and Rate Limits](Caching-and-Rate-Limits) |
