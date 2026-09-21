@@ -149,6 +149,7 @@ _FORCE_INCLUDE_OPTIONAL = {
     "set_power_saving": {"enable": True},
     "update_schedule": {"enabled": True},  # PowerSavingAPI.update_schedule
     "update_thread": {"thread_enable": True},
+    "update_device_via_link": {"nickname": "New Name"},
     "set_wpa3_per_band": {"band_2_4_ghz": "WPA3"},
 }
 

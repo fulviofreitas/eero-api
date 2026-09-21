@@ -10,15 +10,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single power-saving schedule on the default API version.
-_SCHEDULE_TEMPLATE = "networks/{{id}}/power_saving/schedules/{schedule_id}"
 
 
 class PowerSavingAPI(AuthenticatedAPI):
@@ -248,7 +246,7 @@ class PowerSavingAPI(AuthenticatedAPI):
                 "at least one of name, days, start_time, end_time, enabled must be supplied",
             )
 
-        url = resource_url(network_id, _SCHEDULE_TEMPLATE.format(schedule_id=schedule_id))
+        url = resolve_nested_url(network_id, schedule_id, prefix="power_saving/schedules")
         warn_uncharacterised_write(
             _LOGGER,
             "update power saving schedule for network",
@@ -280,7 +278,7 @@ class PowerSavingAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(network_id, _SCHEDULE_TEMPLATE.format(schedule_id=schedule_id))
+        url = resolve_nested_url(network_id, schedule_id, prefix="power_saving/schedules")
         warn_uncharacterised_write(
             _LOGGER,
             "delete power saving schedule for network",

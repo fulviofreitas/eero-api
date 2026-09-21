@@ -25,18 +25,16 @@ for the whole SDK -- see that module for the wire format.
 from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT, API_VERSION_DEVICE_WRITES
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
-from .base import AuthenticatedAPI
+from .base import AuthenticatedAPI, id_from_url
 from .blacklist import BlacklistAPI
-from .links import resource_url, self_url, sub_resource_url
+from .links import self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single device resource on the default API version.
-_DEVICE_TEMPLATE = "networks/{network}/devices/{{id}}"
 
 
 def _bool_param(value: Optional[bool]) -> Optional[str]:
@@ -79,7 +77,7 @@ class DevicesAPI(AuthenticatedAPI):
         Returns:
             The absolute device URL.
         """
-        return resource_url(mac, _DEVICE_TEMPLATE.format(network=network), version=version)
+        return resolve_nested_url(network, mac, prefix="devices", version=version)
 
     async def _update_device(
         self, network_id: str, mac: str, payload: Dict[str, Any], auth_token: str
@@ -92,6 +90,15 @@ class DevicesAPI(AuthenticatedAPI):
         mutations are routed here via an absolute 2.3 URL while reads continue to
         use the 2.2 base URL. See issue #102.
 
+        ``mac`` is first normalised to its trailing path segment via
+        ``id_from_url`` (a no-op for an already-bare MAC): when a caller
+        passes a path or absolute URL, ``resolve_nested_url``'s own
+        path/URL branch would otherwise treat that value as already
+        identifying the full device resource and never apply the 2.3
+        version pin, silently routing the write to the no-op 2.2 endpoint.
+        Normalising first means every input shape always builds through the
+        network + version-pinned template.
+
         Args:
             network_id: ID of the network the device belongs to
             mac: The device's bare MAC, path, or absolute URL
@@ -101,7 +108,7 @@ class DevicesAPI(AuthenticatedAPI):
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
         """
-        url = self._device_url(network_id, mac, version=API_VERSION_DEVICE_WRITES)
+        url = self._device_url(network_id, id_from_url(mac), version=API_VERSION_DEVICE_WRITES)
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def get_devices(
@@ -290,8 +297,23 @@ class DevicesAPI(AuthenticatedAPI):
 
         Raises:
             EeroAuthenticationException: If not authenticated
+            EeroValidationException: If none of ``nickname``, ``paused``,
+                ``profile`` is supplied
             EeroAPIException: If the API returns an error
         """
+        payload: Dict[str, Any] = {}
+        if nickname is not None:
+            payload["nickname"] = nickname
+        if paused is not None:
+            payload["paused"] = paused
+        if profile is not None:
+            payload["profile"] = profile
+
+        if not payload:
+            raise EeroValidationException(
+                "device", "at least one of nickname, paused, profile must be supplied"
+            )
+
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
@@ -300,14 +322,6 @@ class DevicesAPI(AuthenticatedAPI):
         url = (self_url(resolved_parent) if resolved_parent is not None else None) or (
             self._device_url(network, mac)
         )
-
-        payload: Dict[str, Any] = {}
-        if nickname is not None:
-            payload["nickname"] = nickname
-        if paused is not None:
-            payload["paused"] = paused
-        if profile is not None:
-            payload["profile"] = profile
 
         warn_uncharacterised_write(_LOGGER, "update_device_via_link")
         _LOGGER.debug("Updating device via its own link: %s", sorted(payload))

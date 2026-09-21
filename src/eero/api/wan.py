@@ -14,15 +14,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_MULTISTATICIP, API_VERSION_SECONDARY_WAN
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single device's secondary-WAN access, keyed by MAC.
-_DEVICE_TEMPLATE = "networks/{{id}}/devices/{mac}"
 
 
 class WanAPI(AuthenticatedAPI):
@@ -205,9 +203,10 @@ class WanAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(
+        url = resolve_nested_url(
             network_id,
-            _DEVICE_TEMPLATE.format(mac=mac),
+            mac,
+            prefix="devices",
             version=API_VERSION_SECONDARY_WAN,
         )
         warn_uncharacterised_write(

@@ -200,6 +200,18 @@ class TestScheduleAPIUpdateSchedule:
         with pytest.raises(EeroValidationException):
             await schedule_api.update_schedule(12345, enabled=True)
 
+    @pytest.mark.asyncio
+    async def test_update_schedule_no_fields_raises_before_request(
+        self, schedule_api, mock_session
+    ):
+        """No optional field supplied raises before any request is issued."""
+        with pytest.raises(EeroValidationException):
+            await schedule_api.update_schedule(
+                "/2.2/networks/network_123/profiles/profile_001/schedules/s_1"
+            )
+
+        mock_session.request.assert_not_called()
+
 
 class TestScheduleAPIDeleteSchedule:
     """Tests for delete_schedule method."""

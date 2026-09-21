@@ -19,7 +19,7 @@ from ._params import CADENCE_VALUES, resolve_network_url, validate_cadence
 from ._writes import warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url
+from .links import validate_identifier
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -38,10 +38,13 @@ def _validate_child_id(value: str) -> str:
     as a literal path segment onto the network's own resolved URL in
     `_get_usage` -- the id is never spliced into a template string handed
     to a second `str.format` call, so it cannot trigger the bare `KeyError`
-    that pattern causes elsewhere in this SDK. This still routes the value
-    through `eero.api.links.resource_url`'s bare-id branch for the same
-    non-empty-string check applied to every other bare id in the SDK, for
-    consistency; the resolved URL it returns is discarded.
+    that pattern causes elsewhere in this SDK. The value is validated
+    directly via `eero.api.links.validate_identifier` -- the same
+    single-path-segment check applied to every other bare id in the SDK --
+    rather than through `resource_url`'s path/URL branch, which skips that
+    check entirely for a value that happens to start with ``/`` or a
+    scheme (e.g. ``"/../../2.2/account"`` would otherwise pass through
+    unvalidated).
 
     Args:
         value: The candidate id.
@@ -50,10 +53,10 @@ def _validate_child_id(value: str) -> str:
         ``value`` unchanged, once validated.
 
     Raises:
-        EeroValidationException: If ``value`` is not a non-empty string.
+        EeroValidationException: If ``value`` is not a single path segment
+            identifier.
     """
-    resource_url(value, "{id}")
-    return value
+    return validate_identifier(value)
 
 
 def _validate_cadence(cadence: Optional[str]) -> str:

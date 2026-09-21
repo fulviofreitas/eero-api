@@ -67,6 +67,26 @@ def _validate_identifier(value: str) -> str:
     return value
 
 
+def validate_identifier(value: str) -> str:
+    """Validate a bare resource identifier before it is placed in a path.
+
+    Public alias of :func:`_validate_identifier`, for callers outside this
+    module (e.g. ``eero.api.data_usage``) that need to validate a bare id as
+    a single path segment without routing it through :func:`resource_url`'s
+    discarded-URL indirection.
+
+    Args:
+        value: The caller-supplied identifier.
+
+    Returns:
+        ``value`` unchanged, once validated.
+
+    Raises:
+        EeroValidationException: As :func:`_validate_identifier`.
+    """
+    return _validate_identifier(value)
+
+
 def _validate_link_path(link: str) -> str:
     """Validate a link value read from an envelope before joining it.
 
@@ -326,4 +346,5 @@ __all__ = [
     "resource_url",
     "self_url",
     "sub_resource_url",
+    "validate_identifier",
 ]

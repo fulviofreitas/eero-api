@@ -749,6 +749,31 @@ class TestServerDrivenSessionRefresh:
         assert second_kwargs["cookies"] == {"s": "original_token"}
 
     @pytest.mark.asyncio
+    async def test_replay_carries_caller_supplied_header(self, api_with_hook, mock_session):
+        """A caller-supplied per-call header survives the post-refresh replay.
+
+        Regression guard: the replay must not drop a caller's own `headers=`
+        kwarg just because it also excludes the first attempt's *built*
+        header dict (SDK defaults + credential) from the replay.
+        """
+        success_payload = api_success_response({"ok": True})
+        first_response = create_mock_response(401, self.SESSION_REFRESH_BODY)
+        second_response = create_mock_response(200, success_payload)
+        mock_session.request.side_effect = [first_response, second_response]
+
+        await api_with_hook.get(
+            "/endpoint",
+            auth_token="original_token",
+            headers={"X-Custom-Header": "caller-value"},
+        )
+
+        assert mock_session.request.call_count == 2
+        second_kwargs = mock_session.request.call_args_list[1][1]
+        assert second_kwargs["headers"]["X-Custom-Header"] == "caller-value"
+        # The credential is still rebuilt fresh alongside the caller header.
+        assert second_kwargs["headers"]["X-User-Token"] == "original_token"
+
+    @pytest.mark.asyncio
     async def test_replay_uses_token_provider_when_set(self, api_with_hook, mock_session):
         """When a token provider is wired, the replay sources its token from it."""
         api_with_hook._token_provider = AsyncMock(return_value="refreshed_token")

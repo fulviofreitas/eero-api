@@ -1645,6 +1645,41 @@ class TestNewWriteWrapperCacheInvalidation:
         assert "network_123_devices" not in client._cache["devices"]
 
     @pytest.mark.asyncio
+    async def test_update_device_via_link_with_profile_invalidates_profile_cache(self, client):
+        """A device's profile reassignment also evicts the profile cache.
+
+        Mirrors set_profile_devices: reassigning a device to a different
+        profile changes the membership both the single cached profile and
+        the cached profiles list would otherwise still report.
+        """
+        self._seed_devices_cache(client)
+        self._seed_profiles_cache(client)
+        for key in ("network_123_profile_1", "network_123_profile_2", "other_net_profile_9"):
+            client._cache["profiles"][key] = {"data": {}, "timestamp": time.monotonic()}
+
+        await client.update_device_via_link(
+            "dev_1",
+            profile="/2.2/networks/network_123/profiles/profile_1",
+        )
+
+        # The destination profile, the (unknown) previous profile and the
+        # list are all stale; another network's profiles are untouched.
+        assert "network_123_profile_1" not in client._cache["profiles"]
+        assert "network_123_profile_2" not in client._cache["profiles"]
+        assert "network_123_profiles" not in client._cache["profiles"]
+        assert "other_net_profile_9" in client._cache["profiles"]
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_without_profile_leaves_profile_cache(self, client):
+        """No profile kwarg means no profile-cache side effect."""
+        self._seed_devices_cache(client)
+        self._seed_profiles_cache(client)
+
+        await client.update_device_via_link("dev_1", nickname="New Name")
+
+        assert "network_123_profiles" in client._cache["profiles"]
+
+    @pytest.mark.asyncio
     async def test_set_device_type_invalidates_device_cache(self, client):
         """Test set_device_type evicts the device cache."""
         self._seed_devices_cache(client)

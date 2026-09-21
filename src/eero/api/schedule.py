@@ -224,7 +224,6 @@ class ScheduleAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = _resolve_schedule_url(schedule)
         payload: Dict[str, Any] = {}
         if name is not None:
             payload["name"] = name
@@ -237,6 +236,13 @@ class ScheduleAPI(AuthenticatedAPI):
         if enabled is not None:
             payload["enabled"] = enabled
 
+        if not payload:
+            raise EeroValidationException(
+                "schedule",
+                "at least one of name, days, start, end, enabled must be supplied",
+            )
+
+        url = _resolve_schedule_url(schedule)
         warn_uncharacterised_write(_LOGGER, "update_schedule")
         _LOGGER.debug("Updating schedule at %s: %s", url, sorted(payload))
         return await self.put(url, auth_token=auth_token, json=payload)

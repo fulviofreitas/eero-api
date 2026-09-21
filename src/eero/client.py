@@ -855,6 +855,12 @@ class EeroClient:
             **self._device_parent_kwargs(network_id, device_id),
         )
         self._invalidate_device_cache(network_id, device_id)
+        if profile is not None:
+            # A device's profile assignment changed. The destination profile
+            # and the profile the device left both report a different
+            # membership now, and the previous profile is not known here, so
+            # every cached profile of this network is dropped.
+            self._invalidate_all_profile_caches(network_id)
         return response
 
     async def set_device_type(
@@ -1016,6 +1022,18 @@ class EeroClient:
         cache_key = f"{network_id}_profiles"
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
+
+    def _invalidate_all_profile_caches(self, network_id: str) -> None:
+        """Invalidate every cached profile of a network, and its profiles list.
+
+        Used when a membership change touches a profile the caller did not
+        name (a device moving between profiles leaves the previous profile
+        unknown), so no single-profile entry of that network can be trusted.
+        """
+        prefix = f"{network_id}_"
+        profiles = self._cache.get("profiles", {})
+        for cache_key in [key for key in profiles if key.startswith(prefix)]:
+            del profiles[cache_key]
 
     async def create_profile(
         self,

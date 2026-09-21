@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.devices import DevicesAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -151,6 +151,31 @@ class TestDevicesAPISetNickname:
         assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
 
     @pytest.mark.asyncio
+    async def test_set_nickname_path_form_mac_still_targets_v2_3_endpoint(
+        self, devices_api, mock_session
+    ):
+        """A path/URL-form mac still pins the write to the 2.3 endpoint (issue #102).
+
+        Regression guard: `_update_device` must normalise `mac` with
+        `id_from_url` before building the 2.3 URL, otherwise a path/URL-form
+        mac (as a caller might pass back from a previous read) would be
+        treated by `resolve_nested_url`'s own path/URL branch as already
+        identifying the full device resource on whatever version it was
+        read from -- silently dropping the 2.3 pin and routing the write to
+        the no-op 2.2 endpoint.
+        """
+        expected_response = {"meta": {"code": 200}, "data": {}}
+        mock_session.request.return_value = create_mock_response(200, expected_response)
+
+        await devices_api.set_device_nickname(
+            "network_123", "/2.2/networks/network_123/devices/device_abc", "New Name"
+        )
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
+
+    @pytest.mark.asyncio
     async def test_set_nickname_not_authenticated(self, devices_api):
         """Test set_device_nickname raises when not authenticated."""
         devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
@@ -281,6 +306,13 @@ class TestDevicesAPIUpdateDeviceViaLink:
     async def test_update_device_via_link_not_authenticated(self, devices_api):
         devices_api._auth_api.get_auth_token = AsyncMock(return_value=None)
         with pytest.raises(EeroAuthenticationException):
+            await devices_api.update_device_via_link(
+                "network_123", "aabbccddeeff", nickname="New Name"
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_device_via_link_no_fields_raises(self, devices_api):
+        with pytest.raises(EeroValidationException):
             await devices_api.update_device_via_link("network_123", "aabbccddeeff")
 
 

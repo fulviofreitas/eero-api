@@ -198,6 +198,30 @@ class TestAuthAPILogin:
         assert exc_info.value.envelope is not None
 
     @pytest.mark.asyncio
+    async def test_login_rejected_identifier_wrapped_as_authentication_exception(
+        self, api_with_session, mock_session
+    ):
+        """A server-rejected identifier (400 + error.form.*) still surfaces as auth failure.
+
+        Regression guard: the transport raises ``EeroValidationException``
+        (a subclass of ``EeroException``, not ``EeroAPIException``) for a
+        400 response carrying a recognised ``error.form.*`` validation
+        code. `login()`'s documented contract is that every login failure
+        surfaces as ``EeroAuthenticationException`` -- this must hold
+        regardless of which exception class the transport used, and the
+        original envelope/error_code must still be attached.
+        """
+        mock_session.request.return_value = create_mock_response(
+            400, api_error_response(400, "error.form.errors")
+        )
+
+        with pytest.raises(EeroAuthenticationException) as exc_info:
+            await api_with_session.login("bad-identifier")
+
+        assert exc_info.value.error_code == "error.form.errors"
+        assert exc_info.value.envelope is not None
+
+    @pytest.mark.asyncio
     async def test_login_no_token_returns_false(self, api_with_session, mock_session):
         """Test that login returns False when no token is received."""
         mock_session.request.return_value = create_mock_response(200, api_success_response({}))
@@ -623,6 +647,37 @@ class TestFileStorageAtomicSecurePermissions:
         leftovers = [p for p in tmp_path.iterdir() if p.name != "cookies.json"]
         assert leftovers == []
 
+    @pytest.mark.asyncio
+    async def test_stale_pid_named_tmp_file_does_not_prevent_save(self, tmp_path):
+        """A pre-existing stale temp file from a crashed prior process must not block save().
+
+        Regression guard: an earlier revision derived the temp file name
+        from ``os.getpid()`` alone. A process that crashed mid-write left
+        that file behind; a later save from a new process that happened to
+        reuse the same PID then failed outright on the ``O_EXCL`` open
+        (silently -- the failure is caught and logged, not raised). Using
+        ``tempfile.mkstemp`` for a fresh, collision-free name every call
+        means a stale file of the old naming shape lying around is simply
+        irrelevant to a new save.
+        """
+        cookie_file = tmp_path / "cookies.json"
+        storage = FileStorage(str(cookie_file))
+
+        # Simulate the leftover of a crashed prior process using the old
+        # PID-based naming scheme.
+        stale_tmp = tmp_path / f".{cookie_file.name}.{os.getpid()}.tmp"
+        stale_tmp.write_bytes(b"leftover from a crashed process")
+
+        await storage.save(AuthCredentials(session_id="fresh-value"))
+
+        assert cookie_file.exists()
+        loaded = json.loads(cookie_file.read_text())
+        assert loaded["session_id"] == "fresh-value"
+        # The stale file from the old naming scheme is untouched by mkstemp
+        # (a different, unpredictable name), and the real save still landed.
+        assert stale_tmp.exists()
+        assert stale_tmp.read_bytes() == b"leftover from a crashed process"
+
 
 # ================ Identifier Redaction in Error Logging Tests (item 4) ================
 
@@ -991,6 +1046,46 @@ class TestAuthAPISessionRefresh:
 
         assert waiter_result is False
         assert leader_result is True
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_leader_cancelled_leaves_waiter_with_false(
+        self, api_with_session
+    ):
+        """A cancelled leader must not cancel concurrent waiters too.
+
+        Regression guard: if the leader's own `await self._do_refresh()` is
+        cancelled, the shared future must be resolved with `False` --
+        "refresh did not succeed" -- rather than having the
+        `asyncio.CancelledError` set on it. Every waiter awaits this exact
+        future via `asyncio.shield`; setting an exception on it would
+        propagate the cancellation to every one of them even though their
+        own individual awaits were never cancelled. The leader's own task
+        still re-raises `CancelledError`, since its own await really was
+        cancelled.
+        """
+        api_with_session._credentials.session_id = "sess_token"
+
+        async def slow_post(*args, **kwargs):
+            await asyncio.sleep(1)
+            return api_success_response({"user_token": "ignored_token"})
+
+        with patch.object(api_with_session, "post", new=AsyncMock(side_effect=slow_post)):
+            leader_task = asyncio.create_task(api_with_session.refresh_session())
+            # Yield once so the leader claims the in-flight future before the
+            # waiter starts awaiting it.
+            await asyncio.sleep(0)
+
+            waiter_task = asyncio.create_task(api_with_session.refresh_session())
+            await asyncio.sleep(0)
+
+            leader_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await leader_task
+
+            waiter_result = await waiter_task
+
+        assert waiter_result is False
 
     @pytest.mark.asyncio
     async def test_refresh_session_discards_future_from_a_different_loop(self, api_with_session):

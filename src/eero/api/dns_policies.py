@@ -38,20 +38,13 @@ from typing import Any, Dict, List, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
-from .base import AuthenticatedAPI
-from .links import resource_url, sub_resource_url
+from .base import AuthenticatedAPI, id_from_url
+from .links import sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a network-scoped profile-applications resource.
-_PROFILE_APPLICATIONS_TEMPLATE = "networks/{network}/dns_policies/profiles/{{id}}/applications"
-
-#: Template for a network-scoped profile's blocked-applications resource.
-_PROFILE_APPLICATIONS_BLOCKED_TEMPLATE = (
-    "networks/{network}/dns_policies/profiles/{{id}}/applications/blocked"
-)
 
 
 def _payload(required: Dict[str, Any], **optional: Any) -> Dict[str, Any]:
@@ -92,6 +85,13 @@ class DnsPoliciesAPI(AuthenticatedAPI):
     def _profile_applications_url(self, network_id: str, profile_id: str) -> str:
         """Resolve a profile's applications resource URL.
 
+        A profile path/URL (e.g. ``/2.2/networks/{network}/profiles/{id}``)
+        cannot be mapped onto the ``dns_policies/profiles/{id}`` sub-tree by
+        substitution -- the two resource families share only the trailing
+        id. ``profile_id`` is therefore first normalised to that trailing
+        id via ``id_from_url`` (a no-op for an already-bare id), then
+        validated and appended as a literal path segment.
+
         Args:
             network_id: ID of the network the profile belongs to.
             profile_id: The profile's bare ID, path, or absolute URL.
@@ -99,10 +99,18 @@ class DnsPoliciesAPI(AuthenticatedAPI):
         Returns:
             The absolute URL of the profile's applications resource.
         """
-        return resource_url(profile_id, _PROFILE_APPLICATIONS_TEMPLATE.format(network=network_id))
+        return resolve_nested_url(
+            network_id,
+            id_from_url(profile_id),
+            prefix="dns_policies/profiles",
+            suffix="/applications",
+        )
 
     def _profile_applications_blocked_url(self, network_id: str, profile_id: str) -> str:
         """Resolve a profile's blocked-applications resource URL.
+
+        See `_profile_applications_url` for why ``profile_id`` is first
+        normalised to its trailing id via ``id_from_url``.
 
         Args:
             network_id: ID of the network the profile belongs to.
@@ -111,8 +119,11 @@ class DnsPoliciesAPI(AuthenticatedAPI):
         Returns:
             The absolute URL of the profile's blocked-applications resource.
         """
-        return resource_url(
-            profile_id, _PROFILE_APPLICATIONS_BLOCKED_TEMPLATE.format(network=network_id)
+        return resolve_nested_url(
+            network_id,
+            id_from_url(profile_id),
+            prefix="dns_policies/profiles",
+            suffix="/applications/blocked",
         )
 
     async def get_advanced_content_filter(

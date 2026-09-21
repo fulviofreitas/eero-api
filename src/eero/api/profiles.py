@@ -15,15 +15,13 @@ from typing import Any, Dict, List, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, self_url, sub_resource_url
+from .links import self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single profile resource on the default API version.
-_PROFILE_TEMPLATE = "networks/{network}/profiles/{{id}}"
 
 
 class ProfilesAPI(AuthenticatedAPI):
@@ -51,7 +49,7 @@ class ProfilesAPI(AuthenticatedAPI):
         Returns:
             The absolute profile URL.
         """
-        return resource_url(profile, _PROFILE_TEMPLATE.format(network=network))
+        return resolve_nested_url(network, profile, prefix="profiles")
 
     async def get_profiles(
         self, network: str, *, parent: Optional[Mapping[str, Any]] = None

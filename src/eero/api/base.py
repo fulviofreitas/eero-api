@@ -616,12 +616,21 @@ class BaseAPI:
                             refreshed = await self._refresh_hook()
                             if refreshed:
                                 # Rebuild the replay from scratch: drop this
-                                # attempt's headers/cookies so no stale
-                                # credential or header is ever replayed
-                                # verbatim, and source the replay token from
-                                # the token provider (falling back to the
-                                # originally supplied auth_token when no
-                                # provider is wired).
+                                # attempt's built headers (SDK defaults plus
+                                # the now-stale credential) and cookies so no
+                                # stale credential is ever replayed verbatim,
+                                # and source the replay token from the token
+                                # provider (falling back to the originally
+                                # supplied auth_token when no provider is
+                                # wired). The caller's OWN per-call headers
+                                # -- captured in ``caller_headers`` before
+                                # they were merged with the credential below
+                                # -- are re-supplied as ``headers=`` on the
+                                # replay so a caller-supplied header is never
+                                # silently dropped from the replayed request;
+                                # the recursive ``_request`` call re-validates
+                                # and re-merges them with a fresh credential
+                                # exactly as the original call did.
                                 excluded_replay_keys = {"headers", "cookies"}
                                 if resolved_encoding is RequestEncoding.EMPTY_JSON_STRING:
                                     # The "data" key in kwargs here is this
@@ -638,6 +647,8 @@ class BaseAPI:
                                     for key, value in kwargs.items()
                                     if key not in excluded_replay_keys
                                 }
+                                if caller_headers:
+                                    replay_kwargs["headers"] = caller_headers
                                 replay_token = auth_token
                                 if self._token_provider is not None:
                                     replay_token = await self._token_provider()

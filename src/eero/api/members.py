@@ -17,18 +17,13 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
+from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, RequestEncoding
 from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
-
-#: Template for a single invite resource on the default API version.
-_INVITE_TEMPLATE = "networks/{network}/invites/{{id}}"
-
-#: Template for a single admin resource on the default API version.
-_ADMIN_TEMPLATE = "networks/{network}/admins/{{id}}"
 
 #: The wire values the API's ``InviteRole`` enum declares.
 _INVITE_ROLES = frozenset({"owner", "admin"})
@@ -166,7 +161,7 @@ class MembersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(invite_id, _INVITE_TEMPLATE.format(network=network_id))
+        url = resolve_nested_url(network_id, invite_id, prefix="invites")
         warn_uncharacterised_write(_LOGGER, "update invite for network")
         return await self.put(url, auth_token=auth_token, json={"invite_nickname": invite_nickname})
 
@@ -190,7 +185,7 @@ class MembersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(invite_id, _INVITE_TEMPLATE.format(network=network_id))
+        url = resolve_nested_url(network_id, invite_id, prefix="invites")
         warn_uncharacterised_write(_LOGGER, "delete invite for network")
         return await self.delete(url, auth_token=auth_token)
 
@@ -324,7 +319,7 @@ class MembersAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = resource_url(user_id, _ADMIN_TEMPLATE.format(network=network_id))
+        url = resolve_nested_url(network_id, user_id, prefix="admins")
         warn_uncharacterised_write(_LOGGER, "remove admin from network")
         return await self.delete(url, auth_token=auth_token)
 
