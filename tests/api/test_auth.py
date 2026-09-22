@@ -25,7 +25,7 @@ import aiohttp
 import pytest
 
 from eero.api.auth import AuthAPI
-from eero.api.auth_storage import AuthCredentials, ChainedStorage, FileStorage
+from eero.api.auth_storage import AuthCredentials, ChainedStorage, FileStorage, KeyringStorage
 from eero.const import CREDENTIAL_SCHEMA_VERSION, DEFAULT_ACCEPT_LANGUAGE
 from eero.exceptions import (
     EeroAuthenticationException,
@@ -581,6 +581,117 @@ class TestChainedStorageSingleWriterInvariant:
         assert result.session_id is None
         primary.save.assert_not_awaited()
         fallback.clear.assert_not_awaited()
+
+
+# ================ ChainedStorage save() Read-Back Fallback Tests (issue #131) ================
+
+
+class TestChainedStorageSaveReadBackFallback:
+    """A primary save() that returns without raising must still be verified.
+
+    Regression coverage for #131: a lying or no-op keyring backend (e.g.
+    ``keyring.backends.null.Keyring``) can make ``primary.save()`` return
+    successfully without actually persisting anything. ``ChainedStorage.save()``
+    now reads the primary back and compares ``session_id`` before deciding
+    whether the fallback still needs to be written, mirroring the promotion
+    read-back ``load()`` already does.
+    """
+
+    @pytest.mark.asyncio
+    async def test_save_falls_back_to_file_when_primary_write_does_not_verifiably_persist(self):
+        """A primary save() that doesn't verifiably persist must still reach the fallback."""
+        primary = AsyncMock()
+        primary.save = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+
+        fallback = AsyncMock()
+        fallback.save = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+        credentials = AuthCredentials(session_id="live_token")
+
+        await storage.save(credentials)
+
+        primary.save.assert_awaited_once_with(credentials)
+        fallback.save.assert_awaited_once_with(credentials)
+
+    @pytest.mark.asyncio
+    async def test_save_falls_back_to_file_when_primary_raises(self):
+        """Regression guard: a primary save() that raises must still reach the fallback."""
+        primary = AsyncMock()
+        primary.save = AsyncMock(side_effect=RuntimeError("keyring unavailable"))
+
+        fallback = AsyncMock()
+        fallback.save = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+        credentials = AuthCredentials(session_id="live_token")
+
+        await storage.save(credentials)
+
+        fallback.save.assert_awaited_once_with(credentials)
+
+    @pytest.mark.asyncio
+    async def test_save_does_not_call_fallback_when_primary_write_is_verified(self):
+        """A verified primary write must not duplicate the record into the fallback."""
+        primary = AsyncMock()
+        primary.save = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
+
+        fallback = AsyncMock()
+        fallback.save = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+        credentials = AuthCredentials(session_id="live_token")
+
+        await storage.save(credentials)
+
+        primary.save.assert_awaited_once_with(credentials)
+        fallback.save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_logs_error_when_verification_fails_and_fallback_also_fails(self, caplog):
+        """save() never raises, even when both the verified primary and the fallback fail."""
+        primary = AsyncMock()
+        primary.save = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+
+        fallback = AsyncMock()
+        fallback.save = AsyncMock(side_effect=RuntimeError("disk full"))
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+        credentials = AuthCredentials(session_id="live_token")
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            await storage.save(credentials)
+
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(error_records) == 1
+        assert "Both primary and fallback storage failed" in error_records[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_save_end_to_end_falls_back_to_file_under_a_silent_noop_keyring(
+        self, mock_keyring, tmp_path
+    ):
+        """End-to-end regression for #131 with real ``ChainedStorage`` objects.
+
+        ``mock_keyring`` reproduces a ``null.Keyring``-style silent no-op:
+        ``set_password`` never raises and ``get_password`` always returns
+        ``None``, so nothing is ever actually retained in the "keyring". The
+        session must still land in the file fallback and be loadable from it.
+        """
+        cookie_file = tmp_path / "cookies.json"
+        storage = ChainedStorage(
+            primary=KeyringStorage(),
+            fallback=FileStorage(str(cookie_file)),
+        )
+        credentials = AuthCredentials(session_id="e2e_token")
+
+        await storage.save(credentials)
+
+        assert cookie_file.exists()
+        loaded = await storage.load()
+        assert loaded.session_id == "e2e_token"
 
 
 # ================ FileStorage Atomic Secure-Permissions Tests (item 3) ================

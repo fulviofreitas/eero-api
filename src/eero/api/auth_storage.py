@@ -423,10 +423,17 @@ class ChainedStorage(CredentialStorage):
 
         Only uses fallback storage if primary fails, to avoid duplicating
         credentials across multiple storage backends.
+
+        A primary backend that swallows its own write errors (as every
+        concrete ``CredentialStorage`` does) can return successfully without
+        actually persisting anything - a lying or no-op keyring backend is
+        indistinguishable from a working one by return value alone. To catch
+        that, a successful primary write is verified with a read-back
+        (mirroring the promotion logic in ``load()``); only a verified write
+        skips the fallback.
         """
         try:
             await self._primary.save(credentials)
-            _LOGGER.debug("Saved to primary storage")
         except Exception as e:
             _LOGGER.debug("Primary storage save failed, trying fallback: %s", e)
             try:
@@ -434,6 +441,19 @@ class ChainedStorage(CredentialStorage):
                 _LOGGER.debug("Saved to fallback storage")
             except Exception as fallback_error:
                 _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
+            return
+
+        verified = await self._primary.load()
+        if verified.session_id == credentials.session_id:
+            _LOGGER.debug("Saved to primary storage")
+            return
+
+        _LOGGER.debug("Primary storage did not retain the saved record; trying fallback")
+        try:
+            await self._fallback.save(credentials)
+            _LOGGER.debug("Saved to fallback storage")
+        except Exception as fallback_error:
+            _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
 
     async def clear(self) -> None:
         """Clear both storages."""
