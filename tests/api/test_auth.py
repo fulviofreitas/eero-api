@@ -616,6 +616,28 @@ class TestChainedStorageSaveReadBackFallback:
         fallback.save.assert_awaited_once_with(credentials)
 
     @pytest.mark.asyncio
+    async def test_save_falls_back_to_file_when_primary_verification_read_raises(self):
+        """A primary whose read-back verification raises must not let the exception
+        escape save() -- it must be treated as a failed verification and still reach
+        the fallback. Not every CredentialStorage implementation is guaranteed to
+        swallow its own read errors the way the two shipped backends do.
+        """
+        primary = AsyncMock()
+        primary.save = AsyncMock()
+        primary.load = AsyncMock(side_effect=RuntimeError("keyring locked"))
+
+        fallback = AsyncMock()
+        fallback.save = AsyncMock()
+
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+        credentials = AuthCredentials(session_id="live_token")
+
+        await storage.save(credentials)
+
+        primary.save.assert_awaited_once_with(credentials)
+        fallback.save.assert_awaited_once_with(credentials)
+
+    @pytest.mark.asyncio
     async def test_save_falls_back_to_file_when_primary_raises(self):
         """Regression guard: a primary save() that raises must still reach the fallback."""
         primary = AsyncMock()

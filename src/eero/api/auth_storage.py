@@ -430,7 +430,11 @@ class ChainedStorage(CredentialStorage):
         indistinguishable from a working one by return value alone. To catch
         that, a successful primary write is verified with a read-back
         (mirroring the promotion logic in ``load()``); only a verified write
-        skips the fallback.
+        skips the fallback. The read-back itself is also guarded: primary
+        implementations beyond the two shipped here are not guaranteed to
+        swallow their own read errors, and a raised exception must not
+        escape ``save()`` -- it is treated the same as a failed
+        verification.
         """
         try:
             await self._primary.save(credentials)
@@ -443,7 +447,12 @@ class ChainedStorage(CredentialStorage):
                 _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
             return
 
-        verified = await self._primary.load()
+        try:
+            verified = await self._primary.load()
+        except Exception as e:
+            _LOGGER.debug("Primary storage verification read failed, trying fallback: %s", e)
+            verified = AuthCredentials()
+
         if verified.session_id == credentials.session_id:
             _LOGGER.debug("Saved to primary storage")
             return

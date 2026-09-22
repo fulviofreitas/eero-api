@@ -68,7 +68,7 @@ Storage backend selection is handled by `create_storage()` in `eero.api.auth_sto
 
 | `use_keyring` | `cookie_file` | Backend selected |
 |---|---|---|
-| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; `FileStorage(cookie_file)` is consulted only when the keyring holds no record, and the record is then promoted into the keyring and removed from the file. `save()` writes the keyring only |
+| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; `FileStorage(cookie_file)` is consulted only when the keyring holds no record, and the record is then promoted into the keyring and removed from the file. `save()` verifies the keyring write with a read-back and falls through to `FileStorage(cookie_file)` when it doesn't verify — see the note below |
 | `True` | `None` (default) | `KeyringStorage` only |
 | `False` | set | `FileStorage(cookie_file)` only |
 | `False` | `None` | `MemoryStorage` |
