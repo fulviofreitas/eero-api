@@ -68,14 +68,14 @@ Storage backend selection is handled by `create_storage()` in `eero.api.auth_sto
 
 | `use_keyring` | `cookie_file` | Backend selected |
 |---|---|---|
-| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; `FileStorage(cookie_file)` is consulted only when the keyring holds no record, and the record is then promoted into the keyring and removed from the file. `save()` writes the keyring only |
+| `True` | set | `ChainedStorage` — tries `KeyringStorage` first; `FileStorage(cookie_file)` is consulted only when the keyring holds no record, and the record is then promoted into the keyring and removed from the file. `save()` verifies the keyring write with a read-back and falls through to `FileStorage(cookie_file)` when it doesn't verify — see the note below |
 | `True` | `None` (default) | `KeyringStorage` only |
 | `False` | set | `FileStorage(cookie_file)` only |
 | `False` | `None` | `MemoryStorage` |
 
 > ⚠️ **Warning:** `EeroClient(use_keyring=False)` with no `cookie_file` silently resolves to `MemoryStorage`. Credentials live only in the process's memory and vanish the moment the process exits — there is no error, warning, or log line to tell you this happened. If you want persistence without the OS keyring, you **must** pass `cookie_file` explicitly.
 
-> ⚠️ **Warning:** `ChainedStorage.save()` does not reach its file fallback. `KeyringStorage.save()` swallows its own exceptions and returns normally, so `ChainedStorage.save()`'s except-and-fall-back-to-file branch is not reached in practice — the file is not written by `save()`. For headless/container/CI persistence, use `use_keyring=False, cookie_file=...` (plain `FileStorage`), not `use_keyring=True` with a `cookie_file` set. See [Credential Storage](Credential-Storage) for the full mechanics.
+> ℹ️ **Note:** `ChainedStorage.save()` verifies every primary write with a read-back before deciding whether the fallback is needed. `KeyringStorage.save()` swallows its own exceptions and returns normally, so a raised-and-caught failure alone would never reach `ChainedStorage`'s except branch — instead, after a primary `save()` returns, `ChainedStorage` re-`load()`s from the primary and compares the result to what it just wrote; on any mismatch (an exception, or a keyring backend that reports success without actually persisting) it falls through to `FileStorage(cookie_file)`. `use_keyring=True` with a `cookie_file` set is therefore a viable choice for headless/container/CI persistence; `use_keyring=False, cookie_file=...` (plain `FileStorage`) remains valid too and is simpler if you have no use for the keyring at all. See [Credential Storage](Credential-Storage) for the full mechanics.
 
 ### Keyring backends
 
@@ -94,7 +94,7 @@ SERVICE_NAME = "eero-api"
 ACCOUNT_NAME = "auth-tokens"
 ```
 
-If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception internally and log at `DEBUG` — the failure is non-fatal, but because `save()` never re-raises, `ChainedStorage`'s file fallback is never triggered on save (see warning above). Don't rely on `ChainedStorage` for headless persistence — use `use_keyring=False, cookie_file=...` instead.
+If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception internally and log at `DEBUG` — the failure is non-fatal, and `ChainedStorage`'s read-back check (see note above) still detects it and falls through to the file fallback. This also covers backends that report success without persisting anything (e.g. `keyring.backends.null.Keyring`, sometimes used to "disable" keyring in containers) — no exception is raised there either, but the read-back still catches the mismatch. `use_keyring=False, cookie_file=...` remains a valid, simpler alternative if you'd rather skip the keyring entirely.
 
 ### File storage
 

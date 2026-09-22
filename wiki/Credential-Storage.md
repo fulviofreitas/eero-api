@@ -74,7 +74,7 @@ Delegates to the third-party `keyring` package, which resolves a platform backen
 
 `load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()` and calls `keyring.set_password(...)`. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` silently (nothing to delete is not an error) and logging any other exception at `DEBUG`; `clear()` never raises.
 
-> **Note**: `load()` and `save()` wrap the underlying `keyring` calls in a bare `except Exception` and log at **`DEBUG`**, not a higher level — a locked keyring, missing Secret Service daemon on headless Linux, or any other backend failure is treated as **non-fatal**. `load()` returns an empty `AuthCredentials()` on failure; `save()` just silently no-ops (the docstring/comment on `save()` explicitly notes "using file fallback" — meaning this is safe specifically because `ChainedStorage` is expected to be layered in front of it whenever you need persistence guarantees).
+> **Note**: `load()` and `save()` wrap the underlying `keyring` calls in a bare `except Exception` and log at **`DEBUG`**, not a higher level — a locked keyring, missing Secret Service daemon on headless Linux, or any other backend failure is treated as **non-fatal**. `load()` returns an empty `AuthCredentials()` on failure; `save()` just silently no-ops (the docstring/comment on `save()` explicitly notes "using file fallback" — meaning this is safe specifically because `ChainedStorage` is expected to be layered in front of it whenever you need persistence guarantees). This holds even for a backend that reports success without actually persisting anything (e.g. `keyring.backends.null.Keyring`) — `save()` doesn't distinguish that case from a real write; it's `ChainedStorage.save()`'s read-back check, not anything in this class, that catches it (see below).
 
 ---
 
@@ -115,21 +115,20 @@ Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringSt
 | Operation | Order of operations | On partial failure |
 |---|---|---|
 | `load()` | Try `primary.load()` first. If it returns credentials with a `session_id`, return them immediately. Otherwise try `fallback.load()`. | If the fallback holds a `session_id`, it is promoted with `primary.save(credentials)`; the primary is then re-loaded and, if the read-back matches, `fallback.clear()` deletes the fallback copy so only one backend holds the live record. If the read-back does not match, the fallback copy is kept (DEBUG log). |
-| `save()` | Try `primary.save()`. | If `primary.save()` raises, the exception is caught, logged at `DEBUG`, and `fallback.save()` is attempted. If **both** raise, the fallback's exception is logged at `ERROR` and swallowed — `save()` never raises to the caller. |
+| `save()` | Try `primary.save()`. If it does not raise, read the primary back with `primary.load()` and compare `session_id` to what was just saved. | If `primary.save()` raises, **or** the read-back doesn't match what was saved, `fallback.save()` is attempted (the raise case is logged at `DEBUG`; the read-back-mismatch case is also logged at `DEBUG`). If **both** the primary path and `fallback.save()` fail, the fallback's exception is logged at `ERROR` and swallowed — `save()` never raises to the caller. A verified primary write (read-back matches) returns without touching the fallback at all, to avoid duplicating the record across backends. |
 | `clear()` | Calls `primary.clear()` **and** `fallback.clear()` unconditionally (both always run; no early return). | Not explicitly guarded — an exception from either would propagate, since `clear()` has no try/except here (unlike `load`/`save`). |
 
-> ⚠️ **Warning: `save()` never reaches the file fallback.** `KeyringStorage.save()` catches its
-> own exceptions internally and returns normally instead of raising (see above). That means
-> `ChainedStorage.save()`'s `except` branch — the one that would call `fallback.save()` — is not
-> reached in practice; a keyring failure on save is invisible, and the file is **not written** as
-> part of `save()`. The only path that ever touches the file backend is the **read-side**
-> migration in `load()` (a successful `fallback.load()` gets copied back into `primary`) — but
-> that only helps if the file already has credentials in it from some other source, and the
-> read-side path now *deletes* the file copy once the keyring accepts it, so a file you
-> pre-populate is consumed, not kept. Do not rely on
-> `ChainedStorage` (i.e. `use_keyring=True` with a `cookie_file` set) for headless/CI/container
-> persistence — use `use_keyring=False, cookie_file=...` (plain `FileStorage`) instead, which
-> writes on every `save()`.
+> ℹ️ **Note: `save()` verifies the primary write with a read-back before skipping the file
+> fallback.** `KeyringStorage.save()` catches its own exceptions internally and returns normally
+> instead of raising (see above), and some keyring backends (e.g. `keyring.backends.null.Keyring`)
+> report success without persisting anything at all — no exception, ever. Relying on `primary.save()`
+> raising would miss both cases, so `ChainedStorage.save()` instead mirrors the read-back-then-act
+> pattern `load()`'s own promotion logic already uses: after a primary write that didn't raise, it
+> re-`load()`s the primary and compares `session_id` against what it just wrote. Only a matching
+> read-back skips the fallback; any mismatch — raised exception or silent no-op alike — falls
+> through to `fallback.save()`, so `ChainedStorage` (`use_keyring=True` with a `cookie_file` set) is
+> a viable choice for headless/CI/container persistence. `use_keyring=False, cookie_file=...` (plain
+> `FileStorage`) remains valid too, and is simpler if you have no use for the keyring at all.
 
 ---
 
@@ -151,7 +150,7 @@ Holds one `AuthCredentials` instance as a plain attribute. `load()`/`save()`/`cl
 | Deployment scenario | Recommended construction | Why |
 |---|---|---|
 | 🖥️ Desktop (macOS/Windows/Linux w/ desktop env) | `EeroClient()` (defaults) | `KeyringStorage` alone — OS-encrypted, no file to protect |
-| 🐧 Headless Linux (no Secret Service daemon) | `EeroClient(use_keyring=False, cookie_file="/path/to/creds.json")` | Keyring calls fail silently at `DEBUG` and `ChainedStorage.save()`'s file fallback never fires (see warning above) — skip keyring entirely and go straight to `FileStorage` |
+| 🐧 Headless Linux (no Secret Service daemon) | `EeroClient(use_keyring=False, cookie_file="/path/to/creds.json")` | Keyring calls fail silently at `DEBUG`; `ChainedStorage`'s read-back now catches that and falls through to the file (see note above), but there's no keyring to gain anything from here anyway — skip it entirely and go straight to `FileStorage` |
 | 🐳 Docker container | `EeroClient(use_keyring=False, cookie_file="/data/eero-cookies.json")` | No keyring daemon available inside most containers; skip straight to `FileStorage` and mount `/data` as a volume for persistence across restarts |
 | 🤖 CI pipeline | `EeroClient(use_keyring=False, cookie_file=<workspace path>)` + `set_session_token()` from a CI secret | No interactive OTP possible; seed the token directly each run (see [Authentication](Authentication#-non-interactive--ci)) |
 | ☁️ Serverless / ephemeral (Lambda-style, no writable disk) | `EeroClient(use_keyring=False)` | Falls through to `MemoryStorage` deliberately — nothing to persist between invocations anyway; re-seed via `set_session_token()` on every cold start |
