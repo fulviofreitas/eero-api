@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.3](https://github.com/fulviofreitas/eero-api/compare/v8.0.2...v8.0.3) (2026-09-23)
+
+### 🐛 Bug Fixes
+
+* **auth:** verify primary storage writes before skipping the fallback in ChainedStorage.save() ([#132](https://github.com/fulviofreitas/eero-api/issues/132)) ([af151ef](https://github.com/fulviofreitas/eero-api/commit/af151ef5ed59e7eba86f5539235f99aef06e35b5)), closes [#131](https://github.com/fulviofreitas/eero-api/issues/131) [#131](https://github.com/fulviofreitas/eero-api/issues/131)
+* **ci:** raise commitlint header-max-length to fit squash-merge PR suffixes ([#133](https://github.com/fulviofreitas/eero-api/issues/133)) ([690e01e](https://github.com/fulviofreitas/eero-api/commit/690e01e3ae69fb445ecef284cd4b00d4932627cc))
+
 ## [8.0.2](https://github.com/fulviofreitas/eero-api/compare/v8.0.1...v8.0.2) (2026-09-21)
 
 ### 🐛 Bug Fixes
