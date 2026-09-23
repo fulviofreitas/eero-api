@@ -45,8 +45,12 @@ export default {
     // Subject must not end with period
     'subject-full-stop': [2, 'never', '.'],
     
-    // Header (type + scope + subject) max length
-    'header-max-length': [2, 'always', 100],
+    // Header (type + scope + subject) max length.
+    // GitHub's squash-merge commit message is "<PR title> (#<number>)" --
+    // up to 9 extra characters for a 5-digit PR number. 110 keeps that
+    // margin without a squash-merged PR title tripping this rule the way
+    // #132 did at 101/100.
+    'header-max-length': [2, 'always', 110],
     
     // Body max line length
     'body-max-line-length': [2, 'always', 200],
