@@ -121,6 +121,7 @@ class TestBaseAPI:
 
         await api.__aenter__()
         try:
+            assert api._session is not None
             jar = api._session.cookie_jar
             assert isinstance(jar, DummyCookieJar)
             jar.update_cookies({"s": "would-be-persisted"}, yarl.URL(API_ENDPOINT))
