@@ -4,8 +4,7 @@
 # Local CI is the source of truth for lint, typing and security
 # (pyproject.toml: ruff/black/mypy; .github/workflows/ci.yml: semgrep on src/).
 # This file keeps Codacy's additional tools from flagging the repository's
-# deliberate conventions. Rationale and the full issue inventory live in the
-# private context repo under .claude/tasks/codacy-issues-remediation.md.
+# deliberate conventions; each exclusion below states its reason.
 #
 # Per-engine exclusions are used instead of a global tests/** exclusion so
 # that markdownlint, duplication and file metrics still cover the whole tree.
