@@ -202,7 +202,10 @@ def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         parsed = json.loads(text)
-    except Exception:
+    except (ValueError, RecursionError):
+        # json.JSONDecodeError is a ValueError subclass, and a pathologically
+        # nested body (within the 10 MiB cap) raises RecursionError; this is a
+        # best-effort parse so any malformed body is treated as "no envelope".
         return None
     return parsed if isinstance(parsed, dict) else None
 
@@ -579,7 +582,9 @@ class BaseAPI:
                         return {}
                     try:
                         return json.loads(response_text)
-                    except Exception as e:
+                    except (ValueError, RecursionError) as e:
+                        # JSONDecodeError (a ValueError) for malformed bodies;
+                        # RecursionError for pathologically nested ones.
                         _LOGGER.error(
                             "Error parsing JSON response (%s bytes): %s",
                             len(response_text.encode("utf-8")),
@@ -589,7 +594,7 @@ class BaseAPI:
                             response.status,
                             f"Invalid JSON response "
                             f"({len(response_text.encode('utf-8'))} bytes)",
-                        )
+                        ) from e
 
                 envelope = _parse_envelope(response_text)
                 error_code = _error_code_from_envelope(envelope)

@@ -18,6 +18,7 @@ that knowledge lives, so a confirmed upstream change means editing one function.
 """
 
 import logging
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,7 +38,7 @@ from .conftest import api_success_response, create_mock_response
 
 def ipv4_payload(ips, mode=DNS_MODE_CUSTOM):
     """The verified IPv4 custom-DNS payload fragment."""
-    fragment = {"mode": mode}
+    fragment: dict[str, Any] = {"mode": mode}
     if ips is not None:
         fragment["custom"] = {"ips": ips}
     return {"dns": fragment}

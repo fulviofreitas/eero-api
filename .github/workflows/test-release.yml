@@ -74,6 +74,8 @@ jobs:
 
       - name: 🏷️ Determine test version
         id: version
+        env:
+          SUFFIX: ${{ github.event.inputs.version_suffix }}
         run: |
           # Read current version from VERSION file or pyproject.toml
           if [ -f VERSION ]; then
@@ -81,22 +83,27 @@ jobs:
           else
             CURRENT_VERSION=$(grep -Po '(?<=^version = ")[^"]*' pyproject.toml)
           fi
-          
-          SUFFIX="${{ github.event.inputs.version_suffix }}"
-          
+
+          # The suffix is a workflow_dispatch input; it is rendered into the
+          # package version and later steps, so restrict it to PEP 440 characters.
+          if ! [[ "$SUFFIX" =~ ^[A-Za-z0-9.]*$ ]]; then
+            echo "::error::version_suffix must match ^[A-Za-z0-9.]*$"
+            exit 1
+          fi
+
           if [ -n "$SUFFIX" ]; then
             TEST_VERSION="${CURRENT_VERSION}.${SUFFIX}"
           else
             TEST_VERSION="${CURRENT_VERSION}"
           fi
-          
+
           echo "version=${TEST_VERSION}" >> $GITHUB_OUTPUT
           echo "📦 Test version: ${TEST_VERSION}"
 
       - name: 🔧 Update version for test release
+        env:
+          TEST_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TEST_VERSION="${{ steps.version.outputs.version }}"
-          
           # Update pyproject.toml
           sed -i "s/^version = \"[^\"]*\"/version = \"${TEST_VERSION}\"/" pyproject.toml
           
@@ -116,9 +123,9 @@ jobs:
 
       - name: 🧪 Test installation
         if: github.event.inputs.dry_run != 'true'
+        env:
+          TEST_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TEST_VERSION="${{ steps.version.outputs.version }}"
-          
           echo "⏳ Waiting for package to be available on TestPyPI..."
           sleep 30
           
@@ -135,10 +142,10 @@ jobs:
 
       - name: 📝 Generate instructions
         if: always()
+        env:
+          TEST_VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
-          TEST_VERSION="${{ steps.version.outputs.version }}"
-          DRY_RUN="${{ github.event.inputs.dry_run }}"
-          
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 🧪 TestPyPI Release Summary
           

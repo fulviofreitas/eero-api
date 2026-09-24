@@ -415,37 +415,6 @@ def capture_console(capsys) -> Console:
     return Console(force_terminal=False, no_color=True, width=120)
 
 
-# ========================== CLI Context Fixtures ==========================
-
-
-@pytest.fixture
-def cli_context():
-    """Create a minimal CLI context for testing."""
-    from eero.cli.context import EeroCliContext
-
-    return EeroCliContext(
-        network_id="net_test_123",
-        output_format="table",
-        force=True,
-        non_interactive=True,
-        quiet=False,
-    )
-
-
-@pytest.fixture
-def json_cli_context():
-    """Create a CLI context configured for JSON output."""
-    from eero.cli.context import EeroCliContext
-
-    return EeroCliContext(
-        network_id="net_test_123",
-        output_format="json",
-        force=True,
-        non_interactive=True,
-        quiet=False,
-    )
-
-
 # ========================== Exception Fixtures ==========================
 
 

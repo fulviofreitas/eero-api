@@ -346,7 +346,7 @@ class ScheduleAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        resolved_days = list(days) if days is not None else list(ALL_DAYS)
+        resolved_days: List[str] = list(days) if days is not None else list(ALL_DAYS)
 
         _LOGGER.debug(
             "Enabling bedtime for profile %s: %s - %s on %s",

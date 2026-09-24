@@ -20,7 +20,13 @@ import pytest
 import yarl
 from aiohttp import DummyCookieJar
 
-from eero.api.base import AuthenticatedAPI, BaseAPI, RequestEncoding, build_request_headers
+from eero.api.base import (
+    AuthenticatedAPI,
+    BaseAPI,
+    RequestEncoding,
+    _parse_envelope,
+    build_request_headers,
+)
 from eero.const import API_ENDPOINT, DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
 from eero.exceptions import (
     EeroAccessDeniedException,
@@ -115,6 +121,7 @@ class TestBaseAPI:
 
         await api.__aenter__()
         try:
+            assert api._session is not None
             jar = api._session.cookie_jar
             assert isinstance(jar, DummyCookieJar)
             jar.update_cookies({"s": "would-be-persisted"}, yarl.URL(API_ENDPOINT))
@@ -329,8 +336,50 @@ class TestBaseAPIErrorHandling:
         mock_response = create_mock_response(200, body_bytes=b"not valid json")
         mock_session.request.return_value = mock_response
 
-        with pytest.raises(EeroAPIException, match="Invalid JSON"):
+        with pytest.raises(EeroAPIException, match="Invalid JSON") as exc_info:
             await api_with_session.get("/endpoint")
+
+        # The JSONDecodeError must be chained (`raise ... from e`), not
+        # swallowed, so callers/logs retain the original parse failure.
+        assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+
+    @pytest.mark.asyncio
+    async def test_deeply_nested_json_raises_api_exception(self, api_with_session, mock_session):
+        """A pathologically nested 2xx body maps to EeroAPIException, not RecursionError."""
+        mock_response = create_mock_response(200, body_bytes=b"[" * 100_000)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException, match="Invalid JSON") as exc_info:
+            await api_with_session.get("/endpoint")
+
+        # Interpreters before 3.14 decode recursively and raise RecursionError;
+        # 3.14's non-recursive decoder reaches the end and raises JSONDecodeError.
+        # Either way the decoder error must be chained, never escape.
+        assert isinstance(exc_info.value.__cause__, (RecursionError, json.JSONDecodeError))
+
+
+class TestParseEnvelope:
+    """Tests for the module-level `_parse_envelope` helper."""
+
+    def test_non_json_body_returns_none(self):
+        """Test that a non-JSON body is treated as no envelope."""
+        assert _parse_envelope("not json") is None
+
+    def test_json_array_returns_none(self):
+        """Test that a valid JSON array (not an object) returns None."""
+        assert _parse_envelope("[1, 2]") is None
+
+    def test_empty_body_returns_none(self):
+        """Test that an empty body returns None."""
+        assert _parse_envelope("") is None
+
+    def test_json_object_returns_dict(self):
+        """Test that a valid JSON object is returned as a dict."""
+        assert _parse_envelope('{"meta": {"code": 200}}') == {"meta": {"code": 200}}
+
+    def test_deeply_nested_body_returns_none(self):
+        """Test that a pathologically nested body is treated as no envelope."""
+        assert _parse_envelope("[" * 100_000) is None
 
 
 class TestBaseAPIResponseSizeLimit:

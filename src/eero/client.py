@@ -459,7 +459,9 @@ class EeroClient:
                         "meta": response.get("meta", {}),
                         "data": {"networks": networks},
                     }
-            except Exception as e:
+            # Must not mask the (already-valid) primary /networks result --
+            # any account-endpoint fallback failure is logged, not raised.
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 _LOGGER.debug("Failed to get networks from account endpoint: %s", e)
 
         self._update_cache("networks", None, response)
