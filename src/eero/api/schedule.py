@@ -17,7 +17,7 @@ their own URL. This replaces the previous (incorrect) design of writing a
     not retry a failed write.
 """
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
@@ -155,7 +155,7 @@ class ScheduleAPI(AuthenticatedAPI):
         profile: str,
         *,
         name: str,
-        days: Sequence[str],
+        days: List[str],
         start: str,
         end: str,
         enabled: bool = True,
@@ -346,7 +346,7 @@ class ScheduleAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        resolved_days = list(days) if days is not None else list(ALL_DAYS)
+        resolved_days: List[str] = list(days) if days is not None else list(ALL_DAYS)
 
         _LOGGER.debug(
             "Enabling bedtime for profile %s: %s - %s on %s",

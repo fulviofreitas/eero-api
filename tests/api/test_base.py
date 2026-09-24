@@ -343,6 +343,17 @@ class TestBaseAPIErrorHandling:
         # swallowed, so callers/logs retain the original parse failure.
         assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
 
+    @pytest.mark.asyncio
+    async def test_deeply_nested_json_raises_api_exception(self, api_with_session, mock_session):
+        """A pathologically nested 2xx body maps to EeroAPIException, not RecursionError."""
+        mock_response = create_mock_response(200, body_bytes=b"[" * 100_000)
+        mock_session.request.return_value = mock_response
+
+        with pytest.raises(EeroAPIException, match="Invalid JSON") as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert isinstance(exc_info.value.__cause__, RecursionError)
+
 
 class TestParseEnvelope:
     """Tests for the module-level `_parse_envelope` helper."""
@@ -362,6 +373,10 @@ class TestParseEnvelope:
     def test_json_object_returns_dict(self):
         """Test that a valid JSON object is returned as a dict."""
         assert _parse_envelope('{"meta": {"code": 200}}') == {"meta": {"code": 200}}
+
+    def test_deeply_nested_body_returns_none(self):
+        """Test that a pathologically nested body is treated as no envelope."""
+        assert _parse_envelope("[" * 100_000) is None
 
 
 class TestBaseAPIResponseSizeLimit:
