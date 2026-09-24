@@ -74,6 +74,8 @@ jobs:
 
       - name: 🏷️ Determine test version
         id: version
+        env:
+          SUFFIX: ${{ github.event.inputs.version_suffix }}
         run: |
           # Read current version from VERSION file or pyproject.toml
           if [ -f VERSION ]; then
@@ -81,15 +83,13 @@ jobs:
           else
             CURRENT_VERSION=$(grep -Po '(?<=^version = ")[^"]*' pyproject.toml)
           fi
-          
-          SUFFIX="${{ github.event.inputs.version_suffix }}"
-          
+
           if [ -n "$SUFFIX" ]; then
             TEST_VERSION="${CURRENT_VERSION}.${SUFFIX}"
           else
             TEST_VERSION="${CURRENT_VERSION}"
           fi
-          
+
           echo "version=${TEST_VERSION}" >> $GITHUB_OUTPUT
           echo "📦 Test version: ${TEST_VERSION}"
 

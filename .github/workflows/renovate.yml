@@ -92,14 +92,18 @@ jobs:
       # ========================================================================
       - name: 📝 Generate summary
         if: always()
+        env:
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 🔄 Renovate Summary
 
           | Property | Value |
           |:---------|:------|
-          | 📦 Repository | [\`${{ github.repository }}\`](https://github.com/${{ github.repository }}) |
-          | 🎯 Trigger | \`${{ github.event_name }}\` |
-          | 🧪 Dry Run | \`${{ github.event.inputs.dry_run || 'false' }}\` |
+          | 📦 Repository | [\`${REPOSITORY}\`](https://github.com/${REPOSITORY}) |
+          | 🎯 Trigger | \`${EVENT_NAME}\` |
+          | 🧪 Dry Run | \`${DRY_RUN}\` |
 
           EOF
