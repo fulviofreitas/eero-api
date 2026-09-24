@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.4](https://github.com/fulviofreitas/eero-api/compare/v8.0.3...v8.0.4) (2026-09-24)
+
+### 🐛 Bug Fixes
+
+* **api:** chain JSON parse errors, harden CI interpolation, and clear Codacy findings ([#134](https://github.com/fulviofreitas/eero-api/issues/134)) ([cc5580a](https://github.com/fulviofreitas/eero-api/commit/cc5580a9b5a19d9861808d53747fdda09eeda826))
+
 ## [8.0.3](https://github.com/fulviofreitas/eero-api/compare/v8.0.2...v8.0.3) (2026-09-23)
 
 ### 🐛 Bug Fixes
