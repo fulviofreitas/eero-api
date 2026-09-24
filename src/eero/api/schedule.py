@@ -17,7 +17,7 @@ their own URL. This replaces the previous (incorrect) design of writing a
     not retry a failed write.
 """
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
@@ -155,7 +155,7 @@ class ScheduleAPI(AuthenticatedAPI):
         profile: str,
         *,
         name: str,
-        days: List[str],
+        days: Sequence[str],
         start: str,
         end: str,
         enabled: bool = True,

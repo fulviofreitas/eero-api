@@ -125,7 +125,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            "set WPA3 for network " "-- may reboot every eero, like the confirmed DNS write path",
+            "set WPA3 for network -- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,
@@ -234,7 +234,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            "set UPnP for network " "-- may reboot every eero, like the confirmed DNS write path",
+            "set UPnP for network -- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,
@@ -285,7 +285,7 @@ class SecurityAPI(AuthenticatedAPI):
         )
         warn_uncharacterised_write(
             _LOGGER,
-            "set IPv6 for network " "-- may reboot every eero, like the confirmed DNS write path",
+            "set IPv6 for network -- may reboot every eero, like the confirmed DNS write path",
         )
         return await self.put(
             url,

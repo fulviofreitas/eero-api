@@ -202,7 +202,9 @@ def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         parsed = json.loads(text)
-    except Exception:
+    except ValueError:
+        # json.JSONDecodeError is a ValueError subclass; this is a
+        # best-effort parse so any malformed body is treated as "no envelope".
         return None
     return parsed if isinstance(parsed, dict) else None
 
@@ -579,7 +581,7 @@ class BaseAPI:
                         return {}
                     try:
                         return json.loads(response_text)
-                    except Exception as e:
+                    except ValueError as e:
                         _LOGGER.error(
                             "Error parsing JSON response (%s bytes): %s",
                             len(response_text.encode("utf-8")),
@@ -589,7 +591,7 @@ class BaseAPI:
                             response.status,
                             f"Invalid JSON response "
                             f"({len(response_text.encode('utf-8'))} bytes)",
-                        )
+                        ) from e
 
                 envelope = _parse_envelope(response_text)
                 error_code = _error_code_from_envelope(envelope)

@@ -174,7 +174,9 @@ class KeyringStorage(CredentialStorage):
                     _log_migration_readback("keyring", readback_matched)
 
                 return credentials
-        except Exception as e:
+        # Keyring backends raise arbitrary, backend-specific exception types
+        # (not just keyring.errors.*), so a broad catch is intentional here.
+        except Exception as e:  # pylint: disable=broad-exception-caught
             _LOGGER.debug("Error loading from keyring: %s", e)
 
         return AuthCredentials()
@@ -443,7 +445,9 @@ class ChainedStorage(CredentialStorage):
             try:
                 await self._fallback.save(credentials)
                 _LOGGER.debug("Saved to fallback storage")
-            except Exception as fallback_error:
+            # save() must never raise -- a failed fallback is logged, not
+            # propagated, so callers can't be broken by a storage backend.
+            except Exception as fallback_error:  # pylint: disable=broad-exception-caught
                 _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
             return
 
