@@ -140,7 +140,7 @@ class EerosAPI(AuthenticatedAPI):
     async def _resolve_nightlight_url(
         self,
         eero_id: str,
-        auth_token: str,
+        auth_token: str,  # nosemgrep: codacy.yaml.security.hard-coded-tokens
         parent: Optional[Envelope],
     ) -> str:
         """Resolve the nightlight sub-resource URL, reading the eero once if needed.

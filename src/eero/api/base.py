@@ -360,7 +360,7 @@ class BaseAPI:
     def _build_credentials(
         self,
         url: str,
-        auth_token: Optional[str],
+        auth_token: Optional[str],  # nosemgrep: codacy.yaml.security.hard-coded-tokens
     ) -> tuple[Dict[str, str], Optional[Dict[str, str]]]:
         """Determine the credential header and legacy cookie for a request.
 
@@ -613,7 +613,9 @@ class BaseAPI:
                             _LOGGER.debug(
                                 "Server requested session refresh; refreshing and retrying"
                             )
-                            refreshed = await self._refresh_hook()
+                            # Guarded by the `is not None` check above; pylint
+                            # cannot narrow Optional[Callable] through it.
+                            refreshed = await self._refresh_hook()  # pylint: disable=not-callable
                             if refreshed:
                                 # Rebuild the replay from scratch: drop this
                                 # attempt's built headers (SDK defaults plus
