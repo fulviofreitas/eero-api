@@ -352,7 +352,10 @@ class TestBaseAPIErrorHandling:
         with pytest.raises(EeroAPIException, match="Invalid JSON") as exc_info:
             await api_with_session.get("/endpoint")
 
-        assert isinstance(exc_info.value.__cause__, RecursionError)
+        # Interpreters before 3.14 decode recursively and raise RecursionError;
+        # 3.14's non-recursive decoder reaches the end and raises JSONDecodeError.
+        # Either way the decoder error must be chained, never escape.
+        assert isinstance(exc_info.value.__cause__, (RecursionError, json.JSONDecodeError))
 
 
 class TestParseEnvelope:
