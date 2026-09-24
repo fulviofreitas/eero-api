@@ -4,12 +4,12 @@ Thank you for your interest in contributing to Eero API! This document provides 
 
 ## 📋 Table of Contents
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Workflow](#development-workflow)
-- [Commit Messages](#commit-messages)
-- [Pull Requests](#pull-requests)
-- [Release Process](#release-process)
+- [Code of Conduct](#-code-of-conduct)
+- [Getting Started](#-getting-started)
+- [Development Workflow](#-development-workflow)
+- [Commit Messages](#-commit-messages)
+- [Pull Requests](#-pull-requests)
+- [Release Process](#-release-process)
 
 ## 📜 Code of Conduct
 
@@ -73,7 +73,7 @@ uv run mypy src/
    ```bash
    git checkout -b feat/my-new-feature
    ```
-3. **Make changes** and commit using [Conventional Commits](#commit-messages)
+3. **Make changes** and commit using [Conventional Commits](#-commit-messages)
 4. **Push** to your fork
 5. **Open a Pull Request** to `master`
 
