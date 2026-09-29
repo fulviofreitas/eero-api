@@ -250,6 +250,61 @@ class TestEeroClientEnsureNetworkId:
         assert result == "network_123"
         client._api.networks.get_networks.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_auto_discover_coerces_int_network_id(self, mock_session):
+        """An integer ``id`` in the raw response is coerced to str (#137)."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        raw_response = {
+            "meta": {"code": 200},
+            "data": {"networks": [{"id": 12345678, "url": "/2.2/networks/12345678"}]},
+        }
+        client._api.networks.get_networks = AsyncMock(return_value=raw_response)
+
+        result = await client._ensure_network_id(None, auto_discover=True)
+
+        assert result == "12345678"
+        assert isinstance(result, str)
+
+
+class TestEeroClientSetPreferredNetwork:
+    """Tests for set_preferred_network and the preferred_network_id property."""
+
+    def test_set_preferred_network_coerces_int(self, mock_session):
+        """set_preferred_network stores an int id as str (#137)."""
+        client = EeroClient(session=mock_session)
+
+        client.set_preferred_network(123)
+
+        assert client.preferred_network_id == "123"
+        assert isinstance(client.preferred_network_id, str)
+
+    def test_set_preferred_network_accepts_str(self, mock_session):
+        """set_preferred_network keeps a str id unchanged."""
+        client = EeroClient(session=mock_session)
+
+        client.set_preferred_network("network_123")
+
+        assert client.preferred_network_id == "network_123"
+
+    @pytest.mark.asyncio
+    async def test_get_networks_auto_select_coerces_int_network_id(self, mock_session):
+        """get_networks() auto-selecting the first network coerces an int id (#137)."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        raw_response = {
+            "meta": {"code": 200},
+            "data": {"networks": [{"id": 12345678, "url": "/2.2/networks/12345678"}]},
+        }
+        client._api.networks.get_networks = AsyncMock(return_value=raw_response)
+
+        await client.get_networks()
+
+        assert client.preferred_network_id == "12345678"
+        assert isinstance(client.preferred_network_id, str)
+
 
 class TestEeroClientCacheIntegration:
     """Integration tests for cache behavior."""

@@ -8,7 +8,7 @@ Response format: {"meta": {...}, "data": {...}}
 import copy
 import logging
 import time
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from aiohttp import ClientSession
 
@@ -213,7 +213,10 @@ class EeroClient:
                 if not net_id and first_network.get("url"):
                     net_id = first_network["url"].rstrip("/").split("/")[-1]
                 if net_id:
-                    return net_id
+                    # The API returns "id" as a JSON integer for some
+                    # accounts; always coerce to str to match this method's
+                    # declared return type (see issue #137).
+                    return str(net_id)
 
         raise EeroException("No network ID provided and no preferred network set")
 
@@ -482,7 +485,10 @@ class EeroClient:
                 if not net_id and first_network.get("url"):
                     net_id = first_network["url"].rstrip("/").split("/")[-1]
                 if net_id:
-                    self._preferred_network_id = net_id
+                    # The API returns "id" as a JSON integer for some
+                    # accounts; always coerce to str so preferred_network_id
+                    # matches its declared Optional[str] type (see #137).
+                    self._preferred_network_id = str(net_id)
 
         return response
 
@@ -1225,16 +1231,20 @@ class EeroClient:
 
     # ==================== Network Settings ====================
 
-    def set_preferred_network(self, network_id: str) -> None:
+    def set_preferred_network(self, network_id: Union[str, int]) -> None:
         """Set the preferred network ID to use for requests.
 
         This is an in-memory preference only. For persistent storage,
         the CLI application should manage its own configuration file.
 
         Args:
-            network_id: ID of the network to use
+            network_id: ID of the network to use. Accepted as ``str`` or
+                ``int`` since the Eero API returns network ids as a JSON
+                integer for some accounts (see issue #137); always stored
+                as ``str`` to match :attr:`preferred_network_id`'s declared
+                type.
         """
-        self._preferred_network_id = network_id
+        self._preferred_network_id = str(network_id)
 
     @property
     def preferred_network_id(self) -> Optional[str]:
