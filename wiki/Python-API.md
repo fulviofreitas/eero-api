@@ -566,7 +566,10 @@ All three writes are unverified.
 
 ## DHCP, connection mode, NAT, PPPoE
 
-All settings-class (may reboot the mesh) except `set_pppoe`, which is unverified.
+`set_dhcp`, `set_connection_mode`, and `set_nat_port_randomization` are settings-class writes
+confirmed (issue #136) to restart every eero on the mesh -- roughly an eight-minute outage each
+time, the same behaviour already confirmed for the DNS write on this endpoint. `set_pppoe` is
+unverified.
 
 ```python
 await client.set_dhcp(network_id=None, mode="manual", custom={"start_ip": "192.168.4.10", "end_ip": "192.168.4.200", "subnet_ip": "192.168.4.0", "subnet_mask": "255.255.255.0"})
@@ -579,8 +582,12 @@ await client.set_nat_port_randomization(True, network_id=None)
 blob = await client.set_pppoe("<eero-serial>", username="<user>", password="<password>")
 ```
 
-`set_dhcp` raises `EeroValidationException` for a `mode` other than `"automatic"` / `"manual"`,
-when no field is supplied, or when `custom` / `custom_v2` carry a key the API does not declare.
+`mode` accepts `"automatic"`, `"manual"`, or `"custom"`. eero's own wire value for a manual
+lease range is `"custom"` -- a literal `"manual"` is refused with
+`400 dhcp.mode: error.form.enum.invalid`; `"manual"` is still accepted here and mapped to
+`"custom"` on the wire for backward compatibility. `set_dhcp` raises `EeroValidationException`
+for a `mode` other than those three, when no field is supplied, or when `custom` / `custom_v2`
+carry a key the API does not declare.
 
 ---
 

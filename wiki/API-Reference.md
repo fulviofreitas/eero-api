@@ -342,7 +342,7 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| `set_dhcp` | `async def set_dhcp(self, network_id: Optional[str]=None, *, mode: Optional[str]=None, custom: Optional[Mapping[str, Any]]=None, custom_v2: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; `mode` is `automatic` / `manual` |
+| `set_dhcp` | `async def set_dhcp(self, network_id: Optional[str]=None, *, mode: Optional[str]=None, custom: Optional[Mapping[str, Any]]=None, custom_v2: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class, confirmed mesh reboot (~8 min); `mode` is `automatic` / `manual` / `custom` (`manual` maps to the wire value `custom`) |
 | `set_connection_mode` | `async def set_connection_mode(self, mode: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; `BRIDGE` / `NAT` |
 | `set_nat_port_randomization` | `async def set_nat_port_randomization(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class |
 | `get_multistaticip` | `async def get_multistaticip(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified read on `2.3`; `EeroNotFoundException` without the feature |

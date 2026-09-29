@@ -28,10 +28,25 @@ from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
-#: Valid values for ``dhcp.mode``.
+#: Valid values for ``dhcp.mode`` accepted from callers.
 DHCP_MODE_AUTOMATIC = "automatic"
 DHCP_MODE_MANUAL = "manual"
-_DHCP_MODES = frozenset({DHCP_MODE_AUTOMATIC, DHCP_MODE_MANUAL})
+
+#: The wire value the Eero API actually accepts for a manual lease range.
+#: ``"manual"`` is refused with ``400 dhcp.mode: error.form.enum.invalid``
+#: (live-observed, see issue #136); ``"custom"`` is the value the API wants.
+DHCP_MODE_CUSTOM = "custom"
+
+#: Modes accepted from callers. ``DHCP_MODE_MANUAL`` is kept for backward
+#: compatibility and is mapped to ``DHCP_MODE_CUSTOM`` on the wire.
+_DHCP_MODES = frozenset({DHCP_MODE_AUTOMATIC, DHCP_MODE_MANUAL, DHCP_MODE_CUSTOM})
+
+#: Maps every caller-accepted mode to the value actually sent on the wire.
+_DHCP_MODE_WIRE_VALUES = {
+    DHCP_MODE_AUTOMATIC: DHCP_MODE_AUTOMATIC,
+    DHCP_MODE_MANUAL: DHCP_MODE_CUSTOM,
+    DHCP_MODE_CUSTOM: DHCP_MODE_CUSTOM,
+}
 
 #: Fields the API accepts on a manual DHCP lease range (``dhcp.custom``).
 _CUSTOM_LEASE_FIELDS = frozenset({"start_ip", "end_ip", "subnet_ip", "subnet_mask"})
@@ -100,18 +115,23 @@ class DhcpAPI(AuthenticatedAPI):
         ``custom_v2``.
 
         .. warning::
-            This is a settings-class write. Its side effects have not been
-            confirmed against a live network, and the DNS write on this same
-            endpoint is confirmed to reboot every eero on the mesh. Treat
-            this write as capable of doing the same: read the current
+            This is a settings-class write, and is now characterised, not
+            just suspected: live testing for issue #136 confirmed that each
+            DHCP write restarts every eero on the mesh, an outage of roughly
+            eight minutes each time -- the same behaviour already confirmed
+            for the DNS write on this same endpoint. Read the current
             configuration first (`eero.api.networks.NetworksAPI.get_network`),
             skip the write when it already matches, and never retry a failed
             write in a loop.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
-            mode: ``"automatic"`` or ``"manual"``. Omitted from the request
-                when ``None``.
+            mode: ``"automatic"``, ``"manual"``, or ``"custom"``. ``"manual"``
+                is accepted for backward compatibility and mapped to the
+                wire value the API actually accepts, ``"custom"`` -- the API
+                refuses a literal ``"manual"`` with
+                ``400 dhcp.mode: error.form.enum.invalid`` (see issue #136).
+                Omitted from the request when ``None``.
             custom: Manual lease-range fields, sent only for the keys
                 supplied: ``start_ip``, ``end_ip``, ``subnet_ip``,
                 ``subnet_mask``. Omitted from the request when ``None``.
@@ -127,9 +147,10 @@ class DhcpAPI(AuthenticatedAPI):
 
         Raises:
             EeroAuthenticationException: If not authenticated
-            EeroValidationException: If ``mode`` is not ``"automatic"`` or
-                ``"manual"``, no field is supplied, or ``custom``/
-                ``custom_v2`` carry a field the API does not declare here
+            EeroValidationException: If ``mode`` is not ``"automatic"``,
+                ``"manual"``, or ``"custom"``, no field is supplied, or
+                ``custom``/``custom_v2`` carry a field the API does not
+                declare here
             EeroAPIException: If the API returns an error
         """
         auth_token = await self._auth_api.get_auth_token()
@@ -142,7 +163,7 @@ class DhcpAPI(AuthenticatedAPI):
                 raise EeroValidationException(
                     "mode", f"must be one of {sorted(_DHCP_MODES)}, got {mode!r}"
                 )
-            dhcp["mode"] = mode
+            dhcp["mode"] = _DHCP_MODE_WIRE_VALUES[mode]
         if custom is not None:
             dhcp["custom"] = _filter_given_keys(custom, _CUSTOM_LEASE_FIELDS)
         if custom_v2 is not None:

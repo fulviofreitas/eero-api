@@ -46,8 +46,19 @@ class TestDhcpAPISetDhcp:
     """Tests for set_dhcp method."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["automatic", "manual"])
-    async def test_set_dhcp_mode_only(self, dhcp_api, mock_session, caplog, mode):
+    @pytest.mark.parametrize(
+        "mode, wire_mode",
+        [
+            ("automatic", "automatic"),
+            # eero's wire value for a manual range is "custom"; a literal
+            # "manual" is refused with 400 dhcp.mode: error.form.enum.invalid
+            # (issue #136). "manual" is still accepted from callers and
+            # mapped to "custom" on the wire, for backward compatibility.
+            ("manual", "custom"),
+            ("custom", "custom"),
+        ],
+    )
+    async def test_set_dhcp_mode_only(self, dhcp_api, mock_session, caplog, mode, wire_mode):
         """Test set_dhcp sends only the mode field, and warns about the mesh reboot risk."""
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
@@ -60,7 +71,7 @@ class TestDhcpAPISetDhcp:
         call_args = mock_session.request.call_args
         assert call_args.args[0] == "PUT"
         assert call_args.args[1].endswith("/2.2/networks/network_123/settings")
-        assert call_args.kwargs["json"] == {"dhcp": {"mode": mode}}
+        assert call_args.kwargs["json"] == {"dhcp": {"mode": wire_mode}}
         assert any(
             "set DHCP configuration for network" in message and "reboot" in message
             for message in caplog.messages
@@ -92,7 +103,7 @@ class TestDhcpAPISetDhcp:
 
     @pytest.mark.asyncio
     async def test_set_dhcp_rejects_invalid_mode(self, dhcp_api):
-        """Test set_dhcp rejects a mode outside automatic/manual."""
+        """Test set_dhcp rejects a mode outside automatic/manual/custom."""
         with pytest.raises(EeroValidationException):
             await dhcp_api.set_dhcp("network_123", mode="AUTOMATIC")
 

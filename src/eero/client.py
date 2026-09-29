@@ -2699,7 +2699,9 @@ class EeroClient:
     ) -> Dict[str, Any]:
         """Set DHCP configuration - returns raw Eero API response.
 
-        Unverified settings-class write that may reboot the entire mesh; read
+        Settings-class write confirmed (issue #136) to restart every eero on
+        the mesh -- roughly an eight-minute outage each time, the same
+        behaviour already confirmed for the DNS write on this endpoint. Read
         the network first and skip when unchanged; never retry.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
