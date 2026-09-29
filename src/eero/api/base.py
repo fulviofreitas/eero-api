@@ -124,6 +124,7 @@ def _validate_header_value(name: str, value: str) -> None:
 def build_request_headers(
     *,
     accept_language: str,
+    user_agent: str = DEFAULT_USER_AGENT,
     extra_headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
     """Build the outbound header set for a single request.
@@ -134,6 +135,11 @@ def build_request_headers(
 
     Args:
         accept_language: Value for the ``X-Accept-Language`` header.
+        user_agent: Value for the ``User-Agent`` header. Defaults to
+            :data:`eero.const.DEFAULT_USER_AGENT`; pass
+            :data:`eero.const.LEGACY_USER_AGENT`, or any other client
+            version string, to reproduce a different capability set (see
+            issue #135).
         extra_headers: Optional caller-supplied headers for this call. Values
             override the SDK defaults of the same name; all values (SDK and
             caller-supplied) are validated.
@@ -149,10 +155,11 @@ def build_request_headers(
             without CR/LF.
     """
     _validate_header_value("X-Accept-Language", accept_language)
+    _validate_header_value("User-Agent", user_agent)
 
     headers: Dict[str, str] = {
         "Accept": "application/json",
-        "User-Agent": DEFAULT_USER_AGENT,
+        "User-Agent": user_agent,
         "X-Accept-Language": accept_language,
     }
 
@@ -240,6 +247,7 @@ class BaseAPI:
         *,
         send_legacy_cookie: bool = True,
         accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        user_agent: Optional[str] = None,
         get_retries: int = 0,
     ) -> None:
         """Initialize the BaseAPI.
@@ -257,6 +265,12 @@ class BaseAPI:
                 written to the shared session cookie jar.
             accept_language: Value sent as ``X-Accept-Language`` on every
                 request. Validated as printable ASCII with no CR/LF.
+            user_agent: Value sent as ``User-Agent`` on every request.
+                Defaults to :data:`eero.const.DEFAULT_USER_AGENT` when
+                ``None``. Pass :data:`eero.const.LEGACY_USER_AGENT`, or any
+                other client version string, to reproduce a different
+                capability set advertised by the Eero cloud (see issue
+                #135). Validated as printable ASCII with no CR/LF.
             get_retries: Number of additional attempts for GET requests that
                 fail with a transport error or a 5xx response. 0 (default)
                 disables retrying. Never applies to POST/PUT/DELETE/PATCH.
@@ -278,6 +292,9 @@ class BaseAPI:
         self._send_legacy_cookie = send_legacy_cookie
         _validate_header_value("X-Accept-Language", accept_language)
         self._accept_language = accept_language
+        resolved_user_agent = user_agent if user_agent is not None else DEFAULT_USER_AGENT
+        _validate_header_value("User-Agent", resolved_user_agent)
+        self._user_agent = resolved_user_agent
         self._get_retries = get_retries
 
     async def __aenter__(self) -> "BaseAPI":
@@ -297,6 +314,11 @@ class BaseAPI:
         """Exit async context manager."""
         if self._should_close_session and self._session:
             await self._session.close()
+
+    @property
+    def user_agent(self) -> str:
+        """The ``User-Agent`` value this instance sends on every request."""
+        return self._user_agent
 
     @property
     def session(self) -> ClientSession:
@@ -513,6 +535,7 @@ class BaseAPI:
 
         kwargs["headers"] = build_request_headers(
             accept_language=self._accept_language,
+            user_agent=self._user_agent,
             extra_headers=extra_headers,
         )
 
@@ -849,6 +872,7 @@ class AuthenticatedAPI(BaseAPI):
         *,
         send_legacy_cookie: bool = True,
         accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        user_agent: Optional[str] = None,
         get_retries: int = 0,
     ) -> None:
         """Initialize the AuthenticatedAPI.
@@ -858,8 +882,23 @@ class AuthenticatedAPI(BaseAPI):
             base_url: Base URL for API endpoints.
             send_legacy_cookie: See ``BaseAPI.__init__``.
             accept_language: See ``BaseAPI.__init__``.
+            user_agent: See ``BaseAPI.__init__``. When ``None`` (the
+                default), inherited from ``auth_api``'s own ``User-Agent``
+                (when ``auth_api`` is a real :class:`BaseAPI`) so a
+                ``user_agent`` passed once to :class:`EeroClient` or
+                :class:`eero.api.EeroAPI` reaches every domain module's
+                requests -- including reads like ``get_network`` -- without
+                every domain module having to be constructed with it
+                explicitly. Falls back to :data:`eero.const.DEFAULT_USER_AGENT`
+                when ``auth_api`` is not a :class:`BaseAPI` (e.g. a test
+                double).
             get_retries: See ``BaseAPI.__init__``.
         """
+        resolved_user_agent = user_agent
+        if resolved_user_agent is None:
+            resolved_user_agent = (
+                auth_api.user_agent if isinstance(auth_api, BaseAPI) else DEFAULT_USER_AGENT
+            )
         # Pass None for session - we'll delegate to auth_api
         super().__init__(
             session=None,
@@ -867,6 +906,7 @@ class AuthenticatedAPI(BaseAPI):
             base_url=base_url,
             send_legacy_cookie=send_legacy_cookie,
             accept_language=accept_language,
+            user_agent=resolved_user_agent,
             get_retries=get_retries,
         )
         self._auth_api = auth_api

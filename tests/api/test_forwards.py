@@ -53,6 +53,22 @@ class TestForwardsAPIGetForwards:
         with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
             await forwards_api.get_forwards("network_123")
 
+    @pytest.mark.asyncio
+    async def test_get_forwards_pins_to_2_2_even_with_2_3_parent_link(
+        self, forwards_api, mock_session
+    ):
+        """get_forwards always hits 2.2, even when the parent publishes a 2.3 link (#135)."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response([]))
+        parent = {
+            "url": "/2.2/networks/network_123",
+            "resources": {"forwards": "/2.3/networks/network_123/forwards"},
+        }
+
+        await forwards_api.get_forwards("network_123", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/forwards"
+
 
 class TestForwardsAPICreateForward:
     """Tests for create_forward method."""

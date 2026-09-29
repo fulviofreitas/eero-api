@@ -16,6 +16,7 @@ import pytest
 
 from eero.api import EeroAPI
 from eero.client import EeroClient
+from eero.const import DEFAULT_USER_AGENT, LEGACY_USER_AGENT
 from eero.exceptions import (
     EeroAuthenticationException,
     EeroException,
@@ -59,6 +60,32 @@ class TestEeroClientInit:
         expected_keys = ["account", "networks", "network", "eeros", "devices", "profiles"]
         for key in expected_keys:
             assert key in client._cache
+
+    def test_default_user_agent(self):
+        """The default client sends the current-app-version User-Agent (#135)."""
+        client = EeroClient()
+
+        assert client._api.auth.user_agent == DEFAULT_USER_AGENT
+
+    def test_custom_user_agent_reaches_auth(self):
+        """A caller-supplied user_agent reaches the auth layer's requests."""
+        client = EeroClient(user_agent=LEGACY_USER_AGENT)
+
+        assert client._api.auth.user_agent == LEGACY_USER_AGENT
+
+    def test_custom_user_agent_reaches_domain_modules(self):
+        """A caller-supplied user_agent also reaches domain modules' requests.
+
+        Domain modules (e.g. ``networks``) are constructed without an
+        explicit ``user_agent``, and must inherit the one configured on
+        ``auth`` -- otherwise a caller pinning the legacy string to avoid
+        the API-2.3 support/forwards/routing shape drift (#135) would only
+        affect login/verify/refresh, not the reads that matter.
+        """
+        client = EeroClient(user_agent=LEGACY_USER_AGENT)
+
+        assert client._api.networks.user_agent == LEGACY_USER_AGENT
+        assert client._api.dhcp.user_agent == LEGACY_USER_AGENT
 
 
 class TestEeroClientAuthentication:
@@ -249,6 +276,61 @@ class TestEeroClientEnsureNetworkId:
 
         assert result == "network_123"
         client._api.networks.get_networks.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_auto_discover_coerces_int_network_id(self, mock_session):
+        """An integer ``id`` in the raw response is coerced to str (#137)."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        raw_response = {
+            "meta": {"code": 200},
+            "data": {"networks": [{"id": 12345678, "url": "/2.2/networks/12345678"}]},
+        }
+        client._api.networks.get_networks = AsyncMock(return_value=raw_response)
+
+        result = await client._ensure_network_id(None, auto_discover=True)
+
+        assert result == "12345678"
+        assert isinstance(result, str)
+
+
+class TestEeroClientSetPreferredNetwork:
+    """Tests for set_preferred_network and the preferred_network_id property."""
+
+    def test_set_preferred_network_coerces_int(self, mock_session):
+        """set_preferred_network stores an int id as str (#137)."""
+        client = EeroClient(session=mock_session)
+
+        client.set_preferred_network(123)
+
+        assert client.preferred_network_id == "123"
+        assert isinstance(client.preferred_network_id, str)
+
+    def test_set_preferred_network_accepts_str(self, mock_session):
+        """set_preferred_network keeps a str id unchanged."""
+        client = EeroClient(session=mock_session)
+
+        client.set_preferred_network("network_123")
+
+        assert client.preferred_network_id == "network_123"
+
+    @pytest.mark.asyncio
+    async def test_get_networks_auto_select_coerces_int_network_id(self, mock_session):
+        """get_networks() auto-selecting the first network coerces an int id (#137)."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+
+        raw_response = {
+            "meta": {"code": 200},
+            "data": {"networks": [{"id": 12345678, "url": "/2.2/networks/12345678"}]},
+        }
+        client._api.networks.get_networks = AsyncMock(return_value=raw_response)
+
+        await client.get_networks()
+
+        assert client.preferred_network_id == "12345678"
+        assert isinstance(client.preferred_network_id, str)
 
 
 class TestEeroClientCacheIntegration:

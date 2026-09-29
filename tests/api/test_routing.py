@@ -63,8 +63,10 @@ class TestRoutingAPIGetRouting:
         assert url == "https://api-user.e2ro.com/2.2/networks/network_123/routing"
 
     @pytest.mark.asyncio
-    async def test_get_routing_prefers_parent_routing_link(self, routing_api, mock_session):
-        """Test the network's routing link (served on 2.3) is preferred over the template."""
+    async def test_get_routing_pins_to_2_2_even_with_2_3_parent_link(
+        self, routing_api, mock_session
+    ):
+        """get_routing always hits 2.2, even when the parent envelope publishes a 2.3 link (#135)."""
         mock_session.request.return_value = create_mock_response(200, api_success_response({}))
         parent = {
             "url": "/2.2/networks/network_123",
@@ -74,4 +76,4 @@ class TestRoutingAPIGetRouting:
         await routing_api.get_routing("network_123", parent=parent)
 
         _, url = mock_session.request.call_args.args[:2]
-        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/routing"
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/routing"

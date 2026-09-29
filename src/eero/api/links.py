@@ -277,6 +277,39 @@ def resource_url(
     return f"{api_endpoint(version).rstrip('/')}/{path.lstrip('/')}"
 
 
+#: Matches the API-version segment of an absolute URL on the API host, e.g.
+#: ``https://api-user.e2ro.com/2.3/networks/123/support``.
+_VERSION_SEGMENT_RE = re.compile(r"^(https?://[^/]+)/[0-9]+\.[0-9]+(/.*)$")
+
+
+def rewrite_version(url: str, version: str) -> str:
+    """Rewrite the API-version segment of an already-resolved absolute URL.
+
+    Used where a domain method must pin a specific API version regardless
+    of what version segment a parent envelope's published link named,
+    because the response shape differs by version -- see
+    ``eero.api.support.SupportAPI.get_support``, whose ``support`` link is
+    served on 2.3 under a current ``User-Agent`` but returns a different
+    shape there than on 2.2 (issue #135). ``eero.api.forwards.ForwardsAPI.
+    get_forwards`` and ``eero.api.routing.RoutingAPI.get_routing`` pin to
+    2.2 the same way, for safety, even though their known shape is
+    unchanged across versions.
+
+    Args:
+        url: An absolute URL already resolved onto the API host, carrying a
+            leading version segment (e.g. ``.../2.3/networks/...``).
+        version: The version segment to substitute, e.g. ``"2.2"``.
+
+    Returns:
+        ``url`` with its version segment replaced by ``version``, or ``url``
+        unchanged if it carries no recognisable version segment.
+    """
+    match = _VERSION_SEGMENT_RE.match(url)
+    if not match:
+        return url
+    return f"{match.group(1)}/{version}{match.group(2)}"
+
+
 def child_url(base_url: str, child_id: str) -> str:
     """Append a validated child identifier to an already-resolved URL.
 
@@ -344,6 +377,7 @@ __all__ = [
     "join_api_path",
     "resolve_link",
     "resource_url",
+    "rewrite_version",
     "self_url",
     "sub_resource_url",
     "validate_identifier",

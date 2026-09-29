@@ -72,6 +72,7 @@ class AuthAPI(BaseAPI):
         *,
         send_legacy_cookie: bool = True,
         accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        user_agent: Optional[str] = None,
         get_retries: int = 0,
     ) -> None:
         """Initialize the AuthAPI.
@@ -82,6 +83,7 @@ class AuthAPI(BaseAPI):
             use_keyring: Whether to use keyring for secure token storage
             send_legacy_cookie: See ``BaseAPI.__init__``.
             accept_language: See ``BaseAPI.__init__``.
+            user_agent: See ``BaseAPI.__init__``.
             get_retries: See ``BaseAPI.__init__``.
         """
         super().__init__(
@@ -90,6 +92,7 @@ class AuthAPI(BaseAPI):
             API_ENDPOINT,
             send_legacy_cookie=send_legacy_cookie,
             accept_language=accept_language,
+            user_agent=user_agent,
             get_retries=get_retries,
         )
         self._storage: CredentialStorage = create_storage(use_keyring, cookie_file)

@@ -28,6 +28,7 @@ from eero.api.links import (
     join_api_path,
     resolve_link,
     resource_url,
+    rewrite_version,
     self_url,
     sub_resource_url,
 )
@@ -279,6 +280,26 @@ class TestJoinApiPath:
         """A non-string path raises EeroValidationException."""
         with pytest.raises(EeroValidationException):
             join_api_path(None)  # type: ignore[arg-type]
+
+
+class TestRewriteVersion:
+    """Tests for rewrite_version (pinning get_support/forwards/routing to 2.2, #135)."""
+
+    def test_rewrites_23_to_22(self):
+        """A 2.3-versioned URL is rewritten to 2.2."""
+        url = f"{API_HOST}/2.3/networks/network-id-placeholder/support"
+        expected = f"{API_HOST}/2.2/networks/network-id-placeholder/support"
+        assert rewrite_version(url, "2.2") == expected
+
+    def test_noop_when_already_target_version(self):
+        """A URL already at the target version is returned unchanged."""
+        url = f"{API_HOST}/2.2/networks/network-id-placeholder/routing"
+        assert rewrite_version(url, "2.2") == url
+
+    def test_no_version_segment_returned_unchanged(self):
+        """A URL without a recognisable version segment is returned unchanged."""
+        url = f"{API_HOST}/login"
+        assert rewrite_version(url, "2.2") == url
 
 
 # ========================== resource_url Tests ==========================
