@@ -56,6 +56,7 @@ class EeroAPI:
         *,
         send_legacy_cookie: bool = True,
         accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        user_agent: Optional[str] = None,
         get_retries: int = 0,
     ) -> None:
         """Initialize the EeroAPI.
@@ -73,6 +74,13 @@ class EeroAPI:
             accept_language: Value sent as the ``X-Accept-Language`` header
                 on every request. Validated as printable ASCII with no
                 CR/LF.
+            user_agent: Value sent as the ``User-Agent`` header on every
+                request. Defaults to :data:`eero.const.DEFAULT_USER_AGENT`
+                when ``None``. Pass :data:`eero.const.LEGACY_USER_AGENT`, or
+                any other client version string, to reproduce a different
+                capability set advertised by the Eero cloud (see issue
+                #135). Reaches every domain module's requests, not only
+                ``auth``'s.
             get_retries: Number of additional attempts for GET requests that
                 fail with a transport error or a 5xx response. 0 (default)
                 disables retrying. Never applies to writes
@@ -84,6 +92,7 @@ class EeroAPI:
             use_keyring,
             send_legacy_cookie=send_legacy_cookie,
             accept_language=accept_language,
+            user_agent=user_agent,
             get_retries=get_retries,
         )
         self.backup = BackupAPI(self.auth)

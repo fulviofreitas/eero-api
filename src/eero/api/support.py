@@ -7,12 +7,12 @@ All data extraction, field mapping, and transformation must be done by downstrea
 import logging
 from typing import Any, Dict, Mapping, Optional
 
-from ..const import API_ENDPOINT
+from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import sub_resource_url
+from .links import rewrite_version, sub_resource_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,13 +37,18 @@ class SupportAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Get support information - returns raw Eero API response.
 
-        GETs the network's ``support`` link.
+        GETs the network's ``support`` link, pinned to API version 2.2
+        regardless of what version a parent envelope's published link
+        names: 2.3 returns a ``contacts`` array where 2.2 returns a flat
+        object, and a current ``User-Agent`` causes the API to publish this
+        link on 2.3 (see issue #135).
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
             parent: The network's own cached envelope, if the caller has
                 one; when supplied, its published ``support`` link is used
-                instead of the default template. Read only; never mutated.
+                (after being pinned back to 2.2) instead of the default
+                template. Read only; never mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -59,6 +64,7 @@ class SupportAPI(AuthenticatedAPI):
         url = sub_resource_url(
             network_id, "networks/{id}/support", link="support", parent=as_envelope(parent)
         )
+        url = rewrite_version(url, API_VERSION_DEFAULT)
         _LOGGER.debug("Getting support info for network %s", network_id)
         return await self.get(url, auth_token=auth_token)
 

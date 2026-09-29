@@ -12,7 +12,7 @@ from ..logging import get_secure_logger
 from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import sub_resource_url
+from .links import rewrite_version, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -37,12 +37,19 @@ class RoutingAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Get routing information - returns raw Eero API response.
 
+        Pinned to API version 2.2 regardless of what version a parent
+        envelope's published ``routing`` link names -- a current
+        ``User-Agent`` causes the API to publish this link on 2.3 (see
+        issue #135); the response shape is unchanged across versions, but
+        this method is pinned for safety, the same as ``get_support`` and
+        ``get_forwards``.
+
         Args:
             network: ID of the network to get routing info from.
             parent: The cached network envelope, if the caller has one.
                 Preferred over ``network`` to resolve the ``routing`` link
-                when supplied -- the API serves this link on version 2.3,
-                distinct from the 2.2 template fallback. Never mutated.
+                when supplied, after being pinned back to 2.2. Never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -62,5 +69,6 @@ class RoutingAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
+        url = rewrite_version(url, API_VERSION_DEFAULT)
         _LOGGER.debug("Getting routing for network %s", network)
         return await self.get(url, auth_token=auth_token)

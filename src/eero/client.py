@@ -55,6 +55,7 @@ class EeroClient:
         *,
         send_legacy_cookie: bool = True,
         accept_language: str = DEFAULT_ACCEPT_LANGUAGE,
+        user_agent: Optional[str] = None,
         get_retries: int = 0,
     ) -> None:
         """Initialize the EeroClient.
@@ -72,6 +73,13 @@ class EeroClient:
             accept_language: Value sent as the ``X-Accept-Language`` header
                 on every request. Validated as printable ASCII with no
                 CR/LF.
+            user_agent: Value sent as the ``User-Agent`` header on every
+                request. Defaults to :data:`eero.const.DEFAULT_USER_AGENT`
+                when ``None``. The Eero cloud reads this string as the
+                client's app version and decides which capabilities to
+                advertise from it (see issue #135); pass
+                :data:`eero.const.LEGACY_USER_AGENT` to reproduce the
+                previous, lower-capability behaviour.
             get_retries: Number of additional attempts for GET requests that
                 fail with a transport error or a 5xx response. 0 (default)
                 disables retrying. Never applies to writes
@@ -83,6 +91,7 @@ class EeroClient:
             use_keyring=use_keyring,
             send_legacy_cookie=send_legacy_cookie,
             accept_language=accept_language,
+            user_agent=user_agent,
             get_retries=get_retries,
         )
         self._cache_timeout = cache_timeout

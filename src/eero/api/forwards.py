@@ -18,7 +18,7 @@ from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import self_url, sub_resource_url
+from .links import rewrite_version, self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -82,12 +82,19 @@ class ForwardsAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Get port forwards - returns raw Eero API response.
 
+        Pinned to API version 2.2 regardless of what version a parent
+        envelope's published ``forwards`` link names -- a current
+        ``User-Agent`` causes the API to publish this link on 2.3 (see
+        issue #135); the response shape is unchanged across versions, but
+        this method is pinned for safety, the same as ``get_support`` and
+        ``get_routing``.
+
         Args:
             network: ID of the network to get forwards from.
             parent: The cached network envelope, if the caller has one.
                 Preferred over ``network`` to resolve the ``forwards`` link
-                when supplied -- the link may point at a newer API version
-                than the template fallback. Never mutated.
+                when supplied, after being pinned back to 2.2. Never
+                mutated.
 
         Returns:
             Raw API response: {"meta": {...}, "data": [...]}
@@ -107,6 +114,7 @@ class ForwardsAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_DEFAULT,
         )
+        url = rewrite_version(url, API_VERSION_DEFAULT)
         _LOGGER.debug("Getting forwards for network %s", network)
         return await self.get(url, auth_token=auth_token)
 

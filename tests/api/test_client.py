@@ -16,6 +16,7 @@ import pytest
 
 from eero.api import EeroAPI
 from eero.client import EeroClient
+from eero.const import DEFAULT_USER_AGENT, LEGACY_USER_AGENT
 from eero.exceptions import (
     EeroAuthenticationException,
     EeroException,
@@ -59,6 +60,32 @@ class TestEeroClientInit:
         expected_keys = ["account", "networks", "network", "eeros", "devices", "profiles"]
         for key in expected_keys:
             assert key in client._cache
+
+    def test_default_user_agent(self):
+        """The default client sends the current-app-version User-Agent (#135)."""
+        client = EeroClient()
+
+        assert client._api.auth.user_agent == DEFAULT_USER_AGENT
+
+    def test_custom_user_agent_reaches_auth(self):
+        """A caller-supplied user_agent reaches the auth layer's requests."""
+        client = EeroClient(user_agent=LEGACY_USER_AGENT)
+
+        assert client._api.auth.user_agent == LEGACY_USER_AGENT
+
+    def test_custom_user_agent_reaches_domain_modules(self):
+        """A caller-supplied user_agent also reaches domain modules' requests.
+
+        Domain modules (e.g. ``networks``) are constructed without an
+        explicit ``user_agent``, and must inherit the one configured on
+        ``auth`` -- otherwise a caller pinning the legacy string to avoid
+        the API-2.3 support/forwards/routing shape drift (#135) would only
+        affect login/verify/refresh, not the reads that matter.
+        """
+        client = EeroClient(user_agent=LEGACY_USER_AGENT)
+
+        assert client._api.networks.user_agent == LEGACY_USER_AGENT
+        assert client._api.dhcp.user_agent == LEGACY_USER_AGENT
 
 
 class TestEeroClientAuthentication:

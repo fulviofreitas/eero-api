@@ -27,7 +27,13 @@ from eero.api.base import (
     _parse_envelope,
     build_request_headers,
 )
-from eero.const import API_ENDPOINT, DEFAULT_ACCEPT_LANGUAGE, DEFAULT_USER_AGENT, MAX_RESPONSE_BYTES
+from eero.const import (
+    API_ENDPOINT,
+    DEFAULT_ACCEPT_LANGUAGE,
+    DEFAULT_USER_AGENT,
+    LEGACY_USER_AGENT,
+    MAX_RESPONSE_BYTES,
+)
 from eero.exceptions import (
     EeroAccessDeniedException,
     EeroAPIException,
@@ -1113,6 +1119,19 @@ class TestHeaderConstruction:
         assert headers["X-Accept-Language"] == DEFAULT_ACCEPT_LANGUAGE
         assert "Content-Type" not in headers
 
+    def test_build_request_headers_custom_user_agent(self):
+        headers = build_request_headers(
+            accept_language=DEFAULT_ACCEPT_LANGUAGE, user_agent=LEGACY_USER_AGENT
+        )
+
+        assert headers["User-Agent"] == LEGACY_USER_AGENT
+
+    def test_build_request_headers_rejects_invalid_user_agent(self):
+        with pytest.raises(EeroValidationException):
+            build_request_headers(
+                accept_language=DEFAULT_ACCEPT_LANGUAGE, user_agent="bad\r\nvalue"
+            )
+
     def test_build_request_headers_extra_overrides_defaults(self):
         headers = build_request_headers(
             accept_language=DEFAULT_ACCEPT_LANGUAGE,
@@ -1161,6 +1180,35 @@ class TestHeaderConstruction:
                 session=mock_session,
                 base_url="https://api.example.com",
                 accept_language="bad\r\nvalue",
+            )
+
+    def test_default_user_agent_property(self, mock_session):
+        """BaseAPI defaults to DEFAULT_USER_AGENT when none is supplied (#135)."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+        assert api.user_agent == DEFAULT_USER_AGENT
+
+    @pytest.mark.asyncio
+    async def test_custom_user_agent_is_sent(self, mock_session):
+        api = BaseAPI(
+            session=mock_session,
+            base_url="https://api.example.com",
+            user_agent=LEGACY_USER_AGENT,
+        )
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("/endpoint")
+
+        headers = mock_session.request.call_args[1]["headers"]
+        assert headers["User-Agent"] == LEGACY_USER_AGENT
+        assert api.user_agent == LEGACY_USER_AGENT
+
+    def test_invalid_user_agent_rejected_at_construction(self, mock_session):
+        with pytest.raises(EeroValidationException):
+            BaseAPI(
+                session=mock_session,
+                base_url="https://api.example.com",
+                user_agent="bad\r\nvalue",
             )
 
     @pytest.mark.asyncio

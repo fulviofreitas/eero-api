@@ -64,8 +64,40 @@ SESSION_COOKIE_PREFIX: Final[str] = "s="
 
 # Request headers
 # Mobile-style User-Agent to reduce the chance of rate-limiting on cloud API
-# endpoints that have been observed to treat non-mobile clients more aggressively.
-DEFAULT_USER_AGENT: Final[str] = "eero/3.0 (iPhone; iOS 17.0)"
+# endpoints that have been observed to treat non-mobile clients more
+# aggressively. The Eero cloud also reads this string as the client's app
+# version and decides which capabilities to advertise from it (see issue
+# #135): the same account/network/session, one GET networks/{id} per
+# string, counting capabilities marked capable:
+#
+#   | Client version string                    | Capable | has_min_mobile_version: false |
+#   |-------------------------------------------|--------:|-------------------------------:|
+#   | eero/3.0 (iPhone; iOS 17.0) (old default)  |      41 |                              44 |
+#   | eero/6.16.0 (iPhone; iOS 17.4.1)           |      66 |                              10 |
+#   | eero-ios/2026.8.1 (iPhone; iOS 18.5) (new)  |      76 |                               1 |
+#   | eero-android/2026.8.1                      |      77 |                               1 |
+#
+# The product token matters as well as the version -- eero/2026.8.1 scores
+# 70 where eero-ios/2026.8.1 scores 76 -- so both the token and the version
+# were updated together, not just the version number. Capabilities the old
+# default gave up include led_action, device_blacklist,
+# device_management, diagnostics, device_usage, unified_content_filters,
+# block_apps, block_apps_categories, ddns_enabled, port_forward_range,
+# historical_usage, ac_compat, and the five dnsfilter_* entries.
+#
+# Side effect: under the new default, the network's ``resources`` map
+# points ``forwards``, ``routing``, and ``support`` at API 2.3 instead of
+# 2.2. ``forwards`` and ``routing`` return the same shape on both versions;
+# ``support`` does not -- 2.3 returns a ``contacts`` array where 2.2 returns
+# a flat object. ``get_support``/``get_forwards``/``get_routing`` in
+# :mod:`eero.api.support`/:mod:`eero.api.forwards`/:mod:`eero.api.routing`
+# pin their requests to 2.2 regardless of what a parent envelope publishes,
+# so their return shape does not change under this default.
+DEFAULT_USER_AGENT: Final[str] = "eero-ios/2026.8.1 (iPhone; iOS 18.5)"
+
+# The previous default, kept available so its (lower-capability) behaviour
+# can still be reproduced -- e.g. ``EeroClient(user_agent=LEGACY_USER_AGENT)``.
+LEGACY_USER_AGENT: Final[str] = "eero/3.0 (iPhone; iOS 17.0)"
 
 # Default value for the X-Accept-Language header sent on every request.
 DEFAULT_ACCEPT_LANGUAGE: Final[str] = "en-US"

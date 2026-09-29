@@ -53,8 +53,14 @@ class TestSupportAPIGetSupport:
             await support_api.get_support("network_123")
 
     @pytest.mark.asyncio
-    async def test_get_support_prefers_parent_link(self, support_api, mock_session):
-        """Test get_support uses the network's published support link over the template."""
+    async def test_get_support_pins_to_2_2_even_with_2_3_parent_link(
+        self, support_api, mock_session
+    ):
+        """get_support always hits 2.2, even when the parent envelope publishes a 2.3 link.
+
+        2.3's ``support`` shape (a ``contacts`` array) differs from 2.2's flat
+        object; see issue #135.
+        """
         mock_response = create_mock_response(200, api_success_response({}))
         mock_session.request.return_value = mock_response
         parent = {"resources": {"support": "/2.3/networks/network_123/support"}}
@@ -62,7 +68,8 @@ class TestSupportAPIGetSupport:
         await support_api.get_support("network_123", parent=parent)
 
         call_args = mock_session.request.call_args
-        assert call_args.args[1].endswith("/2.3/networks/network_123/support")
+        assert call_args.args[1].endswith("/2.2/networks/network_123/support")
+        assert "/2.3/" not in call_args.args[1]
 
 
 class TestSupportAPIRequestSupport:
