@@ -52,11 +52,16 @@ export default {
     // #132 did at 101/100.
     'header-max-length': [2, 'always', 110],
     
-    // Body max line length
-    'body-max-line-length': [2, 'always', 200],
-    
-    // Footer max line length
-    'footer-max-line-length': [2, 'always', 200],
+    // Body max line length: disabled. Squash merges use the PR description as
+    // the body, and markdown bullets there routinely exceed any fixed width
+    // (#138 failed master CI on exactly this, as eero-ui did before). Headers
+    // and footers keep their limits.
+    'body-max-line-length': [0],
+
+    // Footer max line length. BREAKING CHANGE footers are one sentence per
+    // breaking item and must not wrap (semantic-release reads each line as a
+    // note), so leave headroom above the 200 default.
+    'footer-max-line-length': [2, 'always', 250],
   },
   
   // Help message displayed on validation failure
