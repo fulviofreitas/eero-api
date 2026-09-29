@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.5](https://github.com/fulviofreitas/eero-api/compare/v8.0.4...v8.0.5) (2026-09-29)
+
+### 🐛 Bug Fixes
+
+* **client:** current client version string, DHCP "custom" mode, string network ids ([#138](https://github.com/fulviofreitas/eero-api/issues/138)) ([04bba19](https://github.com/fulviofreitas/eero-api/commit/04bba199fdc11ad22b03b72e25e512cdaa5d8540)), closes [#137](https://github.com/fulviofreitas/eero-api/issues/137) [135/#136](https://github.com/135/eero-api/issues/136) [#136](https://github.com/fulviofreitas/eero-api/issues/136) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#136](https://github.com/fulviofreitas/eero-api/issues/136) [#135](https://github.com/fulviofreitas/eero-api/issues/135) [#136](https://github.com/fulviofreitas/eero-api/issues/136) [#137](https://github.com/fulviofreitas/eero-api/issues/137)
+
 ## [8.0.4](https://github.com/fulviofreitas/eero-api/compare/v8.0.3...v8.0.4) (2026-09-24)
 
 ### 🐛 Bug Fixes
