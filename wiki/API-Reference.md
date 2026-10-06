@@ -167,7 +167,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `get_device` | `async def get_device(self, device_id: str, network_id: Optional[str]=None, refresh_cache: bool=False) -> Dict[str, Any]` | `Dict[str, Any]` | Cached |
 | `set_device_nickname` | `async def set_device_nickname(self, device_id: str, nickname: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | **Verified** write on `2.3` — see [Constants](#constants) |
 | `pause_device` | `async def pause_device(self, device_id: str, paused: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | **Verified** write on `2.3` |
-| `block_device` | `async def block_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified (form-encoded `mac`); POST `networks/{id}/blacklist` |
+| `block_device` | `async def block_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified 2026-10-06 (form-encoded `mac`); POST `networks/{id}/blacklist` |
 | `unblock_device` | `async def unblock_device(self, device_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified; DELETE `networks/{id}/blacklist/{mac}` |
 | `update_device_via_link` | `async def update_device_via_link(self, device_id: str, *, nickname: Optional[str]=None, paused: Optional[bool]=None, profile: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; JSON PUT to the device's own URL on `2.2`. Prefer the two verified methods for nickname/pause |
 | `set_device_type` | `async def set_device_type(self, device_id: str, device_type: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20, value persists and reads back) |
@@ -636,7 +636,7 @@ The device parameter is named `mac` on every method. `parent` = the network enve
 | `set_device_type` | `async def set_device_type(self, network: str, mac: str, device_type: str)` | PUT JSON `{"device_type": ...}` to the device URL | verified write (2026-09-20, value persists and reads back) |
 | `get_device_labels` | `async def get_device_labels(self, network: str, mac: str)` | GET `networks/{id}/devices/{mac}/labels` | read |
 | `set_device_labels` | `async def set_device_labels(self, network: str, mac: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None)` | PUT `.../labels` with the labels as query parameters | verified NO-OP (2026-09-20): 200 with labels echoed back, but the value never shows up on a read-back |
-| `block_device` | `async def block_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.add_to_blacklist` | unverified (form) |
+| `block_device` | `async def block_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.add_to_blacklist` | verified 2026-10-06 (form-encoded `mac`) |
 | `unblock_device` | `async def unblock_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.remove_from_blacklist` | verified |
 
 </details>
@@ -849,7 +849,7 @@ Reached through the network's `device_blacklist` link when `parent` is supplied.
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_blacklist` | `async def get_blacklist(self, network: str, *, parent=None)` | GET `networks/{id}/blacklist` | read |
-| `add_to_blacklist` | `async def add_to_blacklist(self, network: str, mac: str, *, parent=None)` | POST form `mac=` | unverified write (a JSON body was verified in the past) |
+| `add_to_blacklist` | `async def add_to_blacklist(self, network: str, mac: str, *, parent=None)` | POST form `mac=` | verified write (2026-10-06, form-encoded `mac` shape) |
 | `remove_from_blacklist` | `async def remove_from_blacklist(self, network: str, mac_or_device_id: str, *, parent=None)` | DELETE `.../blacklist/{mac}` (colon-stripped `device_id` also accepted) | verified write |
 
 </details>

@@ -87,10 +87,15 @@ class TestBlacklistAPIAddToBlacklist:
         assert "json" not in call_args.kwargs or call_args.kwargs["json"] is None
 
     @pytest.mark.asyncio
-    async def test_add_to_blacklist_logs_uncharacterised_write_warning(
+    async def test_add_to_blacklist_does_not_log_uncharacterised_write_warning(
         self, blacklist_api, mock_session, caplog
     ):
-        """Test add_to_blacklist logs the standard unverified-write warning."""
+        """Test add_to_blacklist no longer logs the unverified-write warning.
+
+        Live-verified 2026-10-06 against API 2.2 with the form-encoded
+        ``mac`` shape (device blocked, then unblocked via
+        ``remove_from_blacklist``; no mesh reboot).
+        """
         import logging
 
         mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
@@ -99,7 +104,9 @@ class TestBlacklistAPIAddToBlacklist:
         with caplog.at_level(logging.WARNING, logger="eero.api.blacklist"):
             await blacklist_api.add_to_blacklist("network_123", "aa:bb:cc:11:22:33")
 
-        assert any("not been fully characterised" in record.message for record in caplog.records)
+        assert not any(
+            "not been fully characterised" in record.message for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_add_to_blacklist_prefers_parent_link(self, blacklist_api, mock_session):
