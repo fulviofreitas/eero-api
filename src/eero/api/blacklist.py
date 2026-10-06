@@ -106,8 +106,8 @@ class BlacklistAPI(AuthenticatedAPI):
         .. note::
             Live-verified 2026-10-06 against API 2.2 with the form-encoded
             ``mac`` shape (device blocked, then unblocked via
-            `remove_from_blacklist`; no mesh reboot). Follow the
-            read-compare-skip discipline: call `get_blacklist` after the
+            ``remove_from_blacklist``; no mesh reboot). Follow the
+            read-compare-skip discipline: call ``get_blacklist`` after the
             write to confirm the device was added, and do not retry on
             failure.
 
