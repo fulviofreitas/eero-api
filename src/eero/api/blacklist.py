@@ -19,7 +19,7 @@ from typing import Any, Dict, Mapping, Optional
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
-from ._writes import as_envelope, warn_uncharacterised_write
+from ._writes import as_envelope
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
 from .links import child_url, sub_resource_url
@@ -103,14 +103,13 @@ class BlacklistAPI(AuthenticatedAPI):
         Sends a form-encoded ``mac`` field, the API's declared request shape
         for this operation.
 
-        .. warning::
-            This write has not been verified against a live network in its
-            form-encoded shape: issue #109 live-verified a JSON body
-            (``{"mac": ...}``) for the same operation, but the API's
-            declared shape recovered from static analysis is form-encoded.
-            Follow the read-compare-skip discipline: call `get_blacklist`
-            after the write to confirm the device was added, and do not
-            retry on failure.
+        .. note::
+            Live-verified 2026-10-06 against API 2.2 with the form-encoded
+            ``mac`` shape (device blocked, then unblocked via
+            ``remove_from_blacklist``; no mesh reboot). Follow the
+            read-compare-skip discipline: call ``get_blacklist`` after the
+            write to confirm the device was added, and do not retry on
+            failure.
 
         Args:
             network: The network's bare ID, path, or absolute URL.
@@ -132,7 +131,6 @@ class BlacklistAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = self._blacklist_url(network, parent)
-        warn_uncharacterised_write(_LOGGER, "add_to_blacklist")
         _LOGGER.debug("Adding MAC to blacklist at %s", url)
         return await self.post(url, auth_token=auth_token, data={"mac": mac})
 

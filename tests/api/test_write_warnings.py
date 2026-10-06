@@ -81,6 +81,14 @@ _VERIFIED_WRITE_ALLOWLIST = {
     # `device_id` is the MAC address with colons stripped, so both the raw
     # MAC and the colon-stripped form are accepted as the URL segment."
     ("BlacklistAPI", "remove_from_blacklist"),
+    # blacklist.py: add_to_blacklist was live-verified 2026-10-06 against
+    # API 2.2 with the form-encoded `mac` shape (device blocked, then
+    # unblocked via remove_from_blacklist; no mesh reboot).
+    ("BlacklistAPI", "add_to_blacklist"),
+    # devices.py: DevicesAPI.block_device delegates to
+    # BlacklistAPI.add_to_blacklist -- allowlisted above -- so it never
+    # emits the warning either.
+    ("DevicesAPI", "block_device"),
     # eeros.py: set_led was live-verified on 2026-09-20: the form-encoded
     # write to the led link turned a node's light off and back on, the
     # cloud read-back and the app agreed, and no node rebooted.
