@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.6](https://github.com/fulviofreitas/eero-api/compare/v8.0.5...v8.0.6) (2026-10-06)
+
+### 🐛 Bug Fixes
+
+* **blacklist:** mark add_to_blacklist as live-verified and drop the uncharacterised-write warning ([#140](https://github.com/fulviofreitas/eero-api/issues/140)) ([bf86102](https://github.com/fulviofreitas/eero-api/commit/bf861029a1dc034a03fbeb7cab6e77cc37ad1b61))
+
 ## [8.0.5](https://github.com/fulviofreitas/eero-api/compare/v8.0.4...v8.0.5) (2026-09-29)
 
 ### 🐛 Bug Fixes
