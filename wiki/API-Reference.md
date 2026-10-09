@@ -76,8 +76,9 @@ facade is the device's MAC address (the domain methods name it `mac`).
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| Context manager | `async def __aenter__(self) -> 'EeroClient'` | `EeroClient` | Only lifecycle API — no `connect()`/`close()` |
-| Context manager | `async def __aexit__(self, exc_type, exc_val, exc_tb) -> None` | `None` | |
+| Context manager | `async def __aenter__(self) -> 'EeroClient'` | `EeroClient` | Opens a session unless one was passed to the constructor. May be entered again after exit |
+| Context manager | `async def __aexit__(self, exc_type, exc_val, exc_tb) -> None` | `None` | Closes and discards a session the client created; never closes a caller-supplied one. Exceptions propagate |
+| `close` | `async def close(self) -> None` | `None` | Releases an owned session for callers not using `async with`. Idempotent; no-op before entry or for a caller-supplied session |
 | `is_authenticated` | `def is_authenticated(self) -> bool` | `bool` | **Property** — no `()` |
 | `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | |
 | `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | |
@@ -438,15 +439,15 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: Optional[str]=None, device_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
-| `get_data_usage` | `async def get_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `start`/`end`/`cadence` are keyword-only; `cadence` is `"daily"` or `"hourly"`, required by the API here. All data-usage reads send query parameters only and are never cached |
-| `get_data_usage_breakdown` | `async def get_data_usage_breakdown(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_breakdown` |
-| `get_devices_data_usage` | `async def get_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_devices_usage` |
-| `get_device_data_usage` | `async def get_device_data_usage(self, device_mac: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_device_usage`; `device_mac` is the leading positional |
-| `get_eeros_data_usage_summary` | `async def get_eeros_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eeros_summary` |
-| `get_eero_data_usage` | `async def get_eero_data_usage(self, eero_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eero_usage` |
-| `get_profile_data_usage` | `async def get_profile_data_usage(self, profile_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_profile_usage` |
-| `get_unprofiled_devices_data_usage` | `async def get_unprofiled_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_devices` |
-| `get_unprofiled_data_usage_summary` | `async def get_unprofiled_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_summary` |
+| `get_data_usage` | `async def get_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `start`/`end`/`cadence` are keyword-only; `cadence` is `"daily"` or `"hourly"`, required by the API here. All data-usage reads send query parameters only and are never cached |
+| `get_data_usage_breakdown` | `async def get_data_usage_breakdown(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_breakdown` |
+| `get_devices_data_usage` | `async def get_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_devices_usage` |
+| `get_device_data_usage` | `async def get_device_data_usage(self, device_mac: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_device_usage`; `device_mac` is the leading positional |
+| `get_eeros_data_usage_summary` | `async def get_eeros_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eeros_summary` |
+| `get_eero_data_usage` | `async def get_eero_data_usage(self, eero_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eero_usage` |
+| `get_profile_data_usage` | `async def get_profile_data_usage(self, profile_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_profile_usage` |
+| `get_unprofiled_devices_data_usage` | `async def get_unprofiled_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_devices` |
+| `get_unprofiled_data_usage_summary` | `async def get_unprofiled_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_summary` |
 | `get_data_usage_report_settings` | `async def get_data_usage_report_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_report_settings` |
 | `set_data_usage_report_settings` | `async def set_data_usage_report_settings(self, *, cadence: str, notification_day: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | **Unverified write** — read first, write only on a difference, never retry. Invalidates that network's cache entry |
 
@@ -490,6 +491,7 @@ Transport layer — not reached via an `EeroAPI` attribute; domain classes inher
 |--------|-----------|---------|-------|
 | Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, base_url: str='', *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0) -> None` | `BaseAPI` | `base_url`'s hostname is the only host the session token is ever sent to |
 | `session` | `def session(self) -> ClientSession` | `ClientSession` | Property-style accessor |
+| `close` | `async def close(self) -> None` | `None` | Closes and drops a session this instance created (also what `__aexit__` does); idempotent, and leaves a caller-supplied session untouched. `EeroAPI.close()` delegates to the auth layer |
 | `get` | `async def get(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Subject to the bounded `get_retries` policy |
 | `post` | `async def post(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Never retried |
 | `put` | `async def put(self, url: str, auth_token: Optional[str]=None, **kwargs) -> Dict[str, Any]` | `Dict[str, Any]` | Never retried |
@@ -979,20 +981,22 @@ Every read is a `GET` on `networks/{network_id}/data_usage…` taking query para
 `start` and `end` (ISO 8601 timestamps), an optional IANA `timezone`, and `cadence` (`"daily"`
 or `"hourly"`). Where `cadence` is typed `str` below it is required by the API; where it is
 `Optional[str]` it is omitted from the request when `None`. An invalid `cadence` raises
-`EeroValidationException` locally. `parent` = the network envelope (its own `url`). Every method
+`EeroValidationException` locally. `parent` = the network envelope (its own `url`). Every read except `get_report_settings` also takes a
+keyword-only `timeout: Optional[aiohttp.ClientTimeout]`, forwarded to the request only when supplied;
+otherwise the transport default (`total=30`, `sock_read=10`) applies. Every method
 has an `EeroClient` wrapper (listed under [Stats & Usage](#stats--usage)).
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `get_data_usage` | `async def get_data_usage(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | Network-level series |
-| `get_breakdown` | `async def get_breakdown(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, parent=None)` | |
-| `get_devices_usage` | `async def get_devices_usage(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None, parent=None)` | `profile_id` scopes to one profile's devices |
-| `get_device_usage` | `async def get_device_usage(self, network_id: str, device_mac: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | One device, addressed by MAC |
-| `get_eeros_summary` | `async def get_eeros_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | |
-| `get_eero_usage` | `async def get_eero_usage(self, network_id: str, eero_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | |
-| `get_profile_usage` | `async def get_profile_usage(self, network_id: str, profile_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | |
-| `get_unprofiled_devices` | `async def get_unprofiled_devices(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, parent=None)` | |
-| `get_unprofiled_summary` | `async def get_unprofiled_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None)` | |
+| `get_data_usage` | `async def get_data_usage(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | Network-level series |
+| `get_breakdown` | `async def get_breakdown(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_devices_usage` | `async def get_devices_usage(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | `profile_id` scopes to one profile's devices |
+| `get_device_usage` | `async def get_device_usage(self, network_id: str, device_mac: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | One device, addressed by MAC |
+| `get_eeros_summary` | `async def get_eeros_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_eero_usage` | `async def get_eero_usage(self, network_id: str, eero_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_profile_usage` | `async def get_profile_usage(self, network_id: str, profile_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_unprofiled_devices` | `async def get_unprofiled_devices(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_unprofiled_summary` | `async def get_unprofiled_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
 | `get_report_settings` | `async def get_report_settings(self, network_id: str, *, parent=None)` | No query parameters |
 | `set_report_settings` | `async def set_report_settings(self, network_id: str, *, cadence: str, notification_day: str, parent=None)` | `PUT` with a JSON body. **Unverified write** — read `get_report_settings` first, write only when the stored values differ, never retry |
 

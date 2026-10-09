@@ -199,7 +199,7 @@ This exists because the Eero Cloud API rate-limits non-mobile clients more aggre
 
 `MAX_RESPONSE_BYTES` (10 MiB, `src/eero/const.py`) caps how much of a response body the SDK will buffer into memory. Streamed responses exceeding this are aborted mid-read and raised as `EeroAPIException` — a guard against unbounded memory consumption from a hostile or misbehaving upstream, not a rate-limit mechanism.
 
-Request timeouts are hardcoded in `BaseAPI._request()` and are not configurable via `EeroClient`. See [Configuration](Configuration) for the exact values and how they interact with `EeroTimeoutException`.
+The default request timeout is set in `BaseAPI._request()` and is not configurable via `EeroClient`'s constructor; only the data-usage reads accept a per-call `timeout`. See [Configuration](Configuration) for the exact values and how they interact with `EeroTimeoutException`.
 
 ---
 

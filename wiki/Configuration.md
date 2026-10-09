@@ -58,7 +58,7 @@ client = EeroClient(
 
 The same three keyword-only options exist on `EeroAPI` and `AuthAPI` (and on `BaseAPI` / `AuthenticatedAPI` for anyone composing the transport directly); `EeroClient` forwards them unchanged.
 
-> **Note**: There is no `config_path`, `timeout`, or `session_token` constructor argument. There are no `connect()` / `close()` methods — the async context manager (`async with EeroClient() as client:`) is the only lifecycle API.
+> **Note**: There is no `config_path`, `timeout`, or `session_token` constructor argument. The lifecycle API is the async context manager (`async with EeroClient() as client:`) plus an idempotent `await client.close()` for callers who do not use it. A session the client created is closed on exit and a later `async with` opens a fresh one; a session you pass in is never closed by the SDK.
 
 ---
 
@@ -216,7 +216,7 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 | `total` | 30s | Overall wall-clock budget for the request |
 | `sock_read` | 10s | Max time to wait for any single chunk of the response body (guards against a slow-trickle/"slowloris" upstream even if `total` hasn't elapsed) |
 
-> ⚠️ **Warning:** There is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`; the only way to change it is a per-call `timeout=` kwarg on the `BaseAPI` transport methods, which `EeroClient` does not expose. A request that exceeds either bound raises `EeroTimeoutException`.
+> ⚠️ **Warning:** There is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`. The default can be replaced per call: the `BaseAPI` transport methods accept a `timeout=` kwarg, and every data-usage read (`get_data_usage` and the other `get_*data_usage*` methods on `EeroClient`, and the matching `DataUsageAPI` reads) takes a keyword-only `timeout`. Other `EeroClient` methods do not expose it. A request that exceeds either bound raises `EeroTimeoutException`.
 
 ---
 
