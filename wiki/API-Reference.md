@@ -38,7 +38,9 @@ shaped `{"meta": {...}, "data": {...}}` unless noted otherwise. See [Raw Respons
 
 - **Resource arguments are polymorphic.** Every `network_id` / `eero_id` / `mac` / `profile` /
   `forward` / `reservation` / `invite_id` argument accepts a bare ID, the resource's API path,
-  or an absolute API-host URL. See [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
+  or an absolute API-host URL. A path or URL must name exactly one resource of the family the
+  method addresses (no other family, extra components, query, fragment, `.`/`..` segment or
+  control character). See [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
 - **`parent=`** is a keyword-only, read-only envelope on every domain method. The "Parent"
   note in each table says which envelope the method uses it for (network / eero / device /
   profile / guest network) and which link it reads. "unused" means the argument is accepted
@@ -520,7 +522,7 @@ the package root.
 | `join_api_path` | `join_api_path(path: str) -> str` | `API_HOST` + host-relative path; version prefix preserved; `EeroValidationException` on empty/non-string |
 | `resolve_link` | `resolve_link(parent: Envelope, name: str) -> Optional[str]` | `parent["resources"][name]` (full envelope or `data` object) joined onto the host; `None` when absent |
 | `self_url` | `self_url(parent: Envelope) -> Optional[str]` | The envelope's own `url` joined onto the host |
-| `resource_url` | `resource_url(id_or_url: str, template: str, *, version: str=API_VERSION_DEFAULT) -> str` | Bare ID → `template` (exactly one `{id}`) on `version`; path → joined, suffix after `{id}` appended; absolute URL → validated (API host + scheme only), suffix appended |
+| `resource_url` | `resource_url(id_or_url: str, template: str, *, version: str=API_VERSION_DEFAULT) -> str` | Bare ID → `template` (exactly one `{id}`) on `version`; path → joined, suffix after `{id}` appended; absolute URL → validated (API host + scheme), suffix appended. A path or URL must be exactly `/<version>/<family>/<id>` for the template's family (the text before `{id}`); otherwise `EeroValidationException` |
 | `sub_resource_url` | `sub_resource_url(id_or_url: str, template: str, *, link: str, parent: Optional[Envelope]=None, version: str=API_VERSION_DEFAULT) -> str` | `resolve_link(parent, link)` if it yields a URL, else `resource_url(...)` |
 | `Envelope` | `Dict[str, Any]` | Type alias |
 
