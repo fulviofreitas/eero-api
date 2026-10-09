@@ -14,7 +14,7 @@ link the API published on it is used instead of a locally-built template.
 from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
@@ -335,9 +335,14 @@ class NetworksAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
+            EeroValidationException: If password is not a non-empty string
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
+        # Form encoding can turn None or another non-string value into a
+        # password the caller never intended. Reject it before any request.
+        if not isinstance(password, str) or not password:
+            raise EeroValidationException("password", "must be a non-empty string")
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
@@ -500,9 +505,14 @@ class NetworksAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
+            EeroValidationException: If password is not a non-empty string
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
+        # Form encoding can turn None or another non-string value into a
+        # password the caller never intended. Reject it before any request.
+        if not isinstance(password, str) or not password:
+            raise EeroValidationException("password", "must be a non-empty string")
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
