@@ -3,6 +3,7 @@
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from eero.api.data_usage import DataUsageAPI
@@ -300,6 +301,63 @@ class TestDataUsageAPIRequiredCadenceFamily:
         with pytest.raises(EeroValidationException):
             await method("network_123", "", start=START, end=END, cadence="daily")
         mock_session.request.assert_not_called()
+
+
+_TIMEOUT_READS = [
+    ("get_data_usage", (), {"cadence": "daily"}),
+    ("get_breakdown", (), {}),
+    ("get_devices_usage", (), {}),
+    ("get_device_usage", ("device_mac_aa",), {"cadence": "daily"}),
+    ("get_eeros_summary", (), {"cadence": "daily"}),
+    ("get_eero_usage", ("eero_1",), {"cadence": "daily"}),
+    ("get_profile_usage", ("profile_1",), {"cadence": "daily"}),
+    ("get_unprofiled_devices", (), {}),
+    ("get_unprofiled_summary", (), {"cadence": "daily"}),
+]
+
+
+class TestDataUsageAPITimeout:
+    """Tests for the optional per-call timeout on the time-windowed reads."""
+
+    @pytest.mark.parametrize(("method", "positional", "extra"), _TIMEOUT_READS)
+    @pytest.mark.asyncio
+    async def test_timeout_forwarded_only_when_supplied(
+        self, data_usage_api, method, positional, extra
+    ):
+        """Test the timeout reaches ``get`` when supplied and is absent otherwise."""
+        data_usage_api.get = AsyncMock(return_value=api_success_response({}))
+        timeout = aiohttp.ClientTimeout(total=120, sock_read=60)
+        read = getattr(data_usage_api, method)
+
+        await read("network_123", *positional, start=START, end=END, timeout=timeout, **extra)
+        await read("network_123", *positional, start=START, end=END, **extra)
+
+        supplied, default = data_usage_api.get.call_args_list
+        assert supplied.kwargs["timeout"] is timeout
+        assert "timeout" not in default.kwargs
+
+    @pytest.mark.asyncio
+    async def test_supplied_timeout_replaces_the_transport_default(
+        self, data_usage_api, mock_session
+    ):
+        """Test the supplied timeout is what the session receives for that request."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        timeout = aiohttp.ClientTimeout(total=120, sock_read=60)
+
+        await data_usage_api.get_breakdown("network_123", start=START, end=END, timeout=timeout)
+
+        assert mock_session.request.call_args.kwargs["timeout"] is timeout
+
+    @pytest.mark.asyncio
+    async def test_default_transport_timeout_unchanged(self, data_usage_api, mock_session):
+        """Test omitting the timeout leaves the transport default in force."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await data_usage_api.get_breakdown("network_123", start=START, end=END)
+
+        assert mock_session.request.call_args.kwargs["timeout"] == aiohttp.ClientTimeout(
+            total=30, sock_read=10
+        )
 
 
 class TestDataUsageAPIReportSettings:

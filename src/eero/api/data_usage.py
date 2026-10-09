@@ -12,6 +12,8 @@ endpoints accept a request body; the API rejects a body-bearing GET with a 400.
 
 from typing import Any, Dict, Mapping, Optional
 
+from aiohttp import ClientTimeout
+
 from ..const import API_ENDPOINT
 from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
@@ -106,6 +108,7 @@ class DataUsageAPI(AuthenticatedAPI):
         extra_params: Optional[Dict[str, str]] = None,
         cadence_required: bool = False,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Issue a single data-usage GET, shared by every read in this module.
 
@@ -125,6 +128,9 @@ class DataUsageAPI(AuthenticatedAPI):
             parent: The cached network envelope, if the caller has one.
                 Preferred over ``network`` to resolve the base URL when
                 supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` forwarded to the
+                request; when ``None`` it is not passed, so the transport default
+                (total 30 s, 10 s socket read) applies.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -150,7 +156,8 @@ class DataUsageAPI(AuthenticatedAPI):
         base_url = resolve_network_url(network, parent)
         url = f"{base_url}/data_usage/{path}" if path else f"{base_url}/data_usage"
         _LOGGER.debug("Getting data usage (%s) for network %s", path or "root", network)
-        return await self.get(url, auth_token=auth_token, params=params)
+        request_kwargs: Dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        return await self.get(url, auth_token=auth_token, params=params, **request_kwargs)
 
     async def get_data_usage(
         self,
@@ -161,6 +168,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get network-level data usage - returns raw Eero API response.
 
@@ -176,6 +184,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name applied to the bucketing.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -193,6 +204,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 
@@ -205,6 +217,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a data usage breakdown - returns raw Eero API response.
 
@@ -216,6 +229,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -233,6 +249,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
         )
 
     async def get_devices_usage(
@@ -245,6 +262,7 @@ class DataUsageAPI(AuthenticatedAPI):
         timezone: Optional[str] = None,
         profile_id: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get per-device data usage - returns raw Eero API response.
 
@@ -256,6 +274,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
             profile_id: Optional profile ID to scope the results to devices
                 on a single profile. Omitted from the request when ``None``.
 
@@ -276,6 +297,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             extra_params=extra_params,
         )
 
@@ -289,6 +311,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single device - returns raw Eero API response.
 
@@ -304,6 +327,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -321,6 +347,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 
@@ -333,6 +360,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage across all Eero devices - returns raw Eero API response.
 
@@ -347,6 +375,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -364,6 +395,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 
@@ -377,6 +409,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single Eero device - returns raw Eero API response.
 
@@ -392,6 +425,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -409,6 +445,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 
@@ -422,6 +459,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single profile - returns raw Eero API response.
 
@@ -437,6 +475,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -454,6 +495,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 
@@ -466,6 +508,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for devices not assigned to a profile - returns raw Eero API response.
 
@@ -477,6 +520,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 Omitted from the request when ``None``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -494,6 +540,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
         )
 
     async def get_unprofiled_summary(
@@ -505,6 +552,7 @@ class DataUsageAPI(AuthenticatedAPI):
         cadence: str,
         timezone: Optional[str] = None,
         parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage for unprofiled devices - returns raw Eero API response.
 
@@ -519,6 +567,9 @@ class DataUsageAPI(AuthenticatedAPI):
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
             parent: The cached network envelope, if the caller has one. Preferred over `network_id` to resolve the base URL when supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -536,6 +587,7 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence=cadence,
             timezone=timezone,
             parent=parent,
+            timeout=timeout,
             cadence_required=True,
         )
 

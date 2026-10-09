@@ -12,6 +12,7 @@ import time
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from eero.api import EeroAPI
@@ -846,7 +847,12 @@ class TestEeroClientDataUsage:
 
         assert result == {"meta": {"code": 200}, "data": {}}
         client._api.data_usage.get_data_usage.assert_called_once_with(
-            "network_123", start=self.START, end=self.END, cadence="daily", timezone=None
+            "network_123",
+            start=self.START,
+            end=self.END,
+            cadence="daily",
+            timezone=None,
+            timeout=None,
         )
 
     @pytest.mark.asyncio
@@ -863,6 +869,7 @@ class TestEeroClientDataUsage:
             end=self.END,
             cadence="hourly",
             timezone=None,
+            timeout=None,
         )
 
     @pytest.mark.asyncio
@@ -871,7 +878,13 @@ class TestEeroClientDataUsage:
         await client.get_eero_data_usage("eero_1", start=self.START, end=self.END, cadence="daily")
 
         client._api.data_usage.get_eero_usage.assert_called_once_with(
-            "network_123", "eero_1", start=self.START, end=self.END, cadence="daily", timezone=None
+            "network_123",
+            "eero_1",
+            start=self.START,
+            end=self.END,
+            cadence="daily",
+            timezone=None,
+            timeout=None,
         )
 
     @pytest.mark.asyncio
@@ -888,6 +901,7 @@ class TestEeroClientDataUsage:
             end=self.END,
             cadence="daily",
             timezone=None,
+            timeout=None,
         )
 
     @pytest.mark.asyncio
@@ -904,7 +918,50 @@ class TestEeroClientDataUsage:
             cadence=None,
             timezone=None,
             profile_id="profile_abc",
+            timeout=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_get_data_usage_forwards_supplied_timeout(self, client):
+        """Test a supplied per-call timeout reaches the domain call unchanged."""
+        timeout = aiohttp.ClientTimeout(total=120, sock_read=60)
+
+        await client.get_data_usage(
+            start=self.START, end=self.END, cadence="daily", timeout=timeout
+        )
+
+        forwarded = client._api.data_usage.get_data_usage.call_args.kwargs["timeout"]
+        assert forwarded is timeout
+
+    @pytest.mark.parametrize(
+        ("method", "domain_method", "positional"),
+        [
+            ("get_data_usage", "get_data_usage", ()),
+            ("get_data_usage_breakdown", "get_breakdown", ()),
+            ("get_devices_data_usage", "get_devices_usage", ()),
+            ("get_device_data_usage", "get_device_usage", ("device_mac_aa",)),
+            ("get_eeros_data_usage_summary", "get_eeros_summary", ()),
+            ("get_eero_data_usage", "get_eero_usage", ("eero_1",)),
+            ("get_profile_data_usage", "get_profile_usage", ("profile_1",)),
+            ("get_unprofiled_devices_data_usage", "get_unprofiled_devices", ()),
+            ("get_unprofiled_data_usage_summary", "get_unprofiled_summary", ()),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_every_data_usage_read_threads_the_timeout(
+        self, client, method, domain_method, positional
+    ):
+        """Test each wrapper forwards the timeout it is given, and None by default."""
+        timeout = aiohttp.ClientTimeout(total=120)
+        read = getattr(client, method)
+        domain_call = getattr(client._api.data_usage, domain_method)
+
+        await read(*positional, start=self.START, end=self.END, cadence="daily", timeout=timeout)
+        await read(*positional, start=self.START, end=self.END, cadence="daily")
+
+        supplied, default = domain_call.call_args_list
+        assert supplied.kwargs["timeout"] is timeout
+        assert default.kwargs["timeout"] is None
 
     @pytest.mark.asyncio
     async def test_data_usage_reads_are_not_cached(self, client):
