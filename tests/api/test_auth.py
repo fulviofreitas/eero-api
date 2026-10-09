@@ -183,8 +183,10 @@ class TestAuthAPILogin:
         assert api_with_session._credentials.session_id == "ut_login_token_12345"
 
     @pytest.mark.asyncio
-    async def test_login_clears_previous_tokens(self, api_with_session, mock_session):
-        """Test that login clears previous authentication data."""
+    async def test_login_replaces_in_memory_session_with_pending_token(
+        self, api_with_session, mock_session
+    ):
+        """Test that a successful login holds the pending token in place of the old session."""
         api_with_session._credentials.session_id = "old_session"
 
         mock_session.request.return_value = create_mock_response(
@@ -274,6 +276,113 @@ class TestAuthAPILogin:
 
         with pytest.raises(EeroNetworkException):
             await api_with_session.login("user@example.test")
+
+
+# ========================== Login Session Preservation Tests ==========================
+
+
+class TestLoginPreservesStoredSessionUntilVerified:
+    """A login attempt must not replace the stored session before verify() succeeds."""
+
+    @pytest.fixture
+    def stored_session(self, mock_session, valid_session_data, tmp_path):
+        """An AuthAPI holding a verified session that is also persisted to a credential file."""
+        cookie_file = tmp_path / "cookies.json"
+        cookie_file.write_text(json.dumps(valid_session_data))
+        api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=False)
+        api._session = mock_session
+        api._credentials.session_id = valid_session_data["session_id"]
+        return api, cookie_file
+
+    @staticmethod
+    def _assert_session_untouched(api, cookie_file, stored_bytes, valid_session_data):
+        """The credential file is byte-identical and the verified session is still in memory."""
+        assert cookie_file.read_bytes() == stored_bytes
+        assert api._credentials.session_id == valid_session_data["session_id"]
+        assert api._login_in_progress is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("outcome", "expected"),
+        [
+            pytest.param(aiohttp.ClientConnectionError("boom"), EeroNetworkException, id="network"),
+            pytest.param(
+                create_mock_response(400, api_error_response(400, "invalid.identifier")),
+                EeroAuthenticationException,
+                id="api-rejection",
+            ),
+            pytest.param(asyncio.CancelledError(), asyncio.CancelledError, id="cancelled"),
+        ],
+    )
+    async def test_failed_login_keeps_memory_and_stored_session(
+        self, stored_session, mock_session, valid_session_data, outcome, expected
+    ):
+        """A login that raises leaves both the stored and the in-memory session intact."""
+        api, cookie_file = stored_session
+        stored_bytes = cookie_file.read_bytes()
+        mock_session.request.side_effect = [outcome]
+
+        with pytest.raises(expected):
+            await api.login("user@example.test")
+
+        self._assert_session_untouched(api, cookie_file, stored_bytes, valid_session_data)
+
+    @pytest.mark.asyncio
+    async def test_tokenless_login_keeps_memory_and_stored_session(
+        self, stored_session, mock_session, valid_session_data
+    ):
+        """A 200 without a user_token returns False and leaves the verified session intact."""
+        api, cookie_file = stored_session
+        stored_bytes = cookie_file.read_bytes()
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        assert await api.login("user@example.test") is False
+
+        self._assert_session_untouched(api, cookie_file, stored_bytes, valid_session_data)
+
+    @pytest.mark.asyncio
+    async def test_pending_login_is_never_persisted(
+        self, stored_session, mock_session, valid_session_data
+    ):
+        """An abandoned login leaves the stored session loadable by another process."""
+        api, cookie_file = stored_session
+        stored_bytes = cookie_file.read_bytes()
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"user_token": "pending_token"})
+        )
+
+        assert await api.login("user@example.test") is True
+
+        assert api._credentials.session_id == "pending_token"
+        assert api._login_in_progress is True
+        assert cookie_file.read_bytes() == stored_bytes
+        loaded = await FileStorage(str(cookie_file)).load()
+        assert loaded.session_id == valid_session_data["session_id"]
+
+    @pytest.mark.asyncio
+    async def test_only_successful_verification_replaces_stored_session(
+        self, stored_session, mock_session
+    ):
+        """A wrong code leaves the file untouched; the right code persists the pending token."""
+        api, cookie_file = stored_session
+        stored_bytes = cookie_file.read_bytes()
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"user_token": "pending_token"})
+        )
+        await api.login("user@example.test")
+
+        mock_session.request.return_value = create_mock_response(
+            401, api_error_response(401, "verification.invalid")
+        )
+        with pytest.raises(EeroAuthenticationException):
+            await api.verify("000000")
+        assert cookie_file.read_bytes() == stored_bytes
+
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        assert await api.verify("123456") is True
+
+        assert (await FileStorage(str(cookie_file)).load()).session_id == "pending_token"
+        assert api._login_in_progress is False
 
 
 # ========================== Verify Tests ==========================
