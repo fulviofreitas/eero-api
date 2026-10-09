@@ -527,6 +527,26 @@ class EeroClient:
         self._update_cache("network", network_id, response)
         return response
 
+    async def get_clients(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Read client inventory, including addresses and hostnames; return the raw API envelope.
+
+        Uses the preferred network, discovering one if necessary, when no ID
+        is supplied. Every call reads the service rather than caching a
+        snapshot of changing network state.
+        """
+        network_id = await self._ensure_network_id(network_id)
+        return await self._api.networks.get_clients(network_id)
+
+    async def get_network_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Read network health and online/offline node counts; return the raw API envelope.
+
+        Uses the preferred network, discovering one if necessary, when no ID
+        is supplied. Every call reads the service rather than caching a
+        snapshot of changing network state.
+        """
+        network_id = await self._ensure_network_id(network_id)
+        return await self._api.networks.get_status(network_id)
+
     async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get premium status - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)

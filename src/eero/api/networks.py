@@ -119,6 +119,44 @@ class NetworksAPI(AuthenticatedAPI):
             _network_own_url(network_id, as_envelope(parent)), auth_token=auth_token
         )
 
+    async def get_clients(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Get the network's client inventory as a raw API response.
+
+        Accepts a bare ID, API path, or absolute API URL. These read endpoints
+        are not advertised in the network's resource links, so the URL is
+        derived from network_id. The optional parent is accepted for API
+        consistency and is never mutated or used to select a different route.
+        Authentication and API errors propagate to the caller.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        return await self.get(
+            resource_url(network_id, "networks/{id}/clients"), auth_token=auth_token
+        )
+
+    async def get_status(
+        self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Get the network's health and node-count summary as a raw API response.
+
+        Accepts a bare ID, API path, or absolute API URL. These read endpoints
+        are not advertised in the network's resource links, so the URL is
+        derived from network_id. The optional parent is accepted for API
+        consistency and is never mutated or used to select a different route.
+        Authentication and API errors propagate to the caller.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        return await self.get(
+            resource_url(network_id, "networks/{id}/status"), auth_token=auth_token
+        )
+
     async def get_premium_status(
         self, network_id: str, *, parent: Optional[Mapping[str, Any]] = None
     ) -> Dict[str, Any]:
