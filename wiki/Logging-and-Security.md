@@ -46,17 +46,20 @@ own set never share or overwrite each other's regex. Combine the two with
 
 ## `SecureLoggerAdapter`
 
-`SecureLoggerAdapter(logger, extra=None, sensitive_patterns=DEFAULT_SENSITIVE_PATTERNS, visible_chars=4)` wraps a standard `logging.Logger` and overrides `debug()`, `info()`, `warning()`, `error()`, `critical()`, and `exception()`. Each override:
+`SecureLoggerAdapter(logger, extra=None, sensitive_patterns=DEFAULT_SENSITIVE_PATTERNS, visible_chars=4)` wraps a standard `logging.Logger`. It overrides `log()`, and `debug()`, `info()`, `warning()`, `error()`, `critical()` and `exception()` all funnel through it, so every route into the adapter shares one redaction path. For each call it:
 
-1. Redacts sensitive data in the `extra` kwarg (if it's a dict) via `process()`.
-2. Redacts every positional format argument via `redact_sensitive()` before handing off to the underlying `logging.Logger.log()`.
+1. Checks `isEnabledFor(level)` **first**. A disabled level returns immediately: nothing is redacted, nothing is formatted, and no argument can make the call raise.
+2. Redacts the message object and every positional format argument via `redact_sensitive()`.
+3. Merges the adapter's own `extra` context with the call's `extra=` (the call's keys win) and redacts the result, so the values land on the log record as redacted attributes.
+4. Hands the redacted values to the underlying `logging.Logger.log()`.
 
 ```python
 logger = get_secure_logger(__name__)
 logger.warning("Auth cookie: %s", {"session_id": "abc123xyz"}, extra={"api_key": "topsecret"})
+logger.log(logging.INFO, "Rows: %s", [{"token": "abc"}], extra={"secret": "x"})
 ```
 
-Both the positional dict argument and the `extra` dict are redacted independently before the record is emitted.
+The positional argument and the `extra` dict are both redacted before the record is emitted, whether the call goes through a level method or `log()`. The objects you pass in are never modified.
 
 ---
 
@@ -71,9 +74,11 @@ redact_sensitive({"password": "hunter2", "username": "alice"})
 
 Behavior, verified against `src/eero/logging.py`:
 
-- Only **dicts** are inspected. A bare string or other non-dict value is returned **unchanged** — `redact_sensitive("s=abc123")` does **not** redact anything, because there's no key to match against. Sensitive values must be inside a dict to be caught.
-- Matching is a **case-insensitive substring search** (`re.search`, not an exact-match), so a key merely *containing* one of the patterns is redacted — e.g. `access_key_id` matches on `key`, `X-Api-Key` matches on `api_key`/`key`.
-- Redaction recurses into nested dicts and into lists of dicts (a list of non-dict items is left as-is).
+- **Mappings, lists and tuples** are inspected, in any combination and nesting: a top-level list of dicts, a tuple inside a dict, a list inside a list inside a dict. A bare string or other non-container value is returned **unchanged** — `redact_sensitive("s=abc123")` does **not** redact anything, because there's no key to match against. Sensitive values must sit under a key to be caught.
+- The result is always a **new** structure; the argument is never mutated. A mapping comes back as a plain `dict` (keys unchanged), a `list` stays a `list`, a `tuple` stays a `tuple`.
+- Matching is a **case-insensitive substring search** (`re.search`, not an exact-match) on `str(key)`, so a key merely *containing* one of the patterns is redacted — e.g. `access_key_id` matches on `key`, `X-Api-Key` matches on `api_key`/`key`. Non-string keys (`1`, `("a", "token")`, `None`) never raise; they are matched by their text form and kept as the original key objects.
+- When a key matches, its whole value is replaced by the redacted form below, whatever the value's type.
+- Recursion stops at 16 levels of nesting and at any reference cycle (a container that contains itself, directly or through other containers). The offending container is replaced by the fixed text `[REDACTED:cyclic-or-too-deep]` instead of raising `RecursionError`, so nothing below the cap can leak. A container that is merely referenced twice (no cycle) is redacted normally both times.
 
 ### The exact redacted field-name patterns (`DEFAULT_SENSITIVE_PATTERNS`)
 
@@ -185,6 +190,7 @@ Verified in `src/eero/api/base.py` and `src/eero/const.py`:
 | 🔁 Redirects | Never followed — `allow_redirects=False` is forced on every request and cannot be re-enabled (`allow_redirects=True` raises `EeroValidationException`); any `3xx` response is rejected as an `EeroAPIException` rather than letting the token travel to a different host |
 | 📏 Response size cap | `MAX_RESPONSE_BYTES = 10 * 1024 * 1024` (10 MiB) — the body is streamed in 64 KiB chunks and the request is aborted with `EeroAPIException` if the cap is exceeded |
 | 🙈 Error bodies | The raw text of an error response is never embedded in an exception message or log line. The exception message is the recognised `meta.error` catalogue string (trimmed, lowercased) or the fixed label `unrecognised error string`; `EeroAPIException` and its subclasses prefix it with `API error <status>: `, while `EeroAuthenticationException` (all 401s), `EeroRateLimitException` and API-reported `EeroValidationException` carry no status in the message at all. `meta.code`, the raw body and the URL are never embedded (a byte count appears only for a 2xx whose body is not valid JSON). Read `err.envelope` / `err.error_code` / `err.status_code` for details; the parsed envelope is logged only through the secure logger |
+| 🧾 URLs in logs | The request URL (which carries network, device and eero identifiers) is logged only at `DEBUG` (`Request: …`, `Resource not found at …`, `Request to … timed out`, `Network error: … for URL: …`, `Retrying GET …`). The `ERROR` lines for a timeout or a network failure carry just the HTTP method (and, for a network failure, the exception type), and the `WARNING` for a GET retry carries just the attempt count. `tests/api/test_log_hygiene.py` fails if an identifier appears in any `eero.api.base` record above `DEBUG` |
 | 🔒 HTTPS only | `API_HOST = "https://api-user.e2ro.com"`; `API_ENDPOINT = api_endpoint("2.2")`; device writes (`DEVICE_UPDATE_ENDPOINT`), multi-static-IP and secondary-WAN use `api_endpoint("2.3")` (see [API Reference](API-Reference#constants)) — HTTPS-only hardcoded hosts; there is no HTTP fallback |
 
 See [Error Handling](Error-Handling#http-status--exception-mapping) for the full status-to-exception mapping these behaviors feed into.
@@ -194,6 +200,8 @@ See [Error Handling](Error-Handling#http-status--exception-mapping) for the full
 ## Credential Storage
 
 Session tokens are persisted at rest via `KeyringStorage` (OS keyring), `FileStorage` (owner-only `0600` JSON file), `MemoryStorage`, or `ChainedStorage` combining the two — selected by the `use_keyring` / `cookie_file` arguments on `EeroClient`. See [Credential Storage](Credential-Storage) for the full backend selection logic.
+
+`AuthCredentials` (the record every backend loads and saves) leaves `session_id` out of its `repr()`, so printing, f-string formatting or a traceback that shows the record never exposes the token. Equality and `to_dict()` / `from_dict()` still include it.
 
 ---
 
