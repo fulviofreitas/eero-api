@@ -128,6 +128,30 @@ def api_error_response(code: int, error: str, message: Optional[str] = None) -> 
     }
 
 
+# ==================== Password Validation Parameters ====================
+
+# Values the Wi-Fi password setters must reject before any request.
+INVALID_PASSWORDS = [
+    pytest.param(None, id="none"),
+    pytest.param("", id="empty"),
+    pytest.param(False, id="bool"),
+    pytest.param(0, id="zero"),
+    pytest.param(123, id="number"),
+    pytest.param(b"bytes-password", id="bytes"),
+    pytest.param([], id="list"),
+    pytest.param({}, id="dict"),
+]
+
+# Strings the setters must forward unchanged, including the literal "None".
+VALID_PASSWORDS = ["ordinary-password", "  preserve spaces  ", "None"]
+
+# Setter method name paired with its resource path under the network.
+PASSWORD_WRITES = [
+    ("set_network_password", "password"),
+    ("set_guest_password", "guestnetwork/password"),
+]
+
+
 # ==================== Sample Data Fixtures ====================
 
 
