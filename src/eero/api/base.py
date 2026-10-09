@@ -509,7 +509,9 @@ class BaseAPI:
                 is unavailable, on any HTTP status.
             EeroClientBlockedException: If the API rejects this client
                 version, on any HTTP status.
-            EeroAPIException: If the API returns any other error.
+            EeroAPIException: If the API returns any other error, or a 2xx
+                response whose body is not valid UTF-8, not valid JSON, or
+                valid JSON that is not an object.
             EeroRateLimitException: If rate limited (HTTP 429, or a
                 recognised rate-limit error on another status).
             EeroNetworkException: If there's a network error.
@@ -612,28 +614,56 @@ class BaseAPI:
                     chunks.append(chunk)
                 raw_bytes = b"".join(chunks)
 
-                response_text = raw_bytes.decode("utf-8")
+                is_success = 200 <= response.status < 300
+                try:
+                    response_text = raw_bytes.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    if is_success:
+                        # A success body that cannot be decoded is an invalid
+                        # response. Only its size is logged -- never its
+                        # content, and not the decoder's message either, which
+                        # quotes an offending byte.
+                        _LOGGER.error("Undecodable response body (%s bytes)", len(raw_bytes))
+                        raise EeroAPIException(
+                            response.status, "Response body is not valid UTF-8"
+                        ) from e
+                    # An error body only feeds the best-effort envelope parse
+                    # and the debug log, so replacement characters are
+                    # harmless and the status mapping below still applies.
+                    response_text = raw_bytes.decode("utf-8", errors="replace")
 
                 # All 2xx status codes are success responses
-                if 200 <= response.status < 300:
+                if is_success:
                     # 204 No Content has no body
                     if response.status == 204 or not response_text.strip():
                         return {}
                     try:
-                        return json.loads(response_text)
+                        payload = json.loads(response_text)
                     except (ValueError, RecursionError) as e:
                         # JSONDecodeError (a ValueError) for malformed bodies;
                         # RecursionError for pathologically nested ones.
                         _LOGGER.error(
                             "Error parsing JSON response (%s bytes): %s",
-                            len(response_text.encode("utf-8")),
+                            len(raw_bytes),
                             e,
                         )
                         raise EeroAPIException(
                             response.status,
-                            f"Invalid JSON response "
-                            f"({len(response_text.encode('utf-8'))} bytes)",
+                            f"Invalid JSON response ({len(raw_bytes)} bytes)",
                         ) from e
+                    if not isinstance(payload, dict):
+                        # Every SDK method returns the response envelope, which
+                        # is a JSON object; a list, string, number or null is
+                        # not a response this SDK can hand back as one.
+                        _LOGGER.error(
+                            "Unexpected %s in JSON response (%s bytes)",
+                            type(payload).__name__,
+                            len(raw_bytes),
+                        )
+                        raise EeroAPIException(
+                            response.status, "Unexpected JSON response: expected an object"
+                        )
+                    return payload
 
                 envelope = _parse_envelope(response_text)
                 error_code = _error_code_from_envelope(envelope)

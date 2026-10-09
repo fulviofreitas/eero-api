@@ -453,6 +453,125 @@ class TestBaseAPIErrorHandling:
         # Either way the decoder error must be chained, never escape.
         assert isinstance(exc_info.value.__cause__, (RecursionError, json.JSONDecodeError))
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            (401, EeroAuthenticationException),
+            (404, EeroNotFoundException),
+            (429, EeroRateLimitException),
+            (500, EeroAPIException),
+            (502, EeroAPIException),
+        ],
+    )
+    async def test_undecodable_error_body_maps_to_status_exception(
+        self, api_with_session, mock_session, status, expected
+    ):
+        """A non-UTF-8 error body never escapes as UnicodeDecodeError.
+
+        The body is decoded with replacement characters, so the ordinary
+        status mapping still applies and the raised class is the one the
+        status selects.
+        """
+        mock_session.request.return_value = create_mock_response(status, body_bytes=b"\xff\xfe")
+
+        with pytest.raises(expected) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is expected
+        assert exc_info.value.envelope is None
+        if isinstance(exc_info.value, EeroAPIException):
+            assert exc_info.value.status_code == status
+
+    @pytest.mark.asyncio
+    async def test_undecodable_error_body_keeps_envelope_around_bad_bytes(
+        self, api_with_session, mock_session
+    ):
+        """An error envelope with a stray invalid byte inside a string still parses."""
+        body = b'{"meta": {"code": 502, "error": "x\xff"}}'
+        mock_session.request.return_value = create_mock_response(502, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.envelope == {"meta": {"code": 502, "error": "x\ufffd"}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [200, 201])
+    async def test_undecodable_success_body_raises_api_exception(
+        self, api_with_session, mock_session, status
+    ):
+        """A non-UTF-8 2xx body is an invalid response, not a bare UnicodeDecodeError."""
+        mock_session.request.return_value = create_mock_response(
+            status, body_bytes=b'{"data": "\xff\xfe"}'
+        )
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is EeroAPIException
+        assert exc_info.value.status_code == status
+        assert str(exc_info.value) == f"API error {status}: Response body is not valid UTF-8"
+        assert "\\xff" not in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [b"[]", b"[1, 2]", b'"text"', b"42", b"1.5", b"true", b"null"],
+    )
+    @pytest.mark.parametrize("status", [200, 201])
+    async def test_non_object_success_body_raises_api_exception(
+        self, api_with_session, mock_session, status, body
+    ):
+        """A 2xx whose body is valid JSON but not an object is an invalid response."""
+        mock_session.request.return_value = create_mock_response(status, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is EeroAPIException
+        assert exc_info.value.status_code == status
+        assert (
+            str(exc_info.value)
+            == f"API error {status}: Unexpected JSON response: expected an object"
+        )
+        assert exc_info.value.envelope is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["post", "put", "delete"])
+    async def test_non_object_success_body_raises_on_write_methods(
+        self, api_with_session, mock_session, method
+    ):
+        """The non-object check applies to every verb, and a write is attempted once."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=b"[]")
+
+        with pytest.raises(EeroAPIException):
+            await getattr(api_with_session, method)("/endpoint")
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [b"", b"  \n"])
+    async def test_empty_success_body_still_returns_empty_dict(
+        self, api_with_session, mock_session, body
+    ):
+        """An empty or whitespace-only 2xx body is not a non-object body."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        assert await api_with_session.get("/endpoint") == {}
+
+    @pytest.mark.asyncio
+    async def test_object_success_body_is_returned_unmodified(self, api_with_session, mock_session):
+        """A JSON object body is handed back as the parsed envelope, untouched."""
+        envelope = {"meta": {"code": 200}, "data": [1, "two", None], "extra": {"k": []}}
+        mock_session.request.return_value = create_mock_response(
+            200, body_bytes=json.dumps(envelope).encode("utf-8")
+        )
+
+        assert await api_with_session.get("/endpoint") == envelope
+
 
 class TestParseEnvelope:
     """Tests for the module-level `_parse_envelope` helper."""

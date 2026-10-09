@@ -28,6 +28,7 @@ from eero.api.auth import AuthAPI
 from eero.api.auth_storage import AuthCredentials, ChainedStorage, FileStorage, KeyringStorage
 from eero.const import CREDENTIAL_SCHEMA_VERSION, DEFAULT_ACCEPT_LANGUAGE
 from eero.exceptions import (
+    EeroAPIException,
     EeroAuthenticationException,
     EeroNetworkException,
     EeroNotFoundException,
@@ -253,6 +254,20 @@ class TestAuthAPILogin:
         assert result is False
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [b"[]", b'"ok"', b"null"])
+    async def test_login_non_object_body_raises_authentication_exception(
+        self, api_with_session, mock_session, body
+    ):
+        """A non-object 2xx login body is a login failure, never an AttributeError."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        with pytest.raises(EeroAuthenticationException, match="Login failed") as exc_info:
+            await api_with_session.login("user@example.test")
+
+        assert isinstance(exc_info.value.__cause__, EeroAPIException)
+        assert api_with_session._credentials.session_id is None
+
+    @pytest.mark.asyncio
     async def test_login_network_error_raises(self, api_with_session, mock_session):
         """Test that a network error during login raises EeroNetworkException."""
         mock_session.request.side_effect = aiohttp.ClientConnectionError("boom")
@@ -307,6 +322,21 @@ class TestAuthAPIVerify:
         assert exc_info.value.envelope is not None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [b"[]", b'"ok"', b"null"])
+    async def test_verify_non_object_body_raises_and_stays_pending(
+        self, api_pending_verification, mock_session, body
+    ):
+        """A non-object 2xx verify body no longer counts as a successful verification."""
+        api_pending_verification._login_in_progress = True
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        with pytest.raises(EeroAuthenticationException, match="Verification failed") as exc_info:
+            await api_pending_verification.verify("123456")
+
+        assert isinstance(exc_info.value.__cause__, EeroAPIException)
+        assert api_pending_verification._login_in_progress is True
+
+    @pytest.mark.asyncio
     async def test_verify_network_error_raises(self, api_pending_verification, mock_session):
         """Test that a network error during verify raises EeroNetworkException."""
         mock_session.request.side_effect = aiohttp.ClientConnectionError("boom")
@@ -346,6 +376,15 @@ class TestAuthAPIResendVerification:
         result = await api_pending_verification.resend_verification_code()
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_resend_non_object_body_returns_false(
+        self, api_pending_verification, mock_session
+    ):
+        """A non-object 2xx resend body is an API-level failure, so it returns False."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=b"[]")
+
+        assert await api_pending_verification.resend_verification_code() is False
 
     @pytest.mark.asyncio
     async def test_resend_network_error_raises(self, api_pending_verification, mock_session):
@@ -400,6 +439,18 @@ class TestAuthAPILogout:
         mock_session.request.return_value = create_mock_response(
             500, api_error_response(500, "server.error")
         )
+
+        result = await authenticated_api.logout()
+
+        assert result is True
+        assert authenticated_api._credentials.session_id is None
+
+    @pytest.mark.asyncio
+    async def test_logout_clears_credentials_on_non_object_body(
+        self, authenticated_api, mock_session
+    ):
+        """A non-object 2xx logout body is a failed server call; local credentials still go."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=b"[]")
 
         result = await authenticated_api.logout()
 
@@ -1010,6 +1061,19 @@ class TestAuthAPISessionRefresh:
         result = await api_with_session.refresh_session()
 
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_refresh_session_non_object_body_returns_false_and_keeps_credentials(
+        self, api_with_session, mock_session
+    ):
+        """A non-object 2xx refresh body is not a successful refresh, and proves nothing about the session."""
+        api_with_session._credentials.session_id = "sess_token"
+        mock_session.request.return_value = create_mock_response(200, body_bytes=b"[]")
+
+        result = await api_with_session.refresh_session()
+
+        assert result is False
+        assert api_with_session._credentials.session_id == "sess_token"
 
     @pytest.mark.asyncio
     async def test_refresh_session_ignores_server_issued_token(
