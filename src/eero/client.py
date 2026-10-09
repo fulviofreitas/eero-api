@@ -149,6 +149,15 @@ class EeroClient:
         later mutation of the object the caller received back from a public
         method can never reach the cached entry. See the cache isolation
         contract in the class docstring.
+
+        Args:
+            cache_key: Top-level cache section to write.
+            subkey: Entry within the section, or None for a section holding a
+                single entry.
+            data: The response to store.
+            epoch: The ``_cache_epoch`` captured before the read that produced
+                ``data``. When given and no longer current, an invalidation
+                overtook the read and nothing is stored.
         """
         # The caller still receives its response, but a read started before an
         # invalidation cannot populate the cache for subsequent callers.
@@ -2684,10 +2693,19 @@ class EeroClient:
 
     # ==================== Account Profile ====================
 
+    def _invalidate_account_cache(self) -> None:
+        """Drop the cached account after a write to it.
+
+        Also advances the cache epoch so an account read already in flight
+        cannot restore the pre-write response.
+        """
+        self._cache_epoch += 1
+        self._cache["account"] = {"data": None, "timestamp": 0}
+
     async def set_account_name(self, name: str) -> Dict[str, Any]:
         """Set the account name - returns raw Eero API response (unverified write)."""
         response = await self._api.account.set_name(name)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_email(self, email: str) -> Dict[str, Any]:
@@ -2697,7 +2715,7 @@ class EeroClient:
     async def verify_account_email(self, code: str) -> Dict[str, Any]:
         """Verify an account e-mail change - returns raw Eero API response (unverified write)."""
         response = await self._api.account.verify_email(code)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_phone(self, phone: str) -> Dict[str, Any]:
@@ -2707,13 +2725,13 @@ class EeroClient:
     async def verify_account_phone(self, code: str) -> Dict[str, Any]:
         """Verify an account phone change - returns raw Eero API response (unverified write)."""
         response = await self._api.account.verify_phone(code)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_consents(self, *, marketing_emails: bool) -> Dict[str, Any]:
         """Set account consents - returns raw Eero API response (unverified write)."""
         response = await self._api.account.set_consents(marketing_emails=marketing_emails)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def get_sms_countries(self) -> Dict[str, Any]:
