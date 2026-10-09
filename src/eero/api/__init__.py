@@ -142,6 +142,14 @@ class EeroAPI:
         """Exit async context manager."""
         await self.auth.__aexit__(exc_type, exc_val, exc_tb)
 
+    async def close(self) -> None:
+        """Release the HTTP session the auth layer created, if any.
+
+        Idempotent; a no-op when there is no owned session. A session passed
+        to the constructor is never closed.
+        """
+        await self.auth.close()
+
     @property
     def is_authenticated(self) -> bool:
         """Check if the client is authenticated."""

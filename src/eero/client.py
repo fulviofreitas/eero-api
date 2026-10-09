@@ -44,6 +44,12 @@ class EeroClient:
     is the value returned directly from a fresh (non-cached) domain-API
     call: that object is handed to the caller exactly as the domain API
     produced it, and only the copy stored in the cache is independent of it.
+
+    Session lifecycle: the client can be used as ``async with EeroClient() as
+    client`` or opened and released manually with ``__aenter__()`` and
+    :meth:`close`. A session the client created is closed and discarded on
+    exit, so the same instance may be entered again and gets a fresh session.
+    A session passed to the constructor is never closed by the client.
     """
 
     def __init__(
@@ -113,6 +119,16 @@ class EeroClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager."""
         await self._api.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def close(self) -> None:
+        """Release the HTTP session this client created, if any.
+
+        For callers that do not use ``async with``. Idempotent: it is a no-op
+        when no session was created (never entered, or already closed) and
+        when the session was supplied by the caller, which is never closed
+        by the SDK.
+        """
+        await self._api.close()
 
     @property
     def is_authenticated(self) -> bool:

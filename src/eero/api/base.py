@@ -311,9 +311,26 @@ class BaseAPI:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit async context manager."""
-        if self._should_close_session and self._session:
-            await self._session.close()
+        """Exit async context manager, releasing an owned session.
+
+        Exceptions raised inside the ``async with`` body are never swallowed.
+        """
+        await self.close()
+
+    async def close(self) -> None:
+        """Close the session this instance created and drop the reference.
+
+        Idempotent: a no-op when there is no session (never entered, or
+        already closed) and when the session was supplied by the caller,
+        which is left open and untouched. After closing, entering the
+        context again creates a fresh session.
+        """
+        if not self._should_close_session:
+            return
+        session, self._session = self._session, None
+        self._should_close_session = False
+        if session is not None:
+            await session.close()
 
     @property
     def user_agent(self) -> str:

@@ -227,6 +227,43 @@ class TestEeroClientContextManager:
         client._api.__aenter__.assert_awaited_once()
         client._api.__aexit__.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_close_delegates_to_api(self, mock_session):
+        """``close()`` is delegated to the API facade."""
+        client = EeroClient(session=mock_session, use_keyring=False)
+        client._api.close = AsyncMock()
+
+        await client.close()
+
+        client._api.close.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent_and_safe_before_entry(self, mock_session):
+        """``close()`` works before entry and never closes a caller-supplied session."""
+        client = EeroClient(session=mock_session, use_keyring=False)
+
+        await client.close()
+        async with client:
+            pass
+        await client.close()
+
+        mock_session.close.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_client_can_be_entered_again_after_exit(self):
+        """A client that created its own session reopens with a fresh one."""
+        client = EeroClient(use_keyring=False)
+
+        async with client:
+            first = client._api.auth.session
+        assert first.closed
+
+        async with client:
+            second = client._api.auth.session
+            assert second is not first
+            assert not second.closed
+        assert second.closed
+
 
 class TestEeroClientEnsureNetworkId:
     """Tests for _ensure_network_id method."""
