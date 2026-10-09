@@ -753,10 +753,16 @@ class BaseAPI:
                         error_code=error_code,
                     )
         except asyncio.TimeoutError as err:
-            _LOGGER.error("Request to %s timed out", url)
+            # The URL (which carries network, device and eero identifiers) is
+            # only ever logged at DEBUG, never on the ERROR line.
+            _LOGGER.error("Request timed out on %s request", method)
+            _LOGGER.debug("Request to %s timed out", url)
             raise EeroTimeoutException("Request timed out") from err
         except aiohttp.ClientError as err:
-            _LOGGER.error("Network error: %s for URL: %s", err, url)
+            # aiohttp's message may itself embed the URL, so the ERROR line
+            # carries only the method and the exception type.
+            _LOGGER.error("Network error (%s) on %s request", type(err).__name__, method)
+            _LOGGER.debug("Network error: %s for URL: %s", err, url)
             raise EeroNetworkException(f"Network error: {err}") from err
 
     async def _request_with_get_retry(
@@ -799,11 +805,11 @@ class BaseAPI:
                 if attempt >= max_attempts or err.status_code is None or err.status_code < 500:
                     raise
             _LOGGER.warning(
-                "Retrying GET %s after transient failure (attempt %s/%s)",
-                url,
+                "Retrying GET request after transient failure (attempt %s/%s)",
                 attempt + 1,
                 max_attempts,
             )
+            _LOGGER.debug("Retrying GET %s", url)
             await asyncio.sleep(GET_RETRY_DELAY_SECONDS)
 
     async def get(

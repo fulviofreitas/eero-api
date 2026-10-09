@@ -13,15 +13,18 @@ eero ID -- are asserted here. Other identifiers (network ID, profile ID,
 etc.) are logged intentionally elsewhere in the SDK and are out of scope.
 """
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from eero.api.blacklist import BlacklistAPI
 from eero.api.devices import DevicesAPI
 from eero.api.eeros import EerosAPI
 from eero.api.insights import InsightsAPI
+from eero.exceptions import EeroNetworkException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -51,22 +54,27 @@ def _auth_api(mock_session):
 
 
 def _assert_no_placeholder_leaked(caplog) -> None:
-    """Assert none of the canary identifiers appear in any domain-module log record.
+    """Assert none of the canary identifiers appear in any permitted log record.
 
-    Excludes ``eero.api.base``, whose transport-level ``Request: %s %s`` /
+    The only lines exempt from the check are the ``DEBUG``-level lines of
+    ``eero.api.base``, whose transport-level ``Request: %s %s`` /
     ``Resource not found at %s`` debug logging deliberately includes the
     full request URL (and therefore any identifier baked into the URL path)
     -- a separate, pre-existing, documented design decision unrelated to
     item 3, which is scoped to bare positional identifier arguments passed
-    to ``_LOGGER`` calls in the domain modules themselves.
+    to ``_LOGGER`` calls. Every other record is checked, including
+    ``WARNING`` and above from ``eero.api.base``: the transport must never
+    put the URL on a line a default logging configuration would show.
     """
-    domain_text = "\n".join(
-        record.getMessage() for record in caplog.records if record.name != "eero.api.base"
+    checked_text = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name != "eero.api.base" or record.levelno > logging.DEBUG
     )
     for placeholder in ALL_PLACEHOLDERS:
         assert (
-            placeholder not in domain_text
-        ), f"identifier placeholder {placeholder!r} leaked into a domain-module log record"
+            placeholder not in checked_text
+        ), f"identifier placeholder {placeholder!r} leaked into a log record"
 
 
 class TestBlacklistLogHygiene:
@@ -180,4 +188,51 @@ class TestInsightsLogHygiene:
                 insight_type="blocked",
             )
 
+        _assert_no_placeholder_leaked(caplog)
+
+
+class TestTransportLogHygiene:
+    """eero.api.base: WARNING and above must not carry the request URL."""
+
+    @pytest.fixture(autouse=True)
+    def no_real_sleep(self, monkeypatch):
+        """Avoid real delays between retry attempts in tests."""
+        monkeypatch.setattr("eero.api.base.asyncio.sleep", AsyncMock(return_value=None))
+
+    @pytest.mark.asyncio
+    async def test_read_failures_and_retries_do_not_log_mac_above_debug(
+        self, mock_session, caplog, monkeypatch
+    ):
+        """Test timeout, network-error and retry lines for a read never carry the MAC."""
+        api = DevicesAPI(_auth_api(mock_session))
+        # Domain APIs do not expose get_retries; enable the opt-in GET retry directly.
+        monkeypatch.setattr(api, "_get_retries", 2)
+        mock_session.request.side_effect = [
+            asyncio.TimeoutError(),
+            aiohttp.ClientError(f"connection reset for {PLACEHOLDER_MAC}"),
+            aiohttp.ClientError(f"connection reset for {PLACEHOLDER_MAC}"),
+        ]
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroNetworkException):
+            await api.get_device("network_123", PLACEHOLDER_MAC)
+
+        base_records = [r for r in caplog.records if r.name == "eero.api.base"]
+        loud = [r for r in base_records if r.levelno >= logging.WARNING]
+        assert {r.levelno for r in loud} == {logging.WARNING, logging.ERROR}
+        _assert_no_placeholder_leaked(caplog)
+        # Guard against a vacuous pass: the DEBUG lines (exempt by design)
+        # do carry the identifier, so the check above is genuinely selective.
+        debug_text = "\n".join(r.getMessage() for r in base_records if r.levelno == logging.DEBUG)
+        assert PLACEHOLDER_MAC in debug_text
+
+    @pytest.mark.asyncio
+    async def test_write_failure_does_not_log_mac_above_debug(self, mock_session, caplog):
+        """Test a failed write's ERROR line never carries the MAC."""
+        api = DevicesAPI(_auth_api(mock_session))
+        mock_session.request.side_effect = aiohttp.ClientError(f"reset {PLACEHOLDER_MAC}")
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroNetworkException):
+            await api.set_device_nickname("network_123", PLACEHOLDER_MAC, "nickname")
+
+        assert any(r.levelno == logging.ERROR for r in caplog.records)
         _assert_no_placeholder_leaked(caplog)

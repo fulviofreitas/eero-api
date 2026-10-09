@@ -13,6 +13,7 @@ Tests cover:
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -1539,6 +1540,102 @@ class TestGetRetryPolicy:
             await api.get("/endpoint")
 
         assert mock_session.request.call_count == 1
+
+
+# ========================== Transport Log-Level URL Hygiene Tests ==========================
+
+URL_CANARY = "net-CANARY-url-4c7d"
+CANARY_URL = f"https://api.example.com/networks/{URL_CANARY}/devices"
+
+
+def _records(caplog, level):
+    """Return the ``eero.api.base`` records captured at exactly ``level``."""
+    return [r for r in caplog.records if r.name == "eero.api.base" and r.levelno == level]
+
+
+class TestTransportLogLinesOmitUrl:
+    """ERROR/WARNING transport lines carry no URL; the DEBUG lines still do."""
+
+    @pytest.fixture(autouse=True)
+    def no_real_sleep(self, monkeypatch):
+        """Avoid real delays between retry attempts in tests."""
+        monkeypatch.setattr("eero.api.base.asyncio.sleep", AsyncMock(return_value=None))
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_line_has_method_but_no_url(self, mock_session, caplog):
+        """The timeout ERROR line names the method only; the DEBUG line keeps the URL."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        mock_session.request.side_effect = asyncio.TimeoutError()
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroTimeoutException):
+            await api.get(CANARY_URL)
+
+        (error,) = _records(caplog, logging.ERROR)
+        assert error.getMessage() == "Request timed out on GET request"
+        (debug,) = [r for r in _records(caplog, logging.DEBUG) if "timed out" in r.getMessage()]
+        assert debug.getMessage() == f"Request to {CANARY_URL} timed out"
+
+    @pytest.mark.asyncio
+    async def test_network_error_line_has_no_url_and_no_exception_text(self, mock_session, caplog):
+        """The network ERROR line carries the method and exception type, not aiohttp's message."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        mock_session.request.side_effect = aiohttp.ClientError(f"failed for {CANARY_URL}")
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroNetworkException):
+            await api.get(CANARY_URL)
+
+        (error,) = _records(caplog, logging.ERROR)
+        assert error.getMessage() == "Network error (ClientError) on GET request"
+        assert URL_CANARY not in error.getMessage()
+        (debug,) = [r for r in _records(caplog, logging.DEBUG) if "Network error" in r.getMessage()]
+        assert debug.getMessage() == (
+            f"Network error: failed for {CANARY_URL} for URL: {CANARY_URL}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_write_method_is_named_on_the_error_line(self, mock_session, caplog):
+        """The ERROR line reports the real HTTP method of the failed request."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        mock_session.request.side_effect = aiohttp.ClientError("boom")
+
+        with caplog.at_level(logging.ERROR), pytest.raises(EeroNetworkException):
+            await api.post(CANARY_URL, json={})
+
+        (error,) = _records(caplog, logging.ERROR)
+        assert error.getMessage() == "Network error (ClientError) on POST request"
+
+    @pytest.mark.asyncio
+    async def test_get_retry_warning_has_no_url_and_debug_keeps_it(self, mock_session, caplog):
+        """The retry WARNING omits the URL; a DEBUG line records it."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=1)
+        success = create_mock_response(200, api_success_response({"ok": True}))
+        mock_session.request.side_effect = [aiohttp.ClientError("boom"), success]
+
+        with caplog.at_level(logging.DEBUG):
+            await api.get(CANARY_URL)
+
+        (warning,) = _records(caplog, logging.WARNING)
+        assert warning.getMessage() == "Retrying GET request after transient failure (attempt 2/2)"
+        assert f"Retrying GET {CANARY_URL}" in [
+            r.getMessage() for r in _records(caplog, logging.DEBUG)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_nothing_at_warning_or_above_contains_the_url(self, mock_session, caplog):
+        """No WARNING+ record from the transport mentions the URL across all three paths."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com", get_retries=2)
+        mock_session.request.side_effect = [
+            asyncio.TimeoutError(),
+            aiohttp.ClientError(CANARY_URL),
+            aiohttp.ClientError(CANARY_URL),
+        ]
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroNetworkException):
+            await api.get(CANARY_URL)
+
+        loud = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(loud) == 5
+        assert all(URL_CANARY not in message for message in loud)
 
 
 # ========================== Envelope / error_code Attachment Tests ==========================
