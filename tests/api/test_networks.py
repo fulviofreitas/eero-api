@@ -9,6 +9,7 @@ Tests cover:
 - Guest network reads/writes and its own password sub-resource
 - id/path/URL polymorphism and parent-link preference
 - The uncharacterised-write warning on every unverified write
+- Rejecting non-string and empty Wi-Fi passwords before any request
 - That no method mutates its ``parent`` argument
 """
 
@@ -19,9 +20,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.networks import NetworksAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
-from .conftest import api_success_response, create_mock_response
+from .conftest import (
+    INVALID_PASSWORDS,
+    PASSWORD_WRITES,
+    VALID_PASSWORDS,
+    api_success_response,
+    create_mock_response,
+)
 
 
 @pytest.fixture
@@ -449,3 +456,44 @@ class TestNetworksAPIGuestPassword:
         assert call_args.args[0] == "DELETE"
         assert call_args.args[1].endswith("/2.2/networks/network_123/guestnetwork/password")
         assert not any("not been fully characterised" in m for m in caplog.messages)
+
+
+class TestNetworksAPIPasswordValidation:
+    """Tests that unintended password values never reach the form body."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", [method for method, _ in PASSWORD_WRITES])
+    @pytest.mark.parametrize("password", INVALID_PASSWORDS)
+    async def test_invalid_password_sends_no_request(
+        self, networks_api, mock_session, method, password
+    ):
+        """Test a non-string or empty password is rejected before auth and transport.
+
+        Form-encoding would otherwise turn None, False or 0 into the literal text
+        "None", "False" or "0" and set that as the Wi-Fi password.
+        """
+        with pytest.raises(EeroValidationException, match="password.*non-empty string"):
+            await getattr(networks_api, method)("network_123", password)
+
+        networks_api._auth_api.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method,suffix", PASSWORD_WRITES)
+    @pytest.mark.parametrize("password", VALID_PASSWORDS)
+    async def test_valid_password_is_forwarded_unchanged(
+        self, networks_api, mock_session, method, suffix, password
+    ):
+        """Test a string password, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await getattr(networks_api, method)("network_123", password)
+
+        networks_api._auth_api.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            f"https://api-user.e2ro.com/2.2/networks/network_123/{suffix}",
+        )
+        assert call_args.kwargs["data"] == {"password": password}
+        assert "json" not in call_args.kwargs
