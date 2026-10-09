@@ -158,6 +158,10 @@ class AuthAPI(BaseAPI):
     async def login(self, user_identifier: str) -> bool:
         """Start the login process by requesting a verification code.
 
+        Pending credentials remain in memory. The stored session is replaced
+        only after successful verification; a failed request also restores the
+        credentials previously held in memory.
+
         Args:
             user_identifier: Email address or phone number for the Eero account
 
@@ -175,12 +179,14 @@ class AuthAPI(BaseAPI):
                 ``EeroAuthenticationException``.
             EeroNetworkException: If there's a network error
         """
-        # Clear any previous authentication data
-        self._credentials.clear_all()
+        # Keep the stored session until verify() accepts its replacement. Saving
+        # cleared credentials or a pending token would destroy a working login
+        # when the request fails or the verification flow is abandoned.
+        previous_credentials = self._credentials
+        previous_login_in_progress = self._login_in_progress
+        self._credentials = AuthCredentials()
         self._login_in_progress = True
-
-        # Save to ensure we don't have stale data
-        await self._save_credentials()
+        started = False
 
         try:
             _LOGGER.debug("Starting login process")
@@ -198,8 +204,7 @@ class AuthAPI(BaseAPI):
                 return False
 
             self._credentials.session_id = user_token
-            await self._save_credentials()
-
+            started = True
             return True
         except EeroAPIException as err:
             _LOGGER.error("Login failed: %s", err)
@@ -218,6 +223,12 @@ class AuthAPI(BaseAPI):
             raise EeroAuthenticationException(
                 f"Login failed: {err}", envelope=err.envelope, error_code=err.error_code
             ) from err
+        finally:
+            # A rejected, interrupted, or tokenless login changes nothing on the
+            # server. Restore the session in memory as well as preserving disk.
+            if not started:
+                self._credentials = previous_credentials
+                self._login_in_progress = previous_login_in_progress
 
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.
