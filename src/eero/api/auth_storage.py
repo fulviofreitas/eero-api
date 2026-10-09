@@ -18,7 +18,7 @@ import os
 import stat
 import tempfile
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 import keyring
@@ -35,9 +35,13 @@ class AuthCredentials:
 
     Note: User preferences (like preferred_network_id) should be managed
     by the consuming application, not stored with auth credentials.
+
+    ``session_id`` is excluded from ``repr()`` so the token cannot leak
+    through a log line, an f-string or a traceback that formats the record.
+    Equality and ``to_dict()``/``from_dict()`` still include it.
     """
 
-    session_id: Optional[str] = None
+    session_id: Optional[str] = field(default=None, repr=False)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to the persisted record shape.

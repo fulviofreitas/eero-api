@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any, Dict, FrozenSet, List, MutableMapping, Optional, Pattern, Tuple
+from typing import Any, Dict, FrozenSet, MutableMapping, Optional, Pattern, Tuple
 
 # Default sensitive field name patterns (case-insensitive). Includes both
 # credential-shaped fields (token/password/secret/...) and identifier-shaped
@@ -75,6 +76,17 @@ _ZERO_VISIBILITY_PATTERNS: FrozenSet[str] = frozenset(
     }
 )
 
+# Containers nested deeper than this are replaced wholesale by
+# ``_UNTRAVERSABLE_PLACEHOLDER`` rather than walked, so a pathological or
+# hostile structure can neither exhaust the interpreter stack nor smuggle a
+# value past the redactor by sitting below the point where it stops looking.
+_MAX_REDACTION_DEPTH = 16
+
+# Substituted for a container that is part of a reference cycle or that sits
+# below ``_MAX_REDACTION_DEPTH``. Fixed text: it never depends on the content
+# it replaces.
+_UNTRAVERSABLE_PLACEHOLDER = "[REDACTED:cyclic-or-too-deep]"
+
 
 @lru_cache(maxsize=32)
 def _get_sensitive_regex(patterns: FrozenSet[str]) -> Pattern[str]:
@@ -96,32 +108,34 @@ def _get_sensitive_regex(patterns: FrozenSet[str]) -> Pattern[str]:
     return re.compile(pattern, re.IGNORECASE)
 
 
-def _is_sensitive_key(key: str, patterns: FrozenSet[str] = DEFAULT_SENSITIVE_PATTERNS) -> bool:
+def _is_sensitive_key(key: object, patterns: FrozenSet[str] = DEFAULT_SENSITIVE_PATTERNS) -> bool:
     """Check if a key name indicates sensitive data.
 
     Args:
-        key: The key/field name to check
+        key: The key/field name to check. Matched via ``str(key)``, so a
+            non-string mapping key (an ``int``, a tuple, ...) is checked by
+            its text form instead of raising.
         patterns: Set of sensitive patterns to match against
 
     Returns:
         True if the key appears to be sensitive
     """
-    key_lower = key.lower()
+    key_lower = str(key).lower()
     regex = _get_sensitive_regex(patterns)
     return bool(regex.search(key_lower))
 
 
-def _is_zero_visibility_key(key: str) -> bool:
+def _is_zero_visibility_key(key: object) -> bool:
     """Check if a key name is credential-shaped and must never show a value prefix.
 
     Args:
-        key: The key/field name to check
+        key: The key/field name to check (matched via ``str(key)``)
 
     Returns:
         True if the key matches one of ``_ZERO_VISIBILITY_PATTERNS``
     """
     regex = _get_sensitive_regex(_ZERO_VISIBILITY_PATTERNS)
-    return bool(regex.search(key.lower()))
+    return bool(regex.search(str(key).lower()))
 
 
 def _redact_value(value: Any, visible_chars: int = 4) -> str:
@@ -154,43 +168,55 @@ def _redact_value(value: Any, visible_chars: int = 4) -> str:
     return f"{str_value[:visible_chars]}...[REDACTED:{length}chars]"
 
 
-def _redact_dict(
-    data: Dict[str, Any],
-    patterns: FrozenSet[str] = DEFAULT_SENSITIVE_PATTERNS,
-    visible_chars: int = 4,
-) -> Dict[str, Any]:
-    """Recursively redact sensitive values in a dictionary.
+def _redact(
+    value: Any,
+    patterns: FrozenSet[str],
+    visible_chars: int,
+    depth: int = 0,
+    ancestors: FrozenSet[int] = frozenset(),
+) -> Any:
+    """Recursively build a redacted copy of ``value``.
+
+    Mappings, lists and tuples are walked; every other value is returned
+    as-is. The argument is never mutated: each container is rebuilt, a
+    mapping as a plain ``dict`` (keys preserved as-is) and a list or tuple as
+    the same kind of sequence.
 
     Args:
-        data: Dictionary to redact
+        value: The value to redact
         patterns: Set of sensitive field patterns
         visible_chars: Number of characters to show for redacted values
+        depth: Nesting level of ``value`` (0 for the top-level argument)
+        ancestors: ``id()`` of every container on the path from the top-level
+            argument down to ``value``; membership means a reference cycle
 
     Returns:
-        New dictionary with sensitive values redacted
+        A new structure with sensitive values redacted, or
+        ``_UNTRAVERSABLE_PLACEHOLDER`` for a container that is cyclic or
+        nested deeper than ``_MAX_REDACTION_DEPTH``
     """
-    result: Dict[str, Any] = {}
-    for key, value in data.items():
-        if _is_sensitive_key(key, patterns):
-            # Credential-shaped keys (token/password/secret/...) never show
-            # any leading characters, regardless of the caller's
-            # visible_chars -- only identifier-shaped keys (email/phone/...)
-            # get the normal partial-prefix redaction.
-            key_visible_chars = 0 if _is_zero_visibility_key(key) else visible_chars
-            result[key] = _redact_value(value, key_visible_chars)
-        elif isinstance(value, dict):
-            result[key] = _redact_dict(value, patterns, visible_chars)
-        elif isinstance(value, list):
-            redacted_list: List[Any] = []
-            for item in value:
-                if isinstance(item, dict):
-                    redacted_list.append(_redact_dict(item, patterns, visible_chars))
-                else:
-                    redacted_list.append(item)
-            result[key] = redacted_list
-        else:
-            result[key] = value
-    return result
+    if not isinstance(value, (Mapping, list, tuple)):
+        return value
+    if depth >= _MAX_REDACTION_DEPTH or id(value) in ancestors:
+        return _UNTRAVERSABLE_PLACEHOLDER
+
+    path = ancestors | {id(value)}
+    if isinstance(value, Mapping):
+        result: Dict[Any, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_key(key, patterns):
+                # Credential-shaped keys (token/password/secret/...) never
+                # show any leading characters, regardless of the caller's
+                # visible_chars -- only identifier-shaped keys (email/phone/...)
+                # get the normal partial-prefix redaction.
+                key_visible_chars = 0 if _is_zero_visibility_key(key) else visible_chars
+                result[key] = _redact_value(item, key_visible_chars)
+            else:
+                result[key] = _redact(item, patterns, visible_chars, depth + 1, path)
+        return result
+
+    items = [_redact(item, patterns, visible_chars, depth + 1, path) for item in value]
+    return tuple(items) if isinstance(value, tuple) else items
 
 
 def redact_sensitive(
@@ -201,9 +227,14 @@ def redact_sensitive(
     """Redact sensitive data from any value for safe logging.
 
     This function can handle:
-    - Dictionaries (recursively redacts sensitive keys)
-    - Strings (returns as-is, use for values you know are safe)
-    - Other types (returns as-is)
+    - Mappings (recursively redacts sensitive keys; the result is a ``dict``)
+    - Lists and tuples (each element is redacted; the container type is kept)
+    - Any nesting of the above, to a depth of 16 levels. A container that is
+      part of a reference cycle, or nested deeper, is replaced by a fixed
+      placeholder rather than raising.
+    - Strings and other types (returned as-is, use for values you know are safe)
+
+    The argument is never mutated; redacted structures are always new objects.
 
     Args:
         value: The value to potentially redact
@@ -213,9 +244,7 @@ def redact_sensitive(
     Returns:
         Value with sensitive data redacted
     """
-    if isinstance(value, dict):
-        return _redact_dict(value, patterns, visible_chars)
-    return value
+    return _redact(value, patterns, visible_chars)
 
 
 class SecureLoggerAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
@@ -252,73 +281,46 @@ class SecureLoggerAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
     def process(
         self, msg: Any, kwargs: MutableMapping[str, Any]
     ) -> Tuple[Any, MutableMapping[str, Any]]:
-        """Process log message and redact sensitive data in arguments.
+        """Process a log call: redact the message object and the ``extra`` dict.
+
+        The adapter's own ``extra`` context and the call's ``extra`` are
+        merged (the call's keys win) and the result is redacted, so both end
+        up on the record attributes in redacted form.
 
         Args:
-            msg: The log message format string
+            msg: The log message (normally a format string)
             kwargs: Keyword arguments for the log call
 
         Returns:
             Tuple of (message, kwargs) with sensitive data redacted
         """
-        # Redact any sensitive data in extra dict
-        if "extra" in kwargs and isinstance(kwargs["extra"], dict):
-            kwargs["extra"] = _redact_dict(
-                kwargs["extra"],
-                self._sensitive_patterns,
-                self._visible_chars,
-            )
+        extra = {**(self.extra or {}), **(kwargs.get("extra") or {})}
+        if extra:
+            kwargs["extra"] = _redact(extra, self._sensitive_patterns, self._visible_chars)
+        return redact_sensitive(msg, self._sensitive_patterns, self._visible_chars), kwargs
 
-        return super().process(msg, kwargs)
+    def log(self, level: int, msg: Any, *args: Any, **kwargs: Any) -> None:
+        """Log ``msg`` at ``level`` after redacting its arguments and ``extra``.
 
-    def _log_with_redaction(
-        self,
-        level: int,
-        msg: str,
-        args: Tuple[Any, ...],
-        **kwargs: Any,
-    ) -> None:
-        """Internal method to log with automatic redaction of args.
+        Every other logging method of the adapter (``debug``, ``info``,
+        ``warning``, ``error``, ``critical``, ``exception``) funnels through
+        here, so they all share this one redaction path. The level check runs
+        first: a disabled level costs nothing and cannot raise, whatever the
+        arguments are.
 
         Args:
             level: Log level
             msg: Log message format string
-            args: Positional arguments for string formatting
-            **kwargs: Additional keyword arguments
+            *args: Positional arguments for string formatting
+            **kwargs: Keyword arguments for the underlying logger
         """
-        # Redact sensitive data in positional arguments
+        if not self.isEnabledFor(level):
+            return
+        redacted_msg, redacted_kwargs = self.process(msg, kwargs)
         redacted_args = tuple(
             redact_sensitive(arg, self._sensitive_patterns, self._visible_chars) for arg in args
         )
-
-        # Use the underlying logger's log method
-        if self.isEnabledFor(level):
-            self.logger.log(level, msg, *redacted_args, **kwargs)
-
-    def debug(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log debug message with automatic redaction."""
-        self._log_with_redaction(logging.DEBUG, str(msg), args, **kwargs)
-
-    def info(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log info message with automatic redaction."""
-        self._log_with_redaction(logging.INFO, str(msg), args, **kwargs)
-
-    def warning(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log warning message with automatic redaction."""
-        self._log_with_redaction(logging.WARNING, str(msg), args, **kwargs)
-
-    def error(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log error message with automatic redaction."""
-        self._log_with_redaction(logging.ERROR, str(msg), args, **kwargs)
-
-    def critical(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log critical message with automatic redaction."""
-        self._log_with_redaction(logging.CRITICAL, str(msg), args, **kwargs)
-
-    def exception(self, msg: Any, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        """Log exception with automatic redaction."""
-        kwargs["exc_info"] = kwargs.get("exc_info", True)
-        self._log_with_redaction(logging.ERROR, str(msg), args, **kwargs)
+        self.logger.log(level, redacted_msg, *redacted_args, **redacted_kwargs)
 
 
 @lru_cache(maxsize=128)
