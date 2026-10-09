@@ -334,8 +334,8 @@ class TestResourceUrl:
     def test_host_relative_path_preserves_23_prefix(self):
         """A 2.3-prefixed path is preserved, not rewritten to the template's version."""
         assert (
-            resource_url("/2.3/networks/network-id-placeholder/forwards", "networks/{id}")
-            == f"{API_HOST}/2.3/networks/network-id-placeholder/forwards"
+            resource_url("/2.3/networks/network-id-placeholder", "networks/{id}")
+            == f"{API_HOST}/2.3/networks/network-id-placeholder"
         )
 
     def test_absolute_api_host_url_is_accepted(self):
