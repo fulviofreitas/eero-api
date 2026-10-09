@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -36,6 +39,9 @@ _LOGGER = get_secure_logger(__name__)
 # subset of what HTTP technically allows, chosen to keep header injection
 # impossible regardless of downstream transport quirks.
 _HEADER_VALUE_RE = re.compile(r"^[\x20-\x7E]*$")
+
+# A ``Retry-After`` delta-seconds value: a non-negative decimal integer.
+_RETRY_AFTER_DELTA_RE = re.compile(r"[0-9]+")
 
 # HTTP methods that write state. These are never retried by the core for any
 # reason -- a duplicate write could trigger unintended side effects upstream
@@ -215,6 +221,35 @@ def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
         # best-effort parse so any malformed body is treated as "no envelope".
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Parse a ``Retry-After`` header into a number of seconds to wait.
+
+    Args:
+        value: The raw header value, or ``None`` when the header is absent.
+
+    Returns:
+        The delay in seconds: the value itself for delta-seconds, or the time
+        from now until the date for an HTTP-date (``0.0`` when that date is
+        already past). ``None`` when the header is absent, empty, or in
+        neither form.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if _RETRY_AFTER_DELTA_RE.fullmatch(value):
+        seconds = float(value)
+        # A header can carry hundreds of digits; float() maps those to inf.
+        return seconds if math.isfinite(seconds) else None
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if when.tzinfo is None:
+        # RFC 7231 HTTP-dates are always GMT; a zone-less parse means UTC.
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
 
 
 def _error_code_from_envelope(envelope: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -513,7 +548,9 @@ class BaseAPI:
                 response whose body is not valid UTF-8, not valid JSON, or
                 valid JSON that is not an object.
             EeroRateLimitException: If rate limited (HTTP 429, or a
-                recognised rate-limit error on another status).
+                recognised rate-limit error on another status). Carries the
+                response status and, when the server sent a parseable
+                ``Retry-After`` header, ``retry_after`` in seconds.
             EeroNetworkException: If there's a network error.
             EeroTimeoutException: If the request times out.
         """
@@ -667,6 +704,9 @@ class BaseAPI:
 
                 envelope = _parse_envelope(response_text)
                 error_code = _error_code_from_envelope(envelope)
+                # Only a rate-limit exception carries this; the value is never
+                # logged.
+                retry_after = _parse_retry_after(response.headers.get("Retry-After"))
 
                 if response.status == 401:
                     # Use debug level - callers handle auth errors appropriately
@@ -757,6 +797,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
                 elif response.status == 429:
                     _log_error_body(_LOGGER.debug, "Rate limited", response_text, envelope)
@@ -764,6 +805,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
                 else:
                     # Single classification point for every other non-2xx,
@@ -780,6 +822,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
         except asyncio.TimeoutError as err:
             # The URL (which carries network, device and eero identifiers) is

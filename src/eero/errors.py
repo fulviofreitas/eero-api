@@ -15,6 +15,7 @@ Nothing here ever raises; it only builds and returns exception instances.
 from __future__ import annotations
 
 from enum import Enum
+from functools import partial
 from typing import Any, Dict, FrozenSet, Optional
 
 from .exceptions import (
@@ -262,6 +263,7 @@ def exception_for_error(
     *,
     envelope: Optional[Dict[str, Any]],
     error_code: Optional[str],
+    retry_after: Optional[float] = None,
 ) -> EeroException:
     """Choose and build the SDK exception for a non-2xx, non-3xx API response.
 
@@ -296,16 +298,31 @@ def exception_for_error(
         status_code: The HTTP status code of the response.
         envelope: The raw, unmodified parsed response envelope, or ``None``.
         error_code: The value of ``envelope["meta"]["error"]``, or ``None``.
+        retry_after: The delay in seconds the server asked for via
+            ``Retry-After``, or ``None``. Only used when the response is
+            classified as a rate limit; ignored otherwise.
 
     Returns:
         An unraised :class:`EeroException` instance carrying ``envelope`` and
-        ``error_code``. The caller is responsible for raising it.
+        ``error_code``. :class:`EeroAuthenticationException` and
+        :class:`EeroRateLimitException` also carry ``status_code``. The
+        caller is responsible for raising it.
     """
     message = message_for_error_code(error_code)
     group = classify_error_code(error_code)
+    rate_limited = partial(
+        EeroRateLimitException,
+        message,
+        envelope=envelope,
+        error_code=error_code,
+        status_code=status_code,
+        retry_after=retry_after,
+    )
 
     if status_code == 401:
-        return EeroAuthenticationException(message, envelope=envelope, error_code=error_code)
+        return EeroAuthenticationException(
+            message, envelope=envelope, error_code=error_code, status_code=status_code
+        )
 
     if group in _STATUS_INDEPENDENT_GROUPS:
         if group is ErrorGroup.PREMIUM:
@@ -321,7 +338,7 @@ def exception_for_error(
                 status_code, message, envelope=envelope, error_code=error_code
             )
         # ErrorGroup.RATE_LIMIT
-        return EeroRateLimitException(message, envelope=envelope, error_code=error_code)
+        return rate_limited()
 
     if status_code == 403:
         if group is ErrorGroup.ACCESS_DENIED:
@@ -336,7 +353,7 @@ def exception_for_error(
         )
 
     if status_code == 429:
-        return EeroRateLimitException(message, envelope=envelope, error_code=error_code)
+        return rate_limited()
 
     if status_code == 400 and group is ErrorGroup.VALIDATION:
         return EeroValidationException.from_response(

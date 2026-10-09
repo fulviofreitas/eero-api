@@ -38,6 +38,28 @@ class EeroException(Exception):
 class EeroAuthenticationException(EeroException):
     """Exception raised for authentication errors."""
 
+    def __init__(
+        self,
+        message: str = "An error occurred",
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+        status_code: Optional[int] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            message: Human-readable error message.
+            envelope: The raw, unmodified JSON response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]`` when
+                present, or ``None``.
+            status_code: The HTTP status code of the response, when the
+                exception was raised for one. ``None`` (the default) covers
+                client-side failures raised before any request was made.
+        """
+        self.status_code = status_code
+        super().__init__(message, envelope=envelope, error_code=error_code)
+
     def is_auth_error(self) -> bool:
         """Always True — authentication exceptions are by definition auth errors."""
         return True
@@ -46,7 +68,33 @@ class EeroAuthenticationException(EeroException):
 class EeroRateLimitException(EeroException):
     """Exception raised when rate limited by the API."""
 
-    pass
+    def __init__(
+        self,
+        message: str = "An error occurred",
+        *,
+        envelope: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+        status_code: Optional[int] = None,
+        retry_after: Optional[float] = None,
+    ):
+        """Initialize the exception.
+
+        Args:
+            message: Human-readable error message.
+            envelope: The raw, unmodified JSON response envelope, or ``None``.
+            error_code: The value of ``envelope["meta"]["error"]`` when
+                present, or ``None``.
+            status_code: The HTTP status code of the response. The
+                ``error.rate.limit`` error string is classified as a rate
+                limit on any status, so this is not necessarily 429.
+                ``None`` (the default) when no status is known.
+            retry_after: How long, in seconds, the server asked the caller
+                to wait, taken from the ``Retry-After`` response header.
+                ``None`` when the header was absent or unparseable.
+        """
+        self.status_code = status_code
+        self.retry_after = retry_after
+        super().__init__(message, envelope=envelope, error_code=error_code)
 
 
 class EeroNetworkException(EeroException):

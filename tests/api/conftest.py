@@ -23,6 +23,7 @@ def create_mock_response(
     text: str = "",
     raise_for_status: bool = False,
     body_bytes: Optional[bytes] = None,
+    headers: Optional[Dict[str, str]] = None,
 ) -> MagicMock:
     """Create a mock aiohttp response.
 
@@ -34,12 +35,15 @@ def create_mock_response(
         body_bytes: Raw bytes returned by ``response.content.read()``.
             When omitted, the bytes are derived from ``text`` or ``json_data``
             so that existing call sites continue to work without modification.
+        headers: Response headers, exposed as ``response.headers``. Defaults to
+            no headers.
 
     Returns:
         Mock response object
     """
     mock_response = MagicMock()
     mock_response.status = status
+    mock_response.headers = dict(headers or {})
 
     # Derive a canonical text representation used for both the legacy
     # ``response.text`` mock and as the default source for body_bytes.

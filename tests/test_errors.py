@@ -32,7 +32,12 @@ from eero.errors import (
     exception_for_error,
     message_for_error_code,
 )
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import (
+    EeroAPIException,
+    EeroAuthenticationException,
+    EeroRateLimitException,
+    EeroValidationException,
+)
 
 ALL_GROUPS = [
     SESSION_ERRORS,
@@ -197,3 +202,65 @@ class TestExceptionForError401Precedence:
         exc = exception_for_error(401, envelope=None, error_code=error_code)
         assert isinstance(exc, EeroAuthenticationException)
         assert exc.error_code == error_code
+
+
+class TestExceptionForErrorStatusAndRetryAfter:
+    """The HTTP status (and Retry-After) is carried by the 401 and rate-limit exceptions."""
+
+    def test_401_carries_status_code(self):
+        exc = exception_for_error(401, envelope=None, error_code=None)
+
+        assert isinstance(exc, EeroAuthenticationException)
+        assert exc.status_code == 401
+
+    def test_401_with_rate_limit_string_still_carries_status_code(self):
+        exc = exception_for_error(401, envelope=None, error_code="error.rate.limit")
+
+        assert isinstance(exc, EeroAuthenticationException)
+        assert exc.status_code == 401
+
+    @pytest.mark.parametrize("status_code", [400, 404, 429, 500, 503])
+    def test_rate_limit_string_carries_the_actual_status_on_any_status(self, status_code):
+        exc = exception_for_error(
+            status_code, envelope={"meta": {}}, error_code="error.rate.limit", retry_after=30.0
+        )
+
+        assert isinstance(exc, EeroRateLimitException)
+        assert exc.status_code == status_code
+        assert exc.retry_after == 30.0
+
+    def test_429_without_catalogue_string_carries_status_and_retry_after(self):
+        exc = exception_for_error(429, envelope=None, error_code=None, retry_after=120.0)
+
+        assert isinstance(exc, EeroRateLimitException)
+        assert exc.status_code == 429
+        assert exc.retry_after == 120.0
+
+    def test_retry_after_defaults_to_none(self):
+        exc = exception_for_error(429, envelope=None, error_code=None)
+
+        assert isinstance(exc, EeroRateLimitException)
+        assert exc.retry_after is None
+
+    def test_envelope_and_error_code_are_attached_unchanged(self):
+        envelope = {"meta": {"code": 429, "error": "error.rate.limit"}, "data": {"k": 1}}
+
+        exc = exception_for_error(
+            429, envelope=envelope, error_code="error.rate.limit", retry_after=5.0
+        )
+
+        assert exc.envelope is envelope
+        assert exc.error_code == "error.rate.limit"
+
+    @pytest.mark.parametrize("status_code", [403, 404, 500])
+    def test_retry_after_is_ignored_for_other_classes(self, status_code):
+        exc = exception_for_error(status_code, envelope=None, error_code=None, retry_after=9.0)
+
+        assert isinstance(exc, EeroAPIException)
+        assert not hasattr(exc, "retry_after")
+
+    def test_form_error_stays_a_validation_exception_outside_the_api_exceptions(self):
+        exc = exception_for_error(400, envelope=None, error_code="error.form.errors")
+
+        assert isinstance(exc, EeroValidationException)
+        assert not isinstance(exc, EeroAPIException)
