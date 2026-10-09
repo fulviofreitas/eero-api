@@ -377,7 +377,9 @@ async def test_path_form_network_id_is_not_doubled(label, cls, call, expected_su
     call_args = mock_session.request.call_args
     url = call_args.args[1]
 
-    assert url == f"{API_HOST}/2.2{expected_suffix}"
+    # WAN device writes are pinned to 2.3 even when the network names 2.2.
+    version = "2.3" if label == "WanAPI.set_device_secondary_wan_access" else "2.2"
+    assert url == f"{API_HOST}/{version}{expected_suffix}"
     # The network path segment must appear exactly once.
     assert url.count("/networks/network_123") == 1
     assert "//2.2" not in url.removeprefix(API_HOST)

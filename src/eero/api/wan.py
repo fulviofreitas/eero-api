@@ -18,7 +18,7 @@ from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, sub_resource_url
+from .links import resource_url, rewrite_version, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -117,6 +117,8 @@ class WanAPI(AuthenticatedAPI):
         url = resource_url(
             network_id, "networks/{id}/multistaticip", version=API_VERSION_MULTISTATICIP
         )
+        # Resolve first, then enforce the endpoint version even for network URLs.
+        url = rewrite_version(url, API_VERSION_MULTISTATICIP)
         warn_uncharacterised_write(_LOGGER, "set multi-static-IP configuration for network")
         return await self.put(url, auth_token=auth_token, json=dict(config))
 
@@ -162,6 +164,8 @@ class WanAPI(AuthenticatedAPI):
             "networks/{id}/devices/secondary_wan_config",
             version=API_VERSION_SECONDARY_WAN,
         )
+        # Resolve first, then enforce the endpoint version even for network URLs.
+        url = rewrite_version(url, API_VERSION_SECONDARY_WAN)
         warn_uncharacterised_write(
             _LOGGER,
             "set secondary WAN configuration for network "
@@ -209,6 +213,8 @@ class WanAPI(AuthenticatedAPI):
             prefix="devices",
             version=API_VERSION_SECONDARY_WAN,
         )
+        # Resolve first, then enforce the endpoint version even for network URLs.
+        url = rewrite_version(url, API_VERSION_SECONDARY_WAN)
         warn_uncharacterised_write(
             _LOGGER,
             "set secondary WAN access for device on network "
