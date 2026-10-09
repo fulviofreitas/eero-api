@@ -527,6 +527,56 @@ class EeroClient:
         self._update_cache("network", network_id, response)
         return response
 
+    async def get_capabilities(
+        self, network_id: Optional[str] = None, refresh_cache: bool = False
+    ) -> Dict[str, Any]:
+        """Return the capability directory embedded in the network response.
+
+        This inspection helper extracts a field, rather than returning an API
+        envelope. Use get_network() for the complete raw response. An absent
+        or malformed directory returns {}. Network selection and caching
+        follow get_network(); refresh_cache=True requests a fresh snapshot.
+        Published capabilities are advisory: availability does not guarantee
+        that a subsequent write will succeed or persist.
+        """
+        response = await self.get_network(network_id, refresh_cache=refresh_cache)
+        data = response.get("data")
+        capabilities = data.get("capabilities") if isinstance(data, dict) else None
+        return capabilities if isinstance(capabilities, dict) else {}
+
+    async def is_capable(
+        self, capability: str, *, network_id: Optional[str] = None
+    ) -> Optional[bool]:
+        """Return published availability, or None for an unknown/malformed entry.
+
+        Only boolean values are accepted; False means the service explicitly
+        reports unavailable, while None means availability is unknown.
+        """
+        entry = (await self.get_capabilities(network_id)).get(capability)
+        if not isinstance(entry, dict):
+            return None
+        capable = entry.get("capable")
+        return capable if isinstance(capable, bool) else None
+
+    async def capability_blockers(
+        self, capability: str, *, network_id: Optional[str] = None
+    ) -> List[str]:
+        """Return names of requirements with falsy published values.
+
+        Requirements may contain contextual strings as well as booleans;
+        truthy context values do not indicate blockers. An empty list can
+        also mean missing/malformed requirements or an unknown capability.
+        Use is_capable() to distinguish unknown from explicit availability.
+        This helper reports service data without enforcing write restrictions.
+        """
+        entry = (await self.get_capabilities(network_id)).get(capability)
+        if not isinstance(entry, dict):
+            return []
+        requirements = entry.get("requirements")
+        if not isinstance(requirements, dict):
+            return []
+        return [name for name, value in requirements.items() if not value]
+
     async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get premium status - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
