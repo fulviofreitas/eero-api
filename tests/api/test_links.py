@@ -7,6 +7,11 @@ Tests cover:
 - resource_url: bare ID, host-relative path, absolute API-host URL, foreign
   host rejected, non-https scheme rejected, userinfo/suffix host tricks
   rejected
+- resource_url family confinement: a caller-supplied path or URL must name
+  exactly one resource of the template's family; dot segments, queries,
+  fragments, percent-escapes and control characters are rejected
+- API-published links: not family-confined, but held to the same shape rules
+- rewrite_version: scheme case and control characters cannot defeat the pin
 - join_api_path: basic joining, validation of empty input
 - Parent envelopes for network / eero / guest network / profile / device
   shapes, matching the fields the API returns for each
@@ -301,6 +306,50 @@ class TestRewriteVersion:
         url = f"{API_HOST}/login"
         assert rewrite_version(url, "2.2") == url
 
+    @pytest.mark.parametrize("scheme", ["HTTPS", "Https", "hTTps"])
+    def test_scheme_case_does_not_defeat_the_rewrite(self, scheme: str):
+        """A mixed-case scheme is still recognised; the scheme is normalised."""
+        url = f"{scheme}://api-user.e2ro.com/2.3/networks/network-id-placeholder/support"
+        assert rewrite_version(url, "2.2") == (
+            f"{API_HOST}/2.2/networks/network-id-placeholder/support"
+        )
+
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", "\x0c"])
+    def test_control_character_in_path_does_not_defeat_the_rewrite(self, control: str):
+        """A control character after the version segment cannot hide it from the rewrite."""
+        url = f"{API_HOST}/2.3/networks/network-id{control}placeholder/support"
+        rewritten = rewrite_version(url, "2.2")
+        assert rewritten.startswith(f"{API_HOST}/2.2/networks/network-id")
+        assert rewritten.endswith("placeholder/support")
+        assert "/2.3/" not in rewritten
+
+    def test_only_the_first_path_segment_is_replaced(self):
+        """A later segment that looks like a version is left alone."""
+        url = f"{API_HOST}/2.3/networks/network-id-placeholder/2.3/support"
+        assert rewrite_version(url, "2.2") == (
+            f"{API_HOST}/2.2/networks/network-id-placeholder/2.3/support"
+        )
+
+    def test_query_and_fragment_are_preserved(self):
+        """Rewriting the version leaves a query string and fragment intact."""
+        url = f"{API_HOST}/2.3/networks/network-id-placeholder/support?a=1#frag"
+        assert rewrite_version(url, "2.2") == (
+            f"{API_HOST}/2.2/networks/network-id-placeholder/support?a=1#frag"
+        )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "/2.3/networks/network-id-placeholder/support",
+            "ftp://host/2.3/x/y",
+            f"{API_HOST}/v2/x/y",
+        ],
+        ids=["relative-path", "non-http-scheme", "non-numeric-version"],
+    )
+    def test_non_matching_urls_are_returned_unchanged(self, url: str):
+        """Only an http(s) URL with a numeric leading segment is rewritten."""
+        assert rewrite_version(url, "2.2") == url
+
 
 # ========================== resource_url Tests ==========================
 
@@ -447,6 +496,139 @@ class TestResourceUrlSuffix:
             resource_url("network-id-placeholder", template)
 
 
+class TestResourceUrlFamilyConfinement:
+    """A caller-supplied path or URL must name one resource of the template's family."""
+
+    @pytest.mark.parametrize(
+        ("id_or_url", "template"),
+        [
+            ("/2.2/networks/123", "eeros/{id}/reboot"),
+            ("/2.2/account", "networks/{id}/password"),
+            ("/2.2/eeros/9/../../networks/123", "eeros/{id}/reboot"),
+            ("/2.2/eeros/9?x=1", "eeros/{id}/reboot"),
+            ("/2.2/eeros/9#frag", "eeros/{id}/reboot"),
+            ("/2.2/eeros/%2e%2e/%2e%2e/networks/1", "eeros/{id}/reboot"),
+            ("/2.2/eeros/%2E%2E", "eeros/{id}/reboot"),
+            ("/2.2/eeros/9/extra", "eeros/{id}/reboot"),
+            ("/2.2/eeros", "eeros/{id}/reboot"),
+            ("/2.2/eeros/", "eeros/{id}/reboot"),
+            ("/2.2/eeros//9", "eeros/{id}/reboot"),
+            ("/2.2/eeros/..", "eeros/{id}/reboot"),
+            ("/2.2/eeros/.", "eeros/{id}/reboot"),
+            ("/2.2/eeros/9//", "eeros/{id}/reboot"),
+            ("/2.2/eeros/9%2f..", "eeros/{id}/reboot"),
+            ("/eeros/9", "eeros/{id}/reboot"),
+            ("/x.y/eeros/9", "eeros/{id}/reboot"),
+            ("/2.2/networks/n1", "entitlements/networks/{id}/features"),
+            ("/2.2/entitlements/networks/n1/features", "entitlements/networks/{id}/features"),
+            ("/2.2/networks/n1/eeros/9", "networks/{id}/settings"),
+            (f"{API_HOST}/2.2/networks/123", "eeros/{id}/reboot"),
+            (f"{API_HOST}/2.2/account", "networks/{id}/password"),
+            (f"{API_HOST}/2.2/eeros/9/../../networks/123", "eeros/{id}/reboot"),
+            (f"{API_HOST}/2.2/eeros/9?x=1", "eeros/{id}/reboot"),
+            (f"{API_HOST}/2.2/eeros/9#frag", "eeros/{id}/reboot"),
+            (f"{API_HOST}/2.2/eeros/9/extra", "eeros/{id}/reboot"),
+        ],
+    )
+    def test_path_outside_the_family_is_rejected(self, id_or_url: str, template: str) -> None:
+        """Another family, extra components, a query, fragment or dot segment all raise."""
+        with pytest.raises(EeroValidationException):
+            resource_url(id_or_url, template)
+
+    @pytest.mark.parametrize(
+        "control",
+        ["\n", "\t", "\r", " ", "\x00", "\x0b", "\x7f", "\u00a0", "\u2028", "\x85"],
+        ids=["newline", "tab", "cr", "space", "nul", "vt", "del", "nbsp", "line-sep", "nel"],
+    )
+    @pytest.mark.parametrize("position", ["id", "after-id", "version"])
+    @pytest.mark.parametrize("absolute", [False, True], ids=["path", "url"])
+    def test_control_and_whitespace_characters_are_rejected(
+        self, control: str, position: str, absolute: bool
+    ) -> None:
+        """No whitespace or control character is accepted anywhere in the path."""
+        path = {
+            "id": f"/2.2/eeros/9{control}9",
+            "after-id": f"/2.2/eeros/99{control}",
+            "version": f"/2.2{control}/eeros/99",
+        }[position]
+        supplied = f"{API_HOST}{path}" if absolute else path
+        with pytest.raises(EeroValidationException):
+            resource_url(supplied, "eeros/{id}/reboot")
+
+    @pytest.mark.parametrize(
+        ("id_or_url", "template", "expected"),
+        [
+            ("9", "eeros/{id}/reboot", f"{API_ENDPOINT}/eeros/9/reboot"),
+            (
+                "/2.2/networks/n1",
+                "networks/{id}/settings",
+                f"{API_HOST}/2.2/networks/n1/settings",
+            ),
+            (
+                "/2.3/networks/n1",
+                "networks/{id}/settings",
+                f"{API_HOST}/2.3/networks/n1/settings",
+            ),
+            ("/2.2/eeros/9", "eeros/{id}/reboot", f"{API_HOST}/2.2/eeros/9/reboot"),
+            (f"{API_HOST}/2.2/eeros/9", "eeros/{id}/reboot", f"{API_HOST}/2.2/eeros/9/reboot"),
+            (
+                "HTTPS://api-user.e2ro.com/2.2/eeros/9",
+                "eeros/{id}/reboot",
+                "HTTPS://api-user.e2ro.com/2.2/eeros/9/reboot",
+            ),
+            (f"{API_HOST}/2.2/eeros/9/", "eeros/{id}/reboot", f"{API_HOST}/2.2/eeros/9/reboot"),
+            (
+                "/2.2/eeros/aa:bb:cc:11:22:33",
+                "eeros/{id}",
+                f"{API_HOST}/2.2/eeros/aa:bb:cc:11:22:33",
+            ),
+            (
+                "/2.2/entitlements/networks/n1",
+                "entitlements/networks/{id}/features",
+                f"{API_HOST}/2.2/entitlements/networks/n1/features",
+            ),
+        ],
+        ids=[
+            "bare-id",
+            "network-path",
+            "network-path-other-version",
+            "eero-path",
+            "eero-url",
+            "uppercase-scheme-url",
+            "trailing-slash",
+            "mac-like-id",
+            "multi-segment-family",
+        ],
+    )
+    def test_path_in_the_family_is_accepted(
+        self, id_or_url: str, template: str, expected: str
+    ) -> None:
+        """A bare id, or a path or URL naming one resource of the family, resolves."""
+        assert resource_url(id_or_url, template) == expected
+
+    def test_template_without_a_family_checks_only_host_and_shape(self) -> None:
+        """A template with nothing before the placeholder names no family to confine to."""
+        path = "/2.2/networks/n1/profiles/p1/schedules/s1"
+        assert resource_url(path, "{id}") == f"{API_HOST}{path}"
+        with pytest.raises(EeroValidationException):
+            resource_url("/2.2/networks/n1/../account", "{id}")
+
+    def test_envelope_link_with_another_version_prefix_still_resolves(
+        self, network_data: Dict[str, Any]
+    ) -> None:
+        """A link the API published is never confined to a family or a version."""
+        url = sub_resource_url(
+            "network-id-placeholder", "networks/{id}/forwards", link="forwards", parent=network_data
+        )
+        assert url == f"{API_HOST}/2.3/networks/network-id-placeholder/forwards"
+
+    def test_validation_error_names_the_parameter(self) -> None:
+        """The error identifies id_or_url, not an internal name."""
+        with pytest.raises(EeroValidationException) as caught:
+            resource_url("/2.2/account", "networks/{id}/password")
+        assert caught.value.field == "id_or_url"
+
+
 class TestSubResourceUrl:
     """The parent's published link wins; the template is the fallback."""
 
@@ -543,6 +725,14 @@ class TestIdentifierValidation:
         """Ordinary ids, including MACs with or without colons, are accepted."""
         assert resource_url(good_id, "networks/{id}").endswith(f"/networks/{good_id}")
 
+    @pytest.mark.parametrize("bad_id", ["abc\n", "abc\t", "abc\r\n", "ab\x00c", "-abc", ".abc"])
+    def test_resource_url_rejects_trailing_newline_and_control_characters(
+        self, bad_id: str
+    ) -> None:
+        """A trailing newline is not a valid end of an identifier."""
+        with pytest.raises(EeroValidationException):
+            resource_url(bad_id, "networks/{id}/password")
+
     def test_uppercase_scheme_is_validated_as_absolute(self) -> None:
         """An upper-case scheme goes through the absolute-URL validator, not the template."""
         with pytest.raises(EeroValidationException):
@@ -578,6 +768,75 @@ class TestLinkValueValidation:
         """The parent's own url is held to the same rule."""
         with pytest.raises(EeroValidationException):
             self_url({"url": hostile})
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "/2.2/networks/n/../account",
+            "/2.2/networks/n/..",
+            "/2.2/networks/n/./x",
+            "/2.2/networks/n/%2e%2e/account",
+            "/2.2/networks/n/%2E/x",
+            "/2.2/networks/n/.%2e/x",
+            "/2.2/networks/n/devices?x=1",
+            "/2.2/networks/n/devices#frag",
+            "/2.2/networks/n/dev\nices",
+            "/2.2/networks/n/dev\tices",
+            "/2.2/networks/n/dev ices",
+            "/2.2/networks/n/dev\x00ices",
+            "/2.2/networks/n/devices\r\n",
+        ],
+        ids=[
+            "dotdot",
+            "trailing-dotdot",
+            "dot",
+            "encoded-dotdot",
+            "encoded-dot",
+            "mixed-encoded",
+            "query",
+            "fragment",
+            "newline",
+            "tab",
+            "space",
+            "nul",
+            "crlf",
+        ],
+    )
+    def test_published_link_shape_is_enforced(self, hostile: str) -> None:
+        """A published link with a dot segment, query, fragment or control character is refused."""
+        with pytest.raises(EeroValidationException):
+            resolve_link({"resources": {"devices": hostile}}, "devices")
+        with pytest.raises(EeroValidationException):
+            self_url({"url": hostile})
+
+    @pytest.mark.parametrize("link", ["/2.2/account", "/2.3/networks/other/eeros", "/2.1/x/y"])
+    def test_published_link_is_not_confined_to_a_family(self, link: str) -> None:
+        """A published link may name any resource, on any version (hypermedia design)."""
+        assert resolve_link({"resources": {"any": link}}, "any") == f"{API_HOST}{link}"
+        assert self_url({"url": link}) == f"{API_HOST}{link}"
+
+    def test_published_link_with_a_dot_inside_a_segment_is_accepted(self) -> None:
+        """Only whole dot segments are refused; dots inside an identifier are ordinary."""
+        link = "/2.2/networks/n.1/devices/aa.bb"
+        assert resolve_link({"resources": {"d": link}}, "d") == f"{API_HOST}{link}"
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            f"{API_HOST}/2.2/networks/n\n/x",
+            f"{API_HOST}/2.2/networks/n\t/x",
+            f"{API_HOST}/2.2/networks/n /x",
+            f"{API_HOST}/2.2/networks/n\x00",
+            f"{API_HOST}/2.2/networks/n/../x",
+            f"{API_HOST}/2.2/networks/n?x=1",
+            f"{API_HOST}/2.2/networks/n#frag",
+        ],
+        ids=["newline", "tab", "space", "nul", "dotdot", "query", "fragment"],
+    )
+    def test_resource_url_rejects_unsafe_absolute_url_for_any_template(self, hostile: str) -> None:
+        """The absolute-URL check itself rejects control characters, dot segments, query."""
+        with pytest.raises(EeroValidationException):
+            resource_url(hostile, "{id}")
 
     def test_resource_url_refuses_path_with_authority(self) -> None:
         """A path input starting with // is not a host-relative path."""
