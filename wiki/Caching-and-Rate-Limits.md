@@ -87,7 +87,7 @@ The SDK also calls `clear_cache()` for you automatically after `verify()`, `logo
 
 ## Automatic Invalidation on Writes
 
-Write methods invalidate the specific cache entries they affect via internal helpers (`_invalidate_network_cache`, `_invalidate_eeros_cache`, `_invalidate_device_cache`, `_invalidate_profile_cache`, `_invalidate_profiles_list_cache`, `_invalidate_all_profile_caches`). Confirmed from `src/eero/client.py` at v8.0.0:
+Write methods invalidate the specific cache entries they affect via internal helpers (`_invalidate_network_cache`, `_invalidate_eeros_cache`, `_invalidate_device_cache`, `_invalidate_profile_cache`, `_invalidate_profiles_list_cache`, `_invalidate_all_profile_caches`, `_invalidate_account_cache`). Confirmed from `src/eero/client.py` at v8.0.0:
 
 | Write method | Invalidates |
 |---|---|
@@ -102,10 +102,20 @@ Write methods invalidate the specific cache entries they affect via internal hel
 Invalidating the network entry also means the next network-scoped call runs without a cached
 `parent=` envelope (template URL) until `get_network()` repopulates it.
 
+### Reads in flight during an invalidation
+
+Every invalidation — each `_invalidate_*` helper above, and `clear_cache()` — also advances a
+client-wide epoch counter, and each cached read captures the epoch before it sends its request.
+If the epoch has moved by the time the response arrives, the read was overtaken by a write (or a
+session change): its caller still receives the response, but the response is not stored, so it
+cannot put a pre-write snapshot back in the cache. The next read fetches fresh. The counter is
+client-wide, so a write to one resource also stops every other read then in flight from
+populating the cache — at worst one extra request for the next caller.
+
 > ⚠️ **Gotcha:** Not every write invalidates a related read. Confirmed **not** invalidated by this SDK version, despite mutating server-side state that a cached read reflects:
 > - `create_schedule`, `update_schedule`, `delete_schedule`, `clear_profile_schedule`, `enable_bedtime` — do **not** invalidate the profile cache (the profile envelope is what `get_profile` caches; the schedules themselves are never cached)
 > - `set_nightlight_brightness` / `set_nightlight_schedule` — these delegate to `set_nightlight`, so they *do* invalidate the eeros list; listed here only because their names are not in the table
-> - `set_account_email`, `set_account_phone`, `set_push_settings` — do **not** invalidate the `account` entry (the first two only *start* a change; the matching `verify_*` call does invalidate it). `set_account_name`, `verify_account_email`, `verify_account_phone` and `set_account_consents` *do* reset the `account` entry.
+> - `set_account_email`, `set_account_phone`, `set_push_settings` — do **not** invalidate the `account` entry (the first two only *start* a change; the matching `verify_*` call does invalidate it). `set_account_name`, `verify_account_email`, `verify_account_phone` and `set_account_consents` *do* reset the `account` entry, and also stop a `get_account()` already in flight from repopulating it.
 > - `mark_notifications_read`, the invite/member writes, the power-saving schedule writes, the backup-access-point writes, `set_subnet_content_filters`, `set_pppoe`, `led_cycle` — nothing is invalidated; none of the reads they affect are cached anyway
 >
 > **Workaround**: after any write whose effect you need to see immediately, call the corresponding getter with `refresh_cache=True` (or, for uncached reads, simply call it — it is always fresh) rather than trusting the cache to have been cleared for you:
