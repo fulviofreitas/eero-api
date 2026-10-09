@@ -209,13 +209,30 @@ When a template continues past the resource (for example `networks/{id}/settings
 substituted into the whole template, while a path or URL is taken to identify the *parent*
 resource and the suffix is appended to it.
 
+A path or URL you supply must also name exactly the resource the argument stands for. The
+text before `{id}` in the method's template is the resource family (`networks` for
+`networks/{id}/settings`, `eeros` for `eeros/{id}/reboot`, `entitlements/networks` for
+`entitlements/networks/{id}/features`), and the path must be exactly
+`/<version>/<family>/<id>` with a single-segment id. The version is yours and is kept. So
+`reboot_eero(…, "/2.2/networks/<network-id>")` raises `EeroValidationException` before any
+request instead of building the network-reboot request, and the same goes for a path with
+extra components, a query (`?`), a fragment (`#`), a `.` or `..` segment, a percent-escape
+(`%2e%2e`), or any whitespace or control character (a newline or tab, which an HTTP client
+may strip on the wire). A trailing `/` is tolerated and dropped.
+
 For a *child* argument — `profile`, `mac`/`device_id`, `invite_id`, `user_id`, and
 `reservation`/`forward` on `delete_*` — a path or URL is additionally checked against the
 network you addressed: it must be `/<version>/networks/<that network>/<family>/<id>` with a
-single-segment id and no query or fragment, otherwise `EeroValidationException` is raised
-before any request (`must belong to the addressed network` / `must be a path under
-networks/{id}/<family>`). A bare ID anywhere must be one path segment matching
-`[A-Za-z0-9][A-Za-z0-9._:-]*` with no `..`.
+single-segment id, otherwise `EeroValidationException` is raised before any request (`must
+belong to the addressed network` / `must be a path under networks/{id}/<family>/{id}`). A bare
+ID anywhere must be one path segment matching `[A-Za-z0-9][A-Za-z0-9._:-]*` with no `..`, so
+neither `.` nor `..` is an acceptable child.
+
+Links the API itself published (`resolve_link`, `self_url`, and so the `parent=` envelopes) are
+**not** confined to a family or version: the API may publish a link to any resource, on whatever
+version it serves it. They are only held to the same shape rules — no `.` or `..` segment, no
+percent-encoded dot, no query, fragment or whitespace/control character — and must be
+host-relative.
 
 ```python
 from eero import EeroAPI
@@ -287,7 +304,7 @@ themselves. None of them perform I/O or mutate an envelope.
 |---|---|
 | `resolve_link(parent, name)` | Absolute URL for `parent["resources"][name]` (or `parent["data"]["resources"][name]`), or `None` when absent |
 | `self_url(parent)` | Absolute URL for the envelope's own `url`, or `None` |
-| `resource_url(id_or_url, template, *, version=API_VERSION_DEFAULT)` | Absolute URL from a bare ID (via `template`, which must contain exactly one `{id}`), a path, or an absolute URL — the id/path/URL polymorphism in one function |
+| `resource_url(id_or_url, template, *, version=API_VERSION_DEFAULT)` | Absolute URL from a bare ID (via `template`, which must contain exactly one `{id}`), a path, or an absolute URL — the id/path/URL polymorphism in one function. A path or URL must be exactly `/<version>/<family>/<id>` for the template's family |
 | `sub_resource_url(id_or_url, template, *, link, parent=None, version=…)` | `resolve_link(parent, link)` when it yields a URL, otherwise `resource_url(...)` — the single call every domain method makes |
 | `join_api_path(path)` | `API_HOST` + a host-relative path, version prefix preserved |
 | `id_from_url(id_or_url)` | Trailing path segment of a URL, or the bare ID unchanged |
@@ -319,6 +336,11 @@ one place that joins a version onto the host:
 `API_VERSION`, `API_ENDPOINT`, and `DEVICE_UPDATE_ENDPOINT` remain as derived aliases of the
 above. A link read from an envelope keeps its own version prefix regardless of these constants,
 which is one more reason to prefer `parent=` over bare IDs when you hold the envelope.
+
+Where a read must stay on one version whatever the path, URL or link carried, the method pins the
+*resolved* URL afterwards by replacing only its leading version segment: `get_support`,
+`get_routing` and `get_forwards` are pinned to `2.2`, and `get_multistaticip` to `2.3`. The
+scheme is matched case-insensitively, so `HTTPS://…` is pinned like `https://…`.
 
 ---
 
