@@ -43,6 +43,7 @@ from eero.api.dns_policies import DnsPoliciesAPI
 from eero.api.eeros import EerosAPI
 from eero.api.forwards import ForwardsAPI
 from eero.api.members import MembersAPI
+from eero.api.networks import NetworksAPI
 from eero.api.power_saving import PowerSavingAPI
 from eero.api.profiles import ProfilesAPI
 from eero.api.reservations import ReservationsAPI
@@ -381,3 +382,116 @@ async def test_path_form_network_id_is_not_doubled(label, cls, call, expected_su
     # The network path segment must appear exactly once.
     assert url.count("/networks/network_123") == 1
     assert "//2.2" not in url.removeprefix(API_HOST)
+
+
+# ========================== Caller-supplied path/URL: family confinement ==========================
+#
+# A path or absolute URL passed in place of a bare id is taken to identify the
+# parent resource itself, so it must name a resource of the family the method
+# addresses. Each case is (label, api_class, call) where `call` takes
+# (api, supplied) and returns the awaitable to invoke.
+
+#: Paths and URLs that are not a single network, for methods addressing one.
+NOT_A_NETWORK = (
+    "/2.2/account",
+    "/2.2/eeros/9",
+    "/2.2/networks/network_123/devices",
+    "/2.2/networks/network_123/../../account",
+    "/2.2/networks/network_123?x=1",
+    "/2.2/networks/%2e%2e/account",
+    "/2.2/networks/network_123\n",
+    f"{API_HOST}/2.2/account",
+)
+
+#: Paths and URLs that are not a single eero, for methods addressing one.
+NOT_AN_EERO = (
+    "/2.2/networks/123",
+    "/2.2/account",
+    "/2.2/eeros/9/../../networks/123",
+    "/2.2/eeros/9?x=1",
+    "/2.2/eeros/%2e%2e/%2e%2e/networks/1",
+    "/2.2/eeros/9\t",
+    f"{API_HOST}/2.2/networks/123",
+)
+
+NETWORK_FAMILY_CASES: list[tuple[str, type, CaseCall]] = [
+    (
+        "NetworksAPI.set_network_password",
+        NetworksAPI,
+        lambda api, supplied: api.set_network_password(supplied, "password-placeholder"),
+    ),
+    (
+        "NetworksAPI.reboot_network",
+        NetworksAPI,
+        lambda api, supplied: api.reboot_network(supplied),
+    ),
+    (
+        "ProfilesAPI.delete_profile:network",
+        ProfilesAPI,
+        lambda api, supplied: api.delete_profile(supplied, "profile_1"),
+    ),
+]
+
+EERO_FAMILY_CASES: list[tuple[str, type, CaseCall]] = [
+    (
+        "EerosAPI.reboot_eero",
+        EerosAPI,
+        lambda api, supplied: api.reboot_eero("network_123", supplied),
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supplied", NOT_A_NETWORK)
+@pytest.mark.parametrize(
+    "label, cls, call", NETWORK_FAMILY_CASES, ids=[c[0] for c in NETWORK_FAMILY_CASES]
+)
+async def test_non_network_path_raises_before_any_request(label, cls, call, supplied, mock_session):
+    """A path or URL naming something other than one network never reaches the transport."""
+    api = _api(cls, mock_session)
+
+    with pytest.raises(EeroValidationException):
+        await call(api, supplied)
+
+    mock_session.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supplied", NOT_AN_EERO)
+@pytest.mark.parametrize(
+    "label, cls, call", EERO_FAMILY_CASES, ids=[c[0] for c in EERO_FAMILY_CASES]
+)
+async def test_non_eero_path_raises_before_any_request(label, cls, call, supplied, mock_session):
+    """A network path or URL cannot be redirected to an eero endpoint (or any other family)."""
+    api = _api(cls, mock_session)
+
+    with pytest.raises(EeroValidationException):
+        await call(api, supplied)
+
+    mock_session.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "child", ["/2.2/networks/network_123/profiles/..", "/2.2/networks/network_123/profiles/."]
+)
+async def test_dot_segment_child_raises_before_any_request(child, mock_session):
+    """A bare dot-segment child is rejected rather than collapsing onto the collection."""
+    api = _api(ProfilesAPI, mock_session)
+
+    with pytest.raises(EeroValidationException):
+        await api.delete_profile("network_123", child)
+
+    mock_session.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_eero_path_in_the_family_still_reaches_the_eero_endpoint(mock_session):
+    """The legitimate path form is unaffected: it targets that eero's reboot link."""
+    mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+    api = _api(EerosAPI, mock_session)
+
+    await api.reboot_eero("network_123", "/2.2/eeros/e_9")
+
+    method, url = mock_session.request.call_args.args[:2]
+    assert (method, url) == ("POST", f"{API_HOST}/2.2/eeros/e_9/reboot")
