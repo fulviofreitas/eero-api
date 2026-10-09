@@ -8,6 +8,7 @@ Tests cover:
   the settings-class reboot warning
 - set_device_secondary_wan_access: JSON body, on version 2.3, the
   settings-class reboot warning
+- Version pins enforced for every network and device form (bare ID, path, URL)
 - Not-authenticated errors on every method
 """
 
@@ -20,6 +21,14 @@ from eero.api.wan import WanAPI
 from eero.exceptions import EeroAuthenticationException, EeroNotFoundException
 
 from .conftest import api_error_response, api_success_response, create_mock_response
+
+# Every form a caller may hold: a bare ID, an API-returned path, an absolute URL.
+NETWORK_FORMS = [
+    "n1",
+    "/2.2/networks/n1",
+    "https://api-user.e2ro.com/2.2/networks/n1",
+]
+PINNED_NETWORK_URL = "https://api-user.e2ro.com/2.3/networks/n1"
 
 
 @pytest.fixture
@@ -199,3 +208,69 @@ class TestWanAPISetDeviceSecondaryWanAccess:
             await wan_api.set_device_secondary_wan_access(
                 "network_123", "AA:BB:CC:DD:EE:FF", deny=True
             )
+
+
+class TestWanAPIVersionPinnedWrites:
+    """The 2.3 pin must survive a network path/URL, which keeps its own version."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("network", NETWORK_FORMS)
+    @pytest.mark.parametrize(
+        "method,args,kwargs,suffix",
+        [
+            ("set_multistaticip", ({"enabled": False},), {}, "multistaticip"),
+            (
+                "set_secondary_wan_config",
+                ({"devices": []},),
+                {},
+                "devices/secondary_wan_config",
+            ),
+            (
+                "set_device_secondary_wan_access",
+                ("aabbccddeeff",),
+                {"deny": True},
+                "devices/aabbccddeeff",
+            ),
+        ],
+    )
+    async def test_write_pins_v2_3_for_every_network_form(
+        self, wan_api, mock_session, network, method, args, kwargs, suffix
+    ):
+        """Each WAN write lands on 2.3 whichever network form the caller holds."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await getattr(wan_api, method)(network, *args, **kwargs)
+
+        verb, url = mock_session.request.call_args.args[:2]
+        assert verb == "PUT"
+        assert url == f"{PINNED_NETWORK_URL}/{suffix}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("network", NETWORK_FORMS)
+    @pytest.mark.parametrize(
+        "mac",
+        [
+            "/2.2/networks/n1/devices/aabbccddeeff",
+            "https://api-user.e2ro.com/2.2/networks/n1/devices/aabbccddeeff",
+        ],
+    )
+    async def test_set_device_secondary_wan_access_pins_v2_3_for_path_form_mac(
+        self, wan_api, mock_session, network, mac
+    ):
+        """A path/URL-form mac is an independent route to 2.2 and must still reach 2.3.
+
+        Unlike the devices module, this call site does not normalise ``mac``
+        with ``id_from_url``, so the resolved URL can carry the 2.2 version
+        taken from the device path itself rather than from the network.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await wan_api.set_device_secondary_wan_access(network, mac, deny=True)
+
+        verb, url = mock_session.request.call_args.args[:2]
+        assert verb == "PUT"
+        assert url == f"{PINNED_NETWORK_URL}/devices/aabbccddeeff"
