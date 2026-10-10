@@ -14,11 +14,13 @@ Note: _mask_sensitive tests moved to tests/test_logging.py as part of SecureLogg
 """
 
 import asyncio
+import contextlib
 import gc
 import json
 import logging
 import os
 import stat
+import threading
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -1959,10 +1961,12 @@ class TestCredentialMigrationReadback:
         api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=False)
         api._session = mock_session
 
-        original_save = FileStorage.save
+        # The migration runs inside ``load()``'s worker thread, so it calls
+        # the synchronous save body rather than the public coroutine.
+        original_save = FileStorage._save_sync
 
-        async def _save_then_corrupt(self, credentials):
-            await original_save(self, credentials)
+        def _save_then_corrupt(self, credentials):
+            original_save(self, credentials)
             # Simulate the on-disk record silently diverging from what was
             # just written (e.g. a concurrent writer, or the write not
             # actually landing despite no exception being raised).
@@ -1976,7 +1980,7 @@ class TestCredentialMigrationReadback:
                     f,
                 )
 
-        with patch.object(FileStorage, "save", _save_then_corrupt):
+        with patch.object(FileStorage, "_save_sync", _save_then_corrupt):
             with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
                 await api._load_credentials()
 
@@ -2446,6 +2450,292 @@ class TestMemoryStorageCopies:
         await api.clear_session_token()
 
         assert (await api._storage.load()).session_id is None
+
+
+# ============ Storage Blocking I/O Offload Tests (issue #171) ============
+
+
+class _Gate:
+    """Block a synchronous call inside a worker thread until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.thread_ids: list = []
+
+    def wrap(self, real):
+        """Return ``real`` wrapped so its first call parks until ``release`` is set."""
+
+        def gated(*args, **kwargs):
+            self.thread_ids.append(threading.get_ident())
+            self.entered.set()
+            assert self.release.wait(10), "gate was never released"
+            return real(*args, **kwargs)
+
+        return gated
+
+    async def wait_entered(self) -> None:
+        """Wait (off the loop) until the gated call has started."""
+        assert await asyncio.to_thread(self.entered.wait, 5), "gated call never started"
+
+
+async def _spin(times: int = 20) -> None:
+    """Give other tasks several loop iterations to make progress."""
+    for _ in range(times):
+        await asyncio.sleep(0.001)
+
+
+def _fake_keyring(mock_keyring) -> dict:
+    """Back the mocked keyring module with a dict so writes are really retained."""
+    store: dict = {}
+    mock_keyring.get_password.side_effect = lambda service, account: store.get(account)
+    mock_keyring.set_password.side_effect = lambda service, account, value: store.update(
+        {account: value}
+    )
+    mock_keyring.delete_password.side_effect = lambda service, account: store.pop(account, None)
+    return store
+
+
+class TestStorageOffloadsBlockingIO:
+    """Keyring and file I/O runs on worker threads and never stalls the event loop."""
+
+    @pytest.mark.asyncio
+    async def test_loop_keeps_progressing_while_keyring_write_blocks(self, mock_keyring):
+        """A heartbeat ticks N times while ``keyring.set_password`` is parked in a thread."""
+        _fake_keyring(mock_keyring)
+        gate = _Gate()
+        mock_keyring.set_password.side_effect = gate.wrap(mock_keyring.set_password.side_effect)
+        storage = KeyringStorage()
+
+        ticks = 0
+        reached = asyncio.Event()
+
+        async def heartbeat(target: int = 10) -> None:
+            nonlocal ticks
+            while ticks < target:
+                await asyncio.sleep(0.005)
+                ticks += 1
+            reached.set()
+
+        save_task = asyncio.create_task(storage.save(AuthCredentials(session_id="tok")))
+        try:
+            await gate.wait_entered()
+            await asyncio.wait_for(heartbeat(), timeout=5)
+            assert reached.is_set() and ticks == 10
+            assert not save_task.done()
+        finally:
+            gate.release.set()
+
+        assert await save_task is True
+        assert gate.thread_ids and gate.thread_ids[0] != threading.get_ident()
+
+    @pytest.mark.asyncio
+    async def test_loop_keeps_progressing_while_file_fsync_blocks(self, tmp_path):
+        """A parked ``fsync`` in ``FileStorage.save`` does not stall the loop either."""
+        storage = FileStorage(str(tmp_path / "cookies.json"))
+        gate = _Gate()
+        with patch("eero.api.auth_storage.os.fsync", gate.wrap(os.fsync)):
+            save_task = asyncio.create_task(storage.save(AuthCredentials(session_id="tok")))
+            try:
+                await gate.wait_entered()
+                await _spin()
+                assert not save_task.done()
+            finally:
+                gate.release.set()
+            assert await save_task is True
+
+    @pytest.mark.asyncio
+    async def test_migrating_load_is_one_thread_hop(self, mock_keyring, legacy_session_data):
+        """A legacy-record load (read, write, read-back) runs entirely on one worker thread."""
+        threads: set = set()
+        store = {"auth-tokens": json.dumps(legacy_session_data)}
+
+        def get_password(service, account):
+            threads.add(threading.get_ident())
+            return store.get(account)
+
+        def set_password(service, account, value):
+            threads.add(threading.get_ident())
+            store[account] = value
+
+        mock_keyring.get_password.side_effect = get_password
+        mock_keyring.set_password.side_effect = set_password
+
+        loaded = await KeyringStorage().load()
+
+        assert loaded.session_id == legacy_session_data["session_id"]
+        assert json.loads(store["auth-tokens"])["schema_version"] == CREDENTIAL_SCHEMA_VERSION
+        assert len(threads) == 1
+        assert threading.get_ident() not in threads
+
+    @pytest.mark.asyncio
+    async def test_save_never_raises_when_the_worker_cannot_start(self, tmp_path):
+        """A thread that cannot be started yields ``False``, and the lock is not leaked."""
+        storage = FileStorage(str(tmp_path / "cookies.json"))
+
+        with patch(
+            "eero.api.auth_storage.asyncio.to_thread", side_effect=RuntimeError("no threads")
+        ):
+            assert await storage.save(AuthCredentials(session_id="tok")) is False
+
+        assert await asyncio.wait_for(storage.save(AuthCredentials(session_id="tok")), 5) is True
+
+    @pytest.mark.asyncio
+    async def test_file_save_still_creates_0600_after_offload(self, tmp_path):
+        """The offloaded write keeps the 0600 mode, including over an existing 0644 file."""
+        cookie_file = tmp_path / "cookies.json"
+        cookie_file.write_text("{}")
+        os.chmod(cookie_file, 0o644)
+        storage = FileStorage(str(cookie_file))
+
+        assert await storage.save(AuthCredentials(session_id="tok")) is True
+
+        assert stat.S_IMODE(os.stat(cookie_file).st_mode) == 0o600
+        assert (await storage.load()).session_id == "tok"
+
+
+@pytest.fixture(params=["file", "keyring"])
+def gated_backend(request, tmp_path, mock_keyring):
+    """Yield ``(storage, patch_blocking)`` for a real-behaving file or keyring backend.
+
+    ``patch_blocking(kind, gate)`` returns a context manager that parks the
+    first blocking call of the ``"save"`` or ``"clear"`` path on ``gate``.
+    """
+    if request.param == "file":
+        storage = FileStorage(str(tmp_path / "cookies.json"))
+        targets = {
+            "save": "eero.api.auth_storage.os.fsync",
+            "clear": "eero.api.auth_storage.os.remove",
+        }
+        reals = {"save": os.fsync, "clear": os.remove}
+
+        def patch_blocking(kind, gate):
+            return patch(targets[kind], gate.wrap(reals[kind]))
+
+    else:
+        _fake_keyring(mock_keyring)
+        storage = KeyringStorage()
+        names = {"save": "set_password", "clear": "delete_password"}
+
+        @contextlib.contextmanager
+        def patch_blocking(kind, gate):
+            mock = getattr(mock_keyring, names[kind])
+            original = mock.side_effect
+            mock.side_effect = gate.wrap(original)
+            try:
+                yield
+            finally:
+                mock.side_effect = original
+
+    return storage, patch_blocking
+
+
+class TestStorageOperationsAreSerialised:
+    """A save and a clear on one instance cannot interleave; call order decides the outcome."""
+
+    @pytest.mark.asyncio
+    async def test_save_then_clear_ends_cleared(self, gated_backend):
+        """Save (parked in its thread) then clear: the clear waits, and the record is gone."""
+        storage, patch_blocking = gated_backend
+        gate = _Gate()
+        with patch_blocking("save", gate):
+            save_task = asyncio.create_task(storage.save(AuthCredentials(session_id="tok")))
+            await gate.wait_entered()
+            clear_task = asyncio.create_task(storage.clear())
+            await _spin()
+            assert not clear_task.done()  # queued behind the in-flight save
+            gate.release.set()
+            assert await save_task is True
+            await clear_task
+
+        assert (await storage.load()).session_id is None
+
+    @pytest.mark.asyncio
+    async def test_clear_then_save_ends_saved(self, gated_backend):
+        """Clear (parked in its thread) then save: the save waits, and the record remains."""
+        storage, patch_blocking = gated_backend
+        assert await storage.save(AuthCredentials(session_id="old")) is True
+        gate = _Gate()
+        with patch_blocking("clear", gate):
+            clear_task = asyncio.create_task(storage.clear())
+            await gate.wait_entered()
+            save_task = asyncio.create_task(storage.save(AuthCredentials(session_id="new")))
+            await _spin()
+            assert not save_task.done()  # queued behind the in-flight clear
+            gate.release.set()
+            await clear_task
+            assert await save_task is True
+
+        assert (await storage.load()).session_id == "new"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_never_runs(self, gated_backend):
+        """An operation cancelled while still waiting for the lock does no work at all."""
+        storage, patch_blocking = gated_backend
+        gate = _Gate()
+        with patch_blocking("save", gate):
+            first = asyncio.create_task(storage.save(AuthCredentials(session_id="first")))
+            await gate.wait_entered()
+            second = asyncio.create_task(storage.save(AuthCredentials(session_id="second")))
+            await _spin()
+            second.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await second
+            gate.release.set()
+            assert await first is True
+
+        assert (await storage.load()).session_id == "first"
+
+    def test_lock_is_lazy_and_rebuilt_for_a_new_event_loop(self, tmp_path):
+        """No lock exists at construction; a second ``asyncio.run`` gets its own lock."""
+        storage = FileStorage(str(tmp_path / "cookies.json"))
+        assert storage._op_lock is None
+
+        async def round_trip(token: str) -> asyncio.Lock:
+            assert await storage.save(AuthCredentials(session_id=token)) is True
+            assert (await storage.load()).session_id == token
+            return storage._op_lock
+
+        first = asyncio.run(round_trip("a"))
+        second = asyncio.run(round_trip("b"))
+
+        assert first is not second
+
+
+class TestCancelledSaveLeavesNoPartialFile:
+    """Cancelling the awaiting task does not stop the thread, and never corrupts the file."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_save_leaves_old_or_new_record_and_holds_the_lock(self, tmp_path):
+        """Cancel a save parked just before ``os.replace``; the thread still finishes cleanly."""
+        cookie_file = tmp_path / "cookies.json"
+        storage = FileStorage(str(cookie_file))
+        assert await storage.save(AuthCredentials(session_id="old")) is True
+
+        gate = _Gate()
+        with patch("eero.api.auth_storage.os.replace", gate.wrap(os.replace)):
+            save_task = asyncio.create_task(storage.save(AuthCredentials(session_id="new")))
+            await gate.wait_entered()
+
+            save_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await save_task
+
+            # The thread is still running: the destination is untouched and
+            # a follow-up operation on the same instance waits behind it.
+            assert json.loads(cookie_file.read_text())["session_id"] == "old"
+            follow_up = asyncio.create_task(storage.load())
+            await _spin()
+            assert not follow_up.done()
+
+            gate.release.set()
+            loaded = await asyncio.wait_for(follow_up, 5)
+
+        record = json.loads(cookie_file.read_text())
+        assert record["session_id"] in {"old", "new"}
+        assert loaded.session_id == record["session_id"] == "new"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["cookies.json"]
+        assert stat.S_IMODE(os.stat(cookie_file).st_mode) == 0o600
 
 
 # ========================== Context Manager Tests ==========================
