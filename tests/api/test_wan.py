@@ -280,6 +280,8 @@ class TestWanAPIVersionPinnedWrites:
         verb, url = mock_session.request.call_args.args[:2]
         assert verb == "PUT"
         assert url == f"{PINNED_NETWORK_URL}/devices/aabbccddeeff"
+
+
 class TestWanAPIGetMultistaticipPinnedUrlForms:
     """get_multistaticip lands on 2.3 whichever form the network and its link take."""
 
