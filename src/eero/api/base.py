@@ -307,6 +307,40 @@ def origin_mismatch(url: str, base_url: str) -> Optional[OriginMismatch]:
     return None
 
 
+def _validate_base_url(base_url: str) -> None:
+    """Reject a configured base URL that could never match an origin.
+
+    An unusable base URL would not fail loudly: :func:`origin_mismatch` would
+    report every request as off-origin and the SDK would silently withhold
+    the credential from all of them. Failing at construction surfaces the
+    mistake where it was made. The empty string is the "no base URL" default
+    and is allowed.
+
+    Args:
+        base_url: The configured API base URL.
+
+    Raises:
+        EeroValidationException: If a non-empty ``base_url`` cannot be parsed
+            (see :func:`_parse_origin`), carries userinfo, or has no scheme
+            or no host. The message never repeats the value, which may hold
+            a credential.
+    """
+    if not base_url:
+        return
+    try:
+        scheme, host, _, has_userinfo = _parse_origin(base_url)
+    except ValueError:
+        problem = "has an authority that cannot be parsed"
+    else:
+        if has_userinfo:
+            problem = "must not carry userinfo"
+        elif not scheme or not host:
+            problem = "must be an absolute URL with a scheme and a host"
+        else:
+            return
+    raise EeroValidationException("base_url", problem)
+
+
 def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
     """Best-effort parse of a response body as a JSON object.
 
@@ -401,7 +435,8 @@ class BaseAPI:
             base_url: Base URL for API endpoints. Its scheme, hostname and
                 effective port are the "configured API origin" --
                 credentials are only ever attached to requests on exactly
-                this origin.
+                this origin. May be empty; otherwise it must be an
+                absolute URL with a scheme and a host, and no userinfo.
             send_legacy_cookie: When True (default), also send the session
                 token as the legacy ``s=<token>`` cookie, per request, on
                 requests to the configured API host. The cookie is never
@@ -417,7 +452,13 @@ class BaseAPI:
             get_retries: Number of additional attempts for GET requests that
                 fail with a transport error or a 5xx response. 0 (default)
                 disables retrying. Never applies to POST/PUT/DELETE/PATCH.
+
+        Raises:
+            EeroValidationException: If ``base_url`` is non-empty and
+                unusable as an origin (see :func:`_validate_base_url`), or
+                a header value is invalid.
         """
+        _validate_base_url(base_url)
         self._session = session
         self._cookie_file = cookie_file
         self._base_url = base_url
@@ -495,8 +536,18 @@ class BaseAPI:
         return self._session
 
     def _resolve_url(self, url: str) -> str:
-        """Resolve a possibly-relative URL against the configured base URL."""
-        if url.startswith(("http://", "https://")):
+        """Resolve a possibly-relative URL against the configured base URL.
+
+        Args:
+            url: A relative path, or an absolute ``http``/``https`` URL. The
+                scheme is matched case-insensitively, as the origin check
+                matches it.
+
+        Returns:
+            ``url`` as given when it is absolute, otherwise the path joined
+            onto the base URL.
+        """
+        if url[:8].lower().startswith(("http://", "https://")):
             return url
         return f"{self._base_url.rstrip('/')}/{url.lstrip('/')}"
 
@@ -1077,7 +1128,8 @@ class AuthenticatedAPI(BaseAPI):
 
         Args:
             auth_api: Authentication API instance that manages the session.
-            base_url: Base URL for API endpoints.
+            base_url: Base URL for API endpoints. See ``BaseAPI.__init__``
+                for what is accepted.
             send_legacy_cookie: See ``BaseAPI.__init__``.
             accept_language: See ``BaseAPI.__init__``.
             user_agent: See ``BaseAPI.__init__``. When ``None`` (the

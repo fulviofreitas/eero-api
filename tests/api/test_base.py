@@ -36,6 +36,7 @@ from eero.api.base import (
 )
 from eero.const import (
     API_ENDPOINT,
+    API_HOST,
     DEFAULT_ACCEPT_LANGUAGE,
     DEFAULT_USER_AGENT,
     LEGACY_USER_AGENT,
@@ -68,6 +69,63 @@ class TestBaseAPI:
         assert api._session is None
         assert api._base_url == "https://api.example.com"
         assert api._should_close_session is False
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.example.com:abc",
+            "https://api.example.com:99999",
+            "https://user:pass@api.example.com",
+            "https://api.example.com@evil.example",
+            "https://api.example.com\\@evil.example",
+            "https://api.example.com\uff1a99",
+            "api.example.com",
+            "//api.example.com",
+            "/2.2",
+            "https://",
+            "https:///2.2",
+            "https://[::1",
+        ],
+    )
+    def test_init_rejects_unusable_base_url(self, base_url):
+        """A base URL that could never match an origin fails at construction, naming the field."""
+        with pytest.raises(EeroValidationException) as excinfo:
+            BaseAPI(base_url=base_url)
+
+        assert excinfo.value.field == "base_url"
+        assert "pass" not in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "",
+            API_ENDPOINT,
+            "https://api.example.com",
+            "https://api.example.com:8443",
+            "HTTPS://API.Example.COM:443/2.2",
+            "http://127.0.0.1:8080",
+        ],
+    )
+    def test_init_accepts_usable_base_url(self, base_url):
+        """The empty default, the SDK endpoint and a base with an explicit port construct."""
+        assert BaseAPI(base_url=base_url)._base_url == base_url
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("HTTPS://API-USER.E2RO.COM/2.2/networks", "HTTPS://API-USER.E2RO.COM/2.2/networks"),
+            ("Http://api.example.com/x", "Http://api.example.com/x"),
+            ("https://api.example.com/x", "https://api.example.com/x"),
+            ("/2.2/networks", "https://api.example.com/2.2/networks"),
+            ("networks", "https://api.example.com/networks"),
+            ("httpsx://x", "https://api.example.com/httpsx://x"),
+        ],
+    )
+    def test_resolve_url_matches_scheme_case_insensitively(self, url, expected):
+        """An absolute URL passes through as given whatever its scheme case; paths are joined."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        assert api._resolve_url(url) == expected
 
     def test_init_with_session(self, mock_session):
         """Test initialization with an existing session."""
@@ -927,6 +985,13 @@ class TestAuthenticatedAPI:
         assert api._auth_api is mock_auth_api
         assert api.session is mock_auth_api.session
 
+    def test_init_rejects_unusable_base_url(self, mock_auth_api):
+        """The subclass constructor surfaces the same validation error."""
+        with pytest.raises(EeroValidationException) as excinfo:
+            AuthenticatedAPI(mock_auth_api, base_url="https://api.example.com:abc")
+
+        assert excinfo.value.field == "base_url"
+
     def test_session_property_returns_auth_api_session(self, mock_auth_api, mock_session):
         """Test that session property delegates to auth API."""
         api = AuthenticatedAPI(mock_auth_api, base_url="https://api.example.com")
@@ -1546,10 +1611,9 @@ class TestCredentialPlacement:
         assert "X-User-Token" not in mock_session.request.call_args[1]["headers"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("base_url", ["", "https://api.example.com:abc"])
-    async def test_credential_withheld_when_base_url_unusable(self, mock_session, caplog, base_url):
-        """With no usable configured origin nothing matches, so no request gets a credential."""
-        api = BaseAPI(session=mock_session, base_url=base_url)
+    async def test_credential_withheld_when_no_base_url(self, mock_session, caplog):
+        """With no configured origin nothing matches, so no request gets a credential."""
+        api = BaseAPI(session=mock_session, base_url="")
         mock_session.request.return_value = create_mock_response(200, api_success_response({}))
 
         with caplog.at_level("WARNING", logger="eero.api.base"):
@@ -1617,6 +1681,57 @@ class TestOriginMismatch:
         result = origin_mismatch(url, self.BASE)
         assert result is not None
         assert result.reason == reason
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://api-user.e2ro.com/x",
+            "https://api-user.e2ro.com:443/x",
+            "https://api-user.e2ro.com:/x",
+            "https://api-user.e2ro.com:0443/x",
+            "https://api-user.e2ro.com:443:443/x",
+            "https://api-user.e2ro.com:443@evil.example/x",
+            "https://api-user.e2ro.com%40evil.example/x",
+            "https://api-user.e2ro.com#@evil.example/x",
+            "https://api-user.e2ro.com?@evil.example/x",
+            "https://api-user.e2ro.com./x",
+            "https://API-User.E2RO.com/x",
+            "HTTPS://api-user.e2ro.COM:443/x",
+            "https://api-user\t.e2ro.com/x",
+            "https://api-user\r.e2ro.com/x",
+            "https://api-user\n.e2ro.com/x",
+            "https://api-user.e2ro.com:4\t43/x",
+            "https://api-user.e2ro.com:4\r43/x",
+            "https://api-user.e2ro.com:44\n3/x",
+            "https://api-user.e2ro.com\t:443/x",
+            "https://api-user.e2ro.com\n@evil.example/x",
+            "https://[::1/x",
+            "https://[::1]/x",
+        ],
+    )
+    def test_agrees_with_the_http_clients_parser(self, url):
+        """Whatever the origin rule accepts, the HTTP client's URL parser reads the same way.
+
+        The rule decides where the credential goes; yarl (what aiohttp uses)
+        decides where the request goes. If the rule accepts a URL that yarl
+        reads as a different scheme, host or port, or with userinfo, the
+        credential would leave for the wrong place.
+        """
+        base = yarl.URL(API_HOST)
+        accepted = origin_mismatch(url, API_HOST) is None
+        try:
+            parsed = yarl.URL(url)
+        except ValueError:
+            assert not accepted
+            return
+
+        agrees = (
+            parsed.scheme == base.scheme
+            and parsed.host == base.host
+            and parsed.port == base.port
+            and parsed.user is None
+        )
+        assert agrees or not accepted
 
     def test_target_carries_no_userinfo_or_port(self):
         """The loggable target is scheme://host, and absent for userinfo and bad authorities."""
