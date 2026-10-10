@@ -50,9 +50,7 @@ class TestScheduleAPIGetSchedules:
 
         method, url = mock_session.request.call_args.args[:2]
         assert method == "GET"
-        assert url == (
-            "https://api-user.e2ro.com/2.2/networks/network_123/profiles/profile_001/schedules"
-        )
+        assert url == ("https://api-user.e2ro.com/2.2/networks/network_123/profiles/profile_001")
 
     @pytest.mark.asyncio
     async def test_get_schedules_prefers_parent_schedules_link(self, schedule_api, mock_session):
@@ -65,9 +63,7 @@ class TestScheduleAPIGetSchedules:
         await schedule_api.get_schedules("network_123", "profile_001", parent=parent)
 
         _, url = mock_session.request.call_args.args[:2]
-        assert url == (
-            "https://api-user.e2ro.com/2.3/networks/network_123/profiles/profile_001/schedules"
-        )
+        assert url == ("https://api-user.e2ro.com/2.2/networks/network_123/profiles/profile_001")
 
     @pytest.mark.asyncio
     async def test_get_schedules_network_id_with_brace_does_not_break_template(
@@ -110,7 +106,7 @@ class TestScheduleAPICreateSchedule:
             "network_123",
             "profile_001",
             name="Bedtime",
-            days=["monday", "tuesday"],
+            days=["Monday", "Tuesday"],
             start="21:00",
             end="07:00",
         )
@@ -121,7 +117,7 @@ class TestScheduleAPICreateSchedule:
         payload = mock_session.request.call_args.kwargs["json"]
         assert payload == {
             "name": "Bedtime",
-            "days": ["monday", "tuesday"],
+            "days": ["Monday", "Tuesday"],
             "start": "21:00",
             "end": "07:00",
             "enabled": True,
@@ -140,7 +136,7 @@ class TestScheduleAPICreateSchedule:
                 "network_123",
                 "profile_001",
                 name="Bedtime",
-                days=["monday"],
+                days=["Monday"],
                 start="21:00",
                 end="07:00",
             )
@@ -166,6 +162,10 @@ class TestScheduleAPIUpdateSchedule:
         await schedule_api.update_schedule(
             "/2.2/networks/network_123/profiles/profile_001/schedules/s_1",
             enabled=False,
+            name="Bedtime",
+            days=["Monday"],
+            start="21:00",
+            end="07:00",
         )
 
         method, url = mock_session.request.call_args.args[:2]
@@ -173,7 +173,13 @@ class TestScheduleAPIUpdateSchedule:
         assert url == (
             "https://api-user.e2ro.com/2.2/networks/network_123/profiles/profile_001/schedules/s_1"
         )
-        assert mock_session.request.call_args.kwargs["json"] == {"enabled": False}
+        assert mock_session.request.call_args.kwargs["json"] == {
+            "enabled": False,
+            "name": "Bedtime",
+            "days": ["Monday"],
+            "start": "21:00",
+            "end": "07:00",
+        }
 
     @pytest.mark.asyncio
     async def test_update_schedule_from_envelope(self, schedule_api, mock_session):
@@ -183,7 +189,9 @@ class TestScheduleAPIUpdateSchedule:
             "name": "Bedtime",
         }
 
-        await schedule_api.update_schedule(envelope, start="20:00")
+        await schedule_api.update_schedule(
+            envelope, name="Bedtime", days=["Monday"], start="20:00", end="07:00", enabled=False
+        )
 
         _, url = mock_session.request.call_args.args[:2]
         assert url == (
@@ -260,7 +268,9 @@ class TestScheduleOwnUrlConfinement:
     def write(self, request, schedule_api):
         """Return the write under test and its expected HTTP method."""
         if request.param == "update":
-            return "PUT", lambda target: schedule_api.update_schedule(target, enabled=False)
+            return "PUT", lambda target: schedule_api.update_schedule(
+                target, name="Bedtime", days=["Monday"], start="21:00", end="07:00", enabled=False
+            )
         return "DELETE", schedule_api.delete_schedule
 
     @pytest.mark.asyncio
@@ -384,7 +394,7 @@ class TestScheduleAPIClearProfileSchedule:
             {"url": "/2.2/networks/network_123/profiles/profile_001/schedules/s_2"},
             {"url": "/2.2/networks/network_123/profiles/profile_001/schedules/s_3"},
         ]
-        get_response = create_mock_response(200, api_success_response(pauses))
+        get_response = create_mock_response(200, api_success_response({"schedule": pauses}))
         delete_responses = [create_mock_response(200, {"meta": {"code": 200}}) for _ in pauses]
         mock_session.request.side_effect = [get_response, *delete_responses]
 
@@ -421,13 +431,13 @@ class TestScheduleAPIBedtime:
         assert mock_session.request.call_count == 1
         payload = mock_session.request.call_args.kwargs["json"]
         assert payload["days"] == [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
         ]
         assert payload["start"] == "21:00"
         assert payload["end"] == "07:00"
@@ -439,7 +449,7 @@ class TestScheduleAPIBedtime:
         await schedule_api.set_weekday_bedtime("network_123", "profile_001", "21:00", "07:00")
 
         payload = mock_session.request.call_args.kwargs["json"]
-        assert payload["days"] == ["monday", "tuesday", "wednesday", "thursday", "friday"]
+        assert payload["days"] == ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
     @pytest.mark.asyncio
     async def test_set_weekend_bedtime_uses_weekend_only(self, schedule_api, mock_session):
@@ -448,4 +458,96 @@ class TestScheduleAPIBedtime:
         await schedule_api.set_weekend_bedtime("network_123", "profile_001", "21:00", "07:00")
 
         payload = mock_session.request.call_args.kwargs["json"]
-        assert payload["days"] == ["saturday", "sunday"]
+        assert payload["days"] == ["Saturday", "Sunday"]
+
+
+@pytest.mark.asyncio
+async def test_partial_rename_preserves_disabled_state_and_fresh_values(schedule_api, mock_session):
+    url = "/2.2/networks/n/profiles/p/schedules/s"
+    current = {
+        "url": url,
+        "name": "Old",
+        "days": ["Monday"],
+        "start": "22:00",
+        "end": "07:00",
+        "enabled": False,
+    }
+    profile_response = api_success_response({"schedule": [current]})
+    mock_session.request.side_effect = [
+        create_mock_response(200, profile_response),
+        create_mock_response(200, api_success_response({})),
+    ]
+    await schedule_api.update_schedule({"url": url, "enabled": True}, name="New")
+    read, write = mock_session.request.call_args_list
+    assert read.args[0] == "GET"
+    assert read.args[1].endswith("/networks/n/profiles/p")
+    assert write.kwargs["json"] == {
+        "name": "New",
+        "days": ["Monday"],
+        "start": "22:00",
+        "end": "07:00",
+        "enabled": False,
+    }
+    assert current["name"] == "Old"
+
+
+@pytest.mark.asyncio
+async def test_missing_schedule_refuses_partial_write(schedule_api, mock_session):
+    mock_session.request.return_value = create_mock_response(
+        200, api_success_response({"schedule": []})
+    )
+    with pytest.raises(EeroValidationException):
+        await schedule_api.update_schedule("/2.2/networks/n/profiles/p/schedules/s", name="New")
+    assert mock_session.request.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("days", [["mon"], [], [1]])
+async def test_invalid_days_refused_before_create(schedule_api, mock_session, days):
+    with pytest.raises(EeroValidationException):
+        await schedule_api.create_schedule(
+            "n", "p", name="x", days=days, start="21:00", end="07:00"
+        )
+    mock_session.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_schedules_preserves_meta_and_schedule_objects(schedule_api, mock_session):
+    response = {
+        "meta": {"code": 200, "server_time": "now"},
+        "data": {
+            "schedule": [{"url": "/2.2/networks/n/profiles/p/schedules/s", "enabled": False}],
+            "name": "Profile",
+        },
+    }
+    mock_session.request.return_value = create_mock_response(200, response)
+    result = await schedule_api.get_schedules("n", "p")
+    assert result == {"meta": response["meta"], "data": response["data"]["schedule"]}
+
+
+@pytest.mark.asyncio
+async def test_partial_update_matches_schedule_across_api_versions(schedule_api, mock_session):
+    current = {
+        "url": "/2.2/networks/n/profiles/p/schedules/s",
+        "name": "Old",
+        "days": ["Monday"],
+        "start": "22:00",
+        "end": "07:00",
+        "enabled": False,
+    }
+    mock_session.request.side_effect = [
+        create_mock_response(200, api_success_response({"schedule": [current]})),
+        create_mock_response(200, api_success_response({})),
+    ]
+    await schedule_api.update_schedule("/2.3/networks/n/profiles/p/schedules/s", name="New")
+    assert mock_session.request.call_args.args[1].endswith("/2.3/networks/n/profiles/p/schedules/s")
+    assert mock_session.request.call_args.kwargs["json"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_full_day_names_normalize_case(schedule_api, mock_session):
+    mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+    await schedule_api.create_schedule(
+        "n", "p", name="x", days=["monday", "TUESDAY"], start="21:00", end="07:00"
+    )
+    assert mock_session.request.call_args.kwargs["json"]["days"] == ["Monday", "Tuesday"]

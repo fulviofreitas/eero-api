@@ -18,6 +18,7 @@ their own URL. This replaces the previous (incorrect) design of writing a
 """
 
 from typing import Any, Dict, List, Mapping, Optional
+from urllib.parse import urlsplit
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
 from ..exceptions import EeroAuthenticationException, EeroValidationException
@@ -35,17 +36,28 @@ _SCHEDULE_FAMILY = "networks/{id}/profiles/{id}/schedules/{id}"
 
 #: All seven days, used as the default scope for `enable_bedtime`.
 ALL_DAYS = (
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-    "sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 )
 
-WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday")
-WEEKEND = ("saturday", "sunday")
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+WEEKEND = ("Saturday", "Sunday")
+
+
+def _schedule_days(days: List[str]) -> List[str]:
+    if not isinstance(days, list) or not days:
+        raise EeroValidationException("days", "must be a non-empty list of full day names")
+    result = []
+    for day in days:
+        if not isinstance(day, str) or day.capitalize() not in ALL_DAYS:
+            raise EeroValidationException("days", "must contain full day names")
+        result.append(day.capitalize())
+    return result
 
 
 def _resolve_schedule_url(schedule: Any) -> str:
@@ -148,7 +160,11 @@ class ScheduleAPI(AuthenticatedAPI):
         *,
         parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Get the scheduled pauses for a profile - returns raw Eero API response.
+        """Get scheduled pauses from a fresh profile read.
+
+        The schedules collection GET returns 404. For compatibility this method
+        returns the profile response meta with its raw schedule list as data;
+        individual schedule objects are not transformed.
 
         Args:
             network: ID of the network the profile belongs to.
@@ -166,9 +182,17 @@ class ScheduleAPI(AuthenticatedAPI):
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
 
-        url = self._schedules_url(network, profile, parent)
-        _LOGGER.debug("Getting schedules for profile %s", profile)
-        return await self.get(url, auth_token=auth_token)
+        envelope = as_envelope(parent)
+        url = self_url(envelope) if envelope is not None else None
+        if url is None:
+            url = resolve_nested_url(network, profile, prefix="profiles")
+        response = await self.get(url, auth_token=auth_token)
+        data = response.get("data", {})
+        schedules = data.get("schedule", []) if isinstance(data, dict) else []
+        return {
+            "meta": response.get("meta", {}),
+            "data": schedules if isinstance(schedules, list) else [],
+        }
 
     async def create_schedule(
         self,
@@ -188,7 +212,7 @@ class ScheduleAPI(AuthenticatedAPI):
             network: ID of the network the profile belongs to.
             profile: The profile's bare ID, path, or absolute URL.
             name: Name of the schedule.
-            days: Days the pause applies to, e.g. ``["monday", "tuesday"]``.
+            days: Days the pause applies to, e.g. ``["Monday", "Tuesday"]``.
             start: Start time (``HH:MM``).
             end: End time (``HH:MM``).
             enabled: Whether the schedule is active. Defaults to ``True``.
@@ -206,7 +230,13 @@ class ScheduleAPI(AuthenticatedAPI):
             raise EeroAuthenticationException("Not authenticated")
 
         url = self._schedules_url(network, profile, parent)
-        payload = {"name": name, "days": days, "start": start, "end": end, "enabled": enabled}
+        payload = {
+            "name": name,
+            "days": _schedule_days(days),
+            "start": start,
+            "end": end,
+            "enabled": enabled,
+        }
 
         warn_uncharacterised_write(_LOGGER, "create_schedule")
         _LOGGER.debug("Creating schedule '%s' for profile %s", name, profile)
@@ -224,16 +254,19 @@ class ScheduleAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Update a scheduled pause via its own URL - returns raw Eero API response.
 
+        Omitted fields are read from the current profile and sent in the complete
+        replacement, including enabled. Read-modify-write is not atomic; a
+        concurrent edit can be overwritten. Supply every field to avoid the read.
+
         Args:
             schedule: The pause's own path or absolute URL (as returned by
                 `get_schedules`/`create_schedule`), or its cached envelope.
-                A bare id is rejected: this method is not given the network
-                and profile the pause lives under.
-            name: New name, or ``None`` to omit.
-            days: New days list, or ``None`` to omit.
-            start: New start time, or ``None`` to omit.
-            end: New end time, or ``None`` to omit.
-            enabled: New enabled state, or ``None`` to omit.
+                A bare id is rejected because network/profile context is absent.
+            name: New name, or ``None`` to preserve.
+            days: New days list, or ``None`` to preserve.
+            start: New start time, or ``None`` to preserve.
+            end: New end time, or ``None`` to preserve.
+            enabled: New enabled state, or ``None`` to preserve.
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
@@ -267,6 +300,38 @@ class ScheduleAPI(AuthenticatedAPI):
             )
 
         url = _resolve_schedule_url(schedule)
+        fields = {"name", "days", "start", "end", "enabled"}
+        if not fields <= payload.keys():
+            parts = urlsplit(url).path.strip("/").split("/")
+            if (
+                len(parts) != 7
+                or parts[1] != "networks"
+                or parts[3] != "profiles"
+                or parts[5] != "schedules"
+            ):
+                raise EeroValidationException("schedule", "must identify a profile schedule")
+            response = await self.get_schedules(
+                f"/{parts[0]}/networks/{parts[2]}",
+                f"/{parts[0]}/networks/{parts[2]}/profiles/{parts[4]}",
+            )
+            current = next(
+                (
+                    item
+                    for item in response["data"]
+                    if isinstance(item, dict)
+                    and isinstance(item.get("url"), str)
+                    and urlsplit(item["url"]).path.strip("/").split("/")[1:] == parts[1:]
+                ),
+                None,
+            )
+            if current is None or not (fields - payload.keys()) <= current.keys():
+                raise EeroValidationException(
+                    "schedule",
+                    "current schedule is missing or incomplete; supply every replacement field",
+                )
+            for field in fields:
+                payload.setdefault(field, current[field])
+        payload["days"] = _schedule_days(payload["days"])
         warn_uncharacterised_write(_LOGGER, "update_schedule")
         _LOGGER.debug("Updating schedule at %s: %s", url, sorted(payload))
         return await self.put(url, auth_token=auth_token, json=payload)

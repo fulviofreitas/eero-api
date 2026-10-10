@@ -671,9 +671,9 @@ Scheduled pauses live at `networks/{id}/profiles/{profile}/schedules` (the profi
 
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
-| `get_schedules` | `async def get_schedules(self, network: str, profile: str, *, parent=None)` | GET the schedules collection | read |
+| `get_schedules` | `async def get_schedules(self, network: str, profile: str, *, parent=None)` | GET the profile; expose its `schedule` list with original metadata | read |
 | `create_schedule` | `async def create_schedule(self, network: str, profile: str, *, name: str, days: List[str], start: str, end: str, enabled: bool=True, parent=None)` | POST JSON to the collection | unverified write |
-| `update_schedule` | `async def update_schedule(self, schedule: Any, *, name: Optional[str]=None, days: Optional[List[str]]=None, start: Optional[str]=None, end: Optional[str]=None, enabled: Optional[bool]=None)` | PUT JSON of the supplied fields to the pause's own URL (`schedule` is a path/URL or envelope) | unverified write |
+| `update_schedule` | `async def update_schedule(self, schedule: Any, *, name: Optional[str]=None, days: Optional[List[str]]=None, start: Optional[str]=None, end: Optional[str]=None, enabled: Optional[bool]=None)` | PUT complete JSON replacement to the pause's own URL; omitted fields read from the profile | unverified write |
 | `delete_schedule` | `async def delete_schedule(self, schedule: Any)` | DELETE the pause's own URL | unverified write |
 | `clear_profile_schedule` | `async def clear_profile_schedule(self, network: str, profile: str, *, parent=None) -> List[Dict[str, Any]]` | one GET + one DELETE per pause | unverified write; never retried |
 | `enable_bedtime` | `async def enable_bedtime(self, network: str, profile: str, start_time: str, end_time: str, days: Optional[List[str]]=None, *, parent=None)` | one `create_schedule` | unverified write |
@@ -1141,3 +1141,14 @@ defined in `const.py` — see [Module-level exports](#module-level-exports) for 
 - [Error Handling](Error-Handling) — The `EeroException` hierarchy and handling patterns
 - [Deprecations](Deprecations) — No-op and removed surface, and what replaces it
 - [Credential Storage](Credential-Storage) — Keyring, file, and memory storage backends
+
+
+### Schedule behavior corrections
+
+`get_schedules` reads a fresh profile envelope and returns its `schedule` array
+as `data`, retaining the profile response metadata. The collection GET is not
+used. Full day names are normalized to `Monday` through `Sunday`. Partial
+updates first read the current schedule and send all replacement fields,
+including its current `enabled` state. A missing or incomplete schedule is
+refused; callers can supply every field for a direct replacement. This
+read-modify-write is not atomic and can overwrite concurrent edits.
