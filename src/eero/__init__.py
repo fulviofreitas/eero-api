@@ -53,4 +53,4 @@ __all__ = [
     "redact_sensitive",
 ]
 
-__version__ = "8.1.7"
+__version__ = "8.1.8"

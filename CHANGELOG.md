@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.8](https://github.com/fulviofreitas/eero-api/compare/v8.1.7...v8.1.8) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **client:** route get_account through AccountAPI and surface discovery errors ([593eeb2](https://github.com/fulviofreitas/eero-api/commit/593eeb27a9936250cf411d43429739117d9fe820)), closes [#170](https://github.com/fulviofreitas/eero-api/issues/170) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
+
 ## [8.1.7](https://github.com/fulviofreitas/eero-api/compare/v8.1.6...v8.1.7) (2026-10-10)
 
 ### 🐛 Bug Fixes
