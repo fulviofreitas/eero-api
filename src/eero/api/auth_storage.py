@@ -13,13 +13,14 @@ session token (see ``AuthAPI.refresh_session``). Records written before this
 schema existed are migrated in place the first time they are loaded.
 """
 
+import asyncio
 import json
 import os
 import stat
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import keyring
 
@@ -27,6 +28,8 @@ from ..const import CREDENTIAL_SCHEMA_VERSION
 from ..logging import get_secure_logger
 
 _LOGGER = get_secure_logger(__name__)
+
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -140,13 +143,65 @@ class CredentialStorage(ABC):
         pass
 
 
-class KeyringStorage(CredentialStorage):
+class _ThreadedStorage(CredentialStorage):
+    """Serialize complete blocking operations, including migration, in a worker."""
+
+    def __init__(self) -> None:
+        self._operation_lock = asyncio.Lock()
+
+    @abstractmethod
+    def _load(self) -> AuthCredentials:
+        """Read and migrate credentials synchronously."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _save(self, credentials: AuthCredentials) -> None:
+        """Write credentials synchronously."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _clear(self) -> None:
+        """Remove credentials synchronously."""
+        raise NotImplementedError
+
+    async def _run(self, operation: Callable[..., _T], *args: Any) -> _T:
+        async with self._operation_lock:
+            task = asyncio.create_task(asyncio.to_thread(operation, *args))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # Threads cannot be cancelled. Drain before releasing the lock so
+                # a queued clear cannot finish before an older save finishes.
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not task.cancelled():
+                    task.exception()  # retrieve worker failure without replacing cancellation
+                raise
+
+    async def load(self) -> AuthCredentials:
+        return await self._run(self._load)
+
+    async def save(self, credentials: AuthCredentials) -> None:
+        # Capture before dispatch; the caller may subsequently mutate its record.
+        snapshot = AuthCredentials(session_id=credentials.session_id)
+        await self._run(self._save, snapshot)
+
+    async def clear(self) -> None:
+        await self._run(self._clear)
+
+
+class KeyringStorage(_ThreadedStorage):
     """Credential storage using OS keyring for secure storage."""
 
     SERVICE_NAME = "eero-api"
     ACCOUNT_NAME = "auth-tokens"
 
-    async def load(self) -> AuthCredentials:
+    def _load(self) -> AuthCredentials:
         """Load credentials from keyring, migrating a legacy record in place.
 
         When a legacy record is migrated, the write is read back and
@@ -165,7 +220,7 @@ class KeyringStorage(CredentialStorage):
                 if migrated:
                     _LOGGER.debug("Migrated legacy credential record in keyring storage")
                     try:
-                        await self.save(credentials)
+                        self._save(credentials)
                     except Exception:
                         _log_migration_readback("keyring", False)
                         return credentials
@@ -185,7 +240,7 @@ class KeyringStorage(CredentialStorage):
 
         return AuthCredentials()
 
-    async def save(self, credentials: AuthCredentials) -> None:
+    def _save(self, credentials: AuthCredentials) -> None:
         """Save credentials to keyring."""
         try:
             data = json.dumps(credentials.to_dict())
@@ -203,7 +258,7 @@ class KeyringStorage(CredentialStorage):
             _LOGGER.debug("Error saving to keyring (using file fallback): %s", e)
             raise
 
-    async def clear(self) -> None:
+    def _clear(self) -> None:
         """Clear credentials from keyring."""
         try:
             keyring.delete_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
@@ -216,7 +271,7 @@ class KeyringStorage(CredentialStorage):
             raise
 
 
-class FileStorage(CredentialStorage):
+class FileStorage(_ThreadedStorage):
     """Credential storage using JSON file with restricted permissions."""
 
     def __init__(self, file_path: str) -> None:
@@ -225,6 +280,7 @@ class FileStorage(CredentialStorage):
         Args:
             file_path: Path to the cookie/credential file
         """
+        super().__init__()
         self._file_path = os.path.abspath(os.path.expanduser(file_path))
 
     @property
@@ -232,7 +288,7 @@ class FileStorage(CredentialStorage):
         """Get the file path."""
         return self._file_path
 
-    async def load(self) -> AuthCredentials:
+    def _load(self) -> AuthCredentials:
         """Load credentials from file, migrating a legacy record in place.
 
         When a legacy record is migrated, the write is read back and
@@ -255,7 +311,7 @@ class FileStorage(CredentialStorage):
             if migrated:
                 _LOGGER.debug("Migrated legacy credential record in file storage")
                 try:
-                    await self.save(credentials)
+                    self._save(credentials)
                 except Exception:
                     _log_migration_readback("file", False)
                     return credentials
@@ -279,7 +335,7 @@ class FileStorage(CredentialStorage):
             _LOGGER.warning("Unexpected error loading cookie file: %s", e)
             return AuthCredentials()
 
-    async def save(self, credentials: AuthCredentials) -> None:
+    def _save(self, credentials: AuthCredentials) -> None:
         """Save credentials to file with restricted permissions.
 
         The record is first written to a fresh temporary file in the same
@@ -353,7 +409,7 @@ class FileStorage(CredentialStorage):
             _LOGGER.error("Error saving to file: %s", e)
             raise
 
-    async def clear(self) -> None:
+    def _clear(self) -> None:
         """Clear the credential file."""
         try:
             if os.path.exists(self._file_path):

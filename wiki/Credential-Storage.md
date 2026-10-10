@@ -195,3 +195,14 @@ credentials. A chain reports failure if neither backend retains the supplied
 record. Clearing attempts both backends before reporting incomplete cleanup.
 Authentication catches save failures and warns while retaining the usable
 in-memory session; a successful login does not guarantee durable persistence.
+
+
+### Event-loop responsiveness and cancellation
+
+File and keyring load/save/clear operations, including migrations and atomic
+file replacement, run in a worker thread. Each backend instance serializes
+its operations. Cancelling a caller waits for its worker to finish before
+releasing that serialization lock: a queued clear therefore runs after an
+already-started save. Cancellation cannot stop a blocking OS/keyring call,
+so cancellation may take as long as that call. Coordination between separate
+backend instances or processes is outside this per-instance guarantee.

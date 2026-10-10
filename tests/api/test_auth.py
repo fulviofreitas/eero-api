@@ -1755,10 +1755,10 @@ class TestCredentialMigrationReadback:
         api = AuthAPI(session=mock_session, cookie_file=str(cookie_file), use_keyring=False)
         api._session = mock_session
 
-        original_save = FileStorage.save
+        original_save = FileStorage._save
 
-        async def _save_then_corrupt(self, credentials):
-            await original_save(self, credentials)
+        def _save_then_corrupt(self, credentials):
+            original_save(self, credentials)
             # Simulate the on-disk record silently diverging from what was
             # just written (e.g. a concurrent writer, or the write not
             # actually landing despite no exception being raised).
@@ -1772,7 +1772,7 @@ class TestCredentialMigrationReadback:
                     f,
                 )
 
-        with patch.object(FileStorage, "save", _save_then_corrupt):
+        with patch.object(FileStorage, "_save", _save_then_corrupt):
             with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
                 await api._load_credentials()
 
