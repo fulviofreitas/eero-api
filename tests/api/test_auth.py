@@ -606,6 +606,7 @@ class TestChainedStorageSaveReadBackFallback:
 
         fallback = AsyncMock()
         fallback.save = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
 
         storage = ChainedStorage(primary=primary, fallback=fallback)
         credentials = AuthCredentials(session_id="live_token")
@@ -624,10 +625,11 @@ class TestChainedStorageSaveReadBackFallback:
         """
         primary = AsyncMock()
         primary.save = AsyncMock()
-        primary.load = AsyncMock(side_effect=RuntimeError("keyring locked"))
+        primary.load = AsyncMock(side_effect=[RuntimeError("keyring locked"), AuthCredentials()])
 
         fallback = AsyncMock()
         fallback.save = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
 
         storage = ChainedStorage(primary=primary, fallback=fallback)
         credentials = AuthCredentials(session_id="live_token")
@@ -642,9 +644,11 @@ class TestChainedStorageSaveReadBackFallback:
         """Regression guard: a primary save() that raises must still reach the fallback."""
         primary = AsyncMock()
         primary.save = AsyncMock(side_effect=RuntimeError("keyring unavailable"))
+        primary.load = AsyncMock(return_value=AuthCredentials())
 
         fallback = AsyncMock()
         fallback.save = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
 
         storage = ChainedStorage(primary=primary, fallback=fallback)
         credentials = AuthCredentials(session_id="live_token")
@@ -662,6 +666,7 @@ class TestChainedStorageSaveReadBackFallback:
 
         fallback = AsyncMock()
         fallback.save = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
 
         storage = ChainedStorage(primary=primary, fallback=fallback)
         credentials = AuthCredentials(session_id="live_token")
@@ -673,7 +678,7 @@ class TestChainedStorageSaveReadBackFallback:
 
     @pytest.mark.asyncio
     async def test_save_logs_error_when_verification_fails_and_fallback_also_fails(self, caplog):
-        """save() never raises, even when both the verified primary and the fallback fail."""
+        """A failed primary and fallback must report a persistence failure."""
         primary = AsyncMock()
         primary.save = AsyncMock()
         primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
@@ -684,12 +689,8 @@ class TestChainedStorageSaveReadBackFallback:
         storage = ChainedStorage(primary=primary, fallback=fallback)
         credentials = AuthCredentials(session_id="live_token")
 
-        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+        with pytest.raises(OSError, match="Neither credential storage"):
             await storage.save(credentials)
-
-        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert len(error_records) == 1
-        assert "Both primary and fallback storage failed" in error_records[0].getMessage()
 
     @pytest.mark.asyncio
     async def test_save_end_to_end_falls_back_to_file_under_a_silent_noop_keyring(
@@ -743,7 +744,8 @@ class TestFileStorageAtomicSecurePermissions:
 
         storage = FileStorage(str(symlink_path))
 
-        await storage.save(AuthCredentials(session_id="s"))
+        with pytest.raises(OSError):
+            await storage.save(AuthCredentials(session_id="s"))
 
         # The write is refused -- the symlink target is left untouched, and
         # the path is still a symlink rather than having been replaced.
@@ -768,9 +770,8 @@ class TestFileStorageAtomicSecurePermissions:
         previous_bytes = cookie_file.read_bytes()
 
         with patch("os.fsync", side_effect=OSError("simulated interrupted write")):
-            # save() swallows the error internally (logs at ERROR) rather
-            # than propagating, consistent with the rest of this backend.
-            await storage.save(AuthCredentials(session_id="new-value-that-must-not-land"))
+            with pytest.raises(OSError):
+                await storage.save(AuthCredentials(session_id="new-value-that-must-not-land"))
 
         assert cookie_file.read_bytes() == previous_bytes
         loaded = json.loads(cookie_file.read_text())

@@ -164,7 +164,11 @@ class KeyringStorage(CredentialStorage):
 
                 if migrated:
                     _LOGGER.debug("Migrated legacy credential record in keyring storage")
-                    await self.save(credentials)
+                    try:
+                        await self.save(credentials)
+                    except Exception:
+                        _log_migration_readback("keyring", False)
+                        return credentials
                     readback_raw = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
                     readback_matched = (
                         readback_raw is not None
@@ -186,10 +190,18 @@ class KeyringStorage(CredentialStorage):
         try:
             data = json.dumps(credentials.to_dict())
             keyring.set_password(self.SERVICE_NAME, self.ACCOUNT_NAME, data)
+            readback = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
+            if (
+                readback is None
+                or _parse_stored_record(json.loads(readback))[0].session_id
+                != credentials.session_id
+            ):
+                raise OSError("Keyring did not retain the credential record")
             _LOGGER.debug("Saved authentication data to keyring")
         except Exception as e:
             # Log at debug level since file fallback works
             _LOGGER.debug("Error saving to keyring (using file fallback): %s", e)
+            raise
 
     async def clear(self) -> None:
         """Clear credentials from keyring."""
@@ -201,6 +213,7 @@ class KeyringStorage(CredentialStorage):
             pass
         except Exception as e:
             _LOGGER.debug("Error clearing keyring: %s", e)
+            raise
 
 
 class FileStorage(CredentialStorage):
@@ -241,7 +254,11 @@ class FileStorage(CredentialStorage):
 
             if migrated:
                 _LOGGER.debug("Migrated legacy credential record in file storage")
-                await self.save(credentials)
+                try:
+                    await self.save(credentials)
+                except Exception:
+                    _log_migration_readback("file", False)
+                    return credentials
                 readback_matched = False
                 try:
                     with open(self._file_path, "r") as f:
@@ -334,6 +351,7 @@ class FileStorage(CredentialStorage):
 
         except Exception as e:
             _LOGGER.error("Error saving to file: %s", e)
+            raise
 
     async def clear(self) -> None:
         """Clear the credential file."""
@@ -343,6 +361,7 @@ class FileStorage(CredentialStorage):
                 _LOGGER.debug("Removed cookie file: %s", self._file_path)
         except Exception as e:
             _LOGGER.warning("Error removing cookie file: %s", e)
+            raise
 
 
 class MemoryStorage(CredentialStorage):
@@ -411,67 +430,59 @@ class ChainedStorage(CredentialStorage):
             # primary holds the record; backends swallow their own write
             # errors, so without the read-back a failed primary write would
             # destroy the only surviving copy.
-            await self._primary.save(credentials)
-            promoted = await self._primary.load()
-            if promoted.session_id == credentials.session_id:
-                await self._fallback.clear()
-            else:
-                _LOGGER.debug("Primary storage did not retain the promoted record; fallback kept")
+            try:
+                await self._primary.save(credentials)
+                promoted = await self._primary.load()
+                if promoted.session_id == credentials.session_id:
+                    await self._fallback.clear()
+                else:
+                    _LOGGER.debug(
+                        "Primary storage did not retain the promoted record; fallback kept"
+                    )
+            except Exception:
+                _LOGGER.warning(
+                    "Credential promotion failed; retaining the loaded fallback session"
+                )
 
         return credentials
 
     async def save(self, credentials: AuthCredentials) -> None:
-        """Save to primary storage, falling back only if primary fails.
+        """Persist and verify the record, retiring superseded fallback copies.
 
-        Only uses fallback storage if primary fails, to avoid duplicating
-        credentials across multiple storage backends.
-
-        A primary backend that swallows its own write errors (as every
-        concrete ``CredentialStorage`` does) can return successfully without
-        actually persisting anything - a lying or no-op keyring backend is
-        indistinguishable from a working one by return value alone. To catch
-        that, a successful primary write is verified with a read-back
-        (mirroring the promotion logic in ``load()``); only a verified write
-        skips the fallback. The read-back itself is also guarded: primary
-        implementations beyond the two shipped here are not guaranteed to
-        swallow their own read errors, and a raised exception must not
-        escape ``save()`` -- it is treated the same as a failed
-        verification.
+        Raise if neither backend retains the record. A primary success must
+        remove the fallback record, otherwise a later load could resurrect it.
         """
         try:
             await self._primary.save(credentials)
-        except Exception as e:
-            _LOGGER.debug("Primary storage save failed, trying fallback: %s", e)
-            try:
-                await self._fallback.save(credentials)
-                _LOGGER.debug("Saved to fallback storage")
-            # save() must never raise -- a failed fallback is logged, not
-            # propagated, so callers can't be broken by a storage backend.
-            except Exception as fallback_error:  # pylint: disable=broad-exception-caught
-                _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
-            return
-
-        try:
             verified = await self._primary.load()
-        except Exception as e:
-            _LOGGER.debug("Primary storage verification read failed, trying fallback: %s", e)
-            verified = AuthCredentials()
-
-        if verified.session_id == credentials.session_id:
-            _LOGGER.debug("Saved to primary storage")
+            primary_holds = verified.session_id == credentials.session_id
+        except Exception:
+            primary_holds = False
+        if primary_holds:
+            await self._fallback.clear()
             return
-
-        _LOGGER.debug("Primary storage did not retain the saved record; trying fallback")
         try:
             await self._fallback.save(credentials)
-            _LOGGER.debug("Saved to fallback storage")
-        except Exception as fallback_error:
-            _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
+            verified = await self._fallback.load()
+            if verified.session_id != credentials.session_id:
+                raise OSError("Fallback storage did not retain the credential record")
+            # A failed primary replacement can leave an older preferred record.
+        except Exception as error:
+            raise OSError("Neither credential storage backend retained the record") from error
+        await self._primary.clear()
+        if (await self._primary.load()).session_id is not None:
+            raise OSError("Primary storage retained a superseded credential record")
 
     async def clear(self) -> None:
-        """Clear both storages."""
-        await self._primary.clear()
-        await self._fallback.clear()
+        """Attempt both removals, reporting any incomplete cleanup."""
+        failures = []
+        for backend in (self._primary, self._fallback):
+            try:
+                await backend.clear()
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise OSError("Could not clear every credential storage backend") from failures[0]
 
 
 def create_storage(
