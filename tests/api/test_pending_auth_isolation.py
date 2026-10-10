@@ -81,3 +81,31 @@ async def test_client_pending_login_cannot_reuse_old_cached_resources():
     await client.login("example@example.com")
     with pytest.raises(EeroAuthenticationException):
         await client.get_network("n")
+
+
+@pytest.mark.asyncio
+async def test_old_refresh_failure_cannot_destroy_pending_login_or_durable_session():
+    import asyncio
+
+    auth = AuthAPI(use_keyring=False)
+    auth._storage = MemoryStorage()
+    await auth.set_session_token("established")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def post(endpoint, **kwargs):
+        if endpoint.endswith("/refresh"):
+            started.set()
+            await release.wait()
+            raise EeroAuthenticationException(
+                "old session expired", error_code="error.session.expired"
+            )
+        return {"data": {"user_token": "pending"}}
+
+    auth.post = AsyncMock(side_effect=post)
+    refreshing = asyncio.create_task(auth.refresh_session())
+    await asyncio.wait_for(started.wait(), 2)
+    await auth.login("example@example.com")
+    release.set()
+    assert not await refreshing
+    assert auth._credentials.session_id == "pending"
+    assert (await auth._storage.load()).session_id == "established"
