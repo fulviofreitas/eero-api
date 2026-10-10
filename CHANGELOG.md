@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.10](https://github.com/fulviofreitas/eero-api/compare/v8.1.9...v8.1.10) (2026-10-10)
+
+### ⚡ Performance
+
+* **auth:** run blocking credential storage I/O off the event loop ([25cddd1](https://github.com/fulviofreitas/eero-api/commit/25cddd1f3fe7139fa3640aa677240082942a4269)), closes [#183](https://github.com/fulviofreitas/eero-api/issues/183) [#183](https://github.com/fulviofreitas/eero-api/issues/183) [#171](https://github.com/fulviofreitas/eero-api/issues/171) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
+
 ## [8.1.9](https://github.com/fulviofreitas/eero-api/compare/v8.1.8...v8.1.9) (2026-10-10)
 
 ### 🐛 Bug Fixes
