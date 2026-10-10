@@ -7,12 +7,12 @@ All data extraction, field mapping, and transformation must be done by downstrea
 from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, RequestEncoding
-from .links import sub_resource_url
+from .links import resource_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -102,3 +102,36 @@ class UpdatesAPI(AuthenticatedAPI):
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING
         )
+
+    async def set_preferred_update_hour(self, network_id: str, hour: int) -> Dict[str, Any]:
+        """Set the hour of day the network applies firmware updates.
+
+        POSTs JSON ``{"preferred_update_hour": hour}`` to
+        ``networks/{id}/updates/preferred_update_hour``. The network envelope
+        publishes no link to this resource, so the path is built from the
+        template. The current value is readable from the network envelope's
+        ``updates.preferred_update_hour``.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            hour: Hour of day in the network's timezone, ``0`` (midnight to
+                1am) through ``23`` (11pm to midnight).
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If ``hour`` is not an int from 0 to 23
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        if isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23:
+            raise EeroValidationException("hour", "must be an int from 0 to 23")
+
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = resource_url(network_id, "networks/{id}/updates/preferred_update_hour")
+        warn_uncharacterised_write(_LOGGER, "set preferred update hour for network")
+        return await self.post(url, auth_token=auth_token, json={"preferred_update_hour": hour})
