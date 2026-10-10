@@ -595,6 +595,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_guest_network` | `async def set_guest_network(self, network_id: str, *, enabled: bool, name: Optional[str]=None, parent=None)` | PUT form `enabled=` (+ `name=`) to the `guestnetwork` link | verified write (2026-09-20); disconnects guests |
 | `set_guest_password` | `async def set_guest_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the guest network's `password` link | verified write (2026-09-20); disconnects guests |
 | `clear_guest_password` | `async def clear_guest_password(self, network_id: str, *, parent=None)` | DELETE the guest network's `password` link | verified write (2026-09-20); disconnects guests |
+| `set_hide_5g` | `async def set_hide_5g(self, network_id: str, enabled: bool)` | `True`: PUT JSON `{"value": true}` to `networks/{id}/temporary_flags/hide_5g`; `False`: DELETE it | disconnects 5 GHz clients; unverified |
 
 </details>
 
@@ -921,6 +922,7 @@ Module export: `CHANNEL_UTILIZATION_BANDS = ("band_2_4GHz", "band_5GHz_low", "ba
 | `MembersAPI` | `promote_member` | `async def promote_member(self, network_id: str, member_id: str)` | POST JSON `{"member_id": ...}` to `.../member_promotion` | unverified write |
 | `MembersAPI` | `remove_admin` | `async def remove_admin(self, network_id: str, user_id: str)` | DELETE `.../admins/{user}` | unverified write |
 | `MembersAPI` | `query_invite` | `async def query_invite(self, invite_code: str)` | POST JSON `{"invite_code": ...}` to `inviteQuery` | unverified |
+| `AccountAPI` | `get_account` | `async def get_account(self)` | GET `account` | read |
 | `AccountAPI` | `set_name` | `async def set_name(self, name: str)` | PUT form `name=` to `account/name` | unverified write |
 | `AccountAPI` | `set_email` | `async def set_email(self, email: str)` | PUT form `email=` to `account/email` | unverified write |
 | `AccountAPI` | `verify_email` | `async def verify_email(self, code: str)` | POST form `code=` to `account/email/verify` | unverified write |
@@ -969,6 +971,7 @@ Account deletion is deliberately not exposed. Identifier values passed to `Accou
 | `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | unverified write; no `EeroClient` wrapper |
 | `UpdatesAPI` | `get_updates` | `async def get_updates(self, network_id: str, *, parent=None)` | GET the `updates` link | read |
 | `UpdatesAPI` | `apply_update` | `async def apply_update(self, network_id: str, *, parent=None)` | POST `""` to the `updates` link | unverified write; reboots every node |
+| `UpdatesAPI` | `set_preferred_update_hour` | `async def set_preferred_update_hour(self, network_id: str, hour: int)` | POST JSON `{"preferred_update_hour": int}` to `networks/{id}/updates/preferred_update_hour` | unverified write |
 | `TransferAPI` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None, *, parent=None)` | GET the `transfer` link, or `networks/{id}/devices/{device_id}/transfer` | read |
 | `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any], *, parent=None)` | POST to the `burst_reporters` link | unverified write; no `EeroClient` wrapper |
 | `ACCompatAPI` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str, *, parent=None)` | GET the `ac_compat` link | read |

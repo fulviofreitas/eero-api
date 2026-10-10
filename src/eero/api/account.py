@@ -48,6 +48,27 @@ class AccountAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
+    async def get_account(self) -> Dict[str, Any]:
+        """Get the caller's account - returns raw Eero API response.
+
+        GETs ``account``. The response carries the account profile plus the
+        ``networks`` collection the caller can access, which is the usual
+        starting point for discovering network IDs.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Getting account")
+        return await self.get("account", auth_token=auth_token)
+
     async def set_name(self, name: str) -> Dict[str, Any]:
         """Set the account's display name.
 

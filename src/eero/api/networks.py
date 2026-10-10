@@ -556,3 +556,42 @@ class NetworksAPI(AuthenticatedAPI):
 
         url = _guest_password_url(network_id, as_envelope(parent))
         return await self.delete(url, auth_token=auth_token)
+
+    async def set_hide_5g(self, network_id: str, enabled: bool) -> Dict[str, Any]:
+        """Temporarily hide (pause) the network's 5 GHz band.
+
+        Enabling PUTs JSON ``{"value": true}`` to
+        ``networks/{id}/temporary_flags/hide_5g``; disabling DELETEs that
+        resource. The flag is temporary: the API expires it on its own, and
+        the network envelope's ``temporary_flags.hide_5g`` carries the
+        current ``value`` and its expiration. The network envelope publishes
+        no link to this resource, so the path is built from the template.
+
+        This write disconnects 5 GHz clients while it takes effect -- never
+        retry a failed write in a loop.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            enabled: ``True`` to hide 5 GHz, ``False`` to clear the flag.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If ``enabled`` is not a bool
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        if not isinstance(enabled, bool):
+            raise EeroValidationException("enabled", "must be a bool")
+
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        url = resource_url(network_id, "networks/{id}/temporary_flags/hide_5g")
+        if enabled:
+            warn_uncharacterised_write(_LOGGER, "hide 5 GHz for network")
+            return await self.put(url, auth_token=auth_token, json={"value": True})
+        warn_uncharacterised_write(_LOGGER, "clear hide 5 GHz for network")
+        return await self.delete(url, auth_token=auth_token)

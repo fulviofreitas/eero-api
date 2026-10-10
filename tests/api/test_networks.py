@@ -497,3 +497,72 @@ class TestNetworksAPIPasswordValidation:
         )
         assert call_args.kwargs["data"] == {"password": password}
         assert "json" not in call_args.kwargs
+
+
+class TestNetworksAPISetHide5g:
+    """Tests for set_hide_5g method."""
+
+    @pytest.mark.asyncio
+    async def test_enable_puts_value(self, networks_api, mock_session):
+        """Test enabling PUTs {"value": true} to the temporary flag."""
+        envelope = api_success_response({})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await networks_api.set_hide_5g("network_123", True)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "PUT"
+        assert call_args.args[1].endswith("/2.2/networks/network_123/temporary_flags/hide_5g")
+        assert call_args.kwargs["json"] == {"value": True}
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_disable_deletes_flag(self, networks_api, mock_session):
+        """Test disabling DELETEs the temporary flag with no body."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await networks_api.set_hide_5g("network_123", False)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "DELETE"
+        assert call_args.args[1].endswith("/2.2/networks/network_123/temporary_flags/hide_5g")
+        assert "json" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_accepts_network_path(self, networks_api, mock_session):
+        """Test an API-returned network path is not doubled."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await networks_api.set_hide_5g("/2.2/networks/network_123", True)
+
+        assert mock_session.request.call_args.args[1].endswith(
+            "/2.2/networks/network_123/temporary_flags/hide_5g"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_warns_before_write(self, networks_api, mock_session, caplog, enabled):
+        """Test both directions log the uncharacterised-write warning."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level(logging.WARNING):
+            await networks_api.set_hide_5g("network_123", enabled)
+
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [1, 0, "true", None])
+    async def test_rejects_non_bool(self, networks_api, mock_session, enabled):
+        """Test non-bool values raise before any request."""
+        with pytest.raises(EeroValidationException):
+            await networks_api.set_hide_5g("network_123", enabled)
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, networks_api, mock_session):
+        """Test it raises before any request when there is no token."""
+        networks_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await networks_api.set_hide_5g("network_123", True)
+        mock_session.request.assert_not_called()
