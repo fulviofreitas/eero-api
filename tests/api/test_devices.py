@@ -18,6 +18,19 @@ from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_success_response, create_mock_response
 
+# Every form a caller may hold: a bare ID, an API-returned path, an absolute URL.
+NETWORK_FORMS = [
+    "n1",
+    "/2.2/networks/n1",
+    "https://api-user.e2ro.com/2.2/networks/n1",
+]
+DEVICE_FORMS = [
+    "aabbccddeeff",
+    "/2.2/networks/n1/devices/aabbccddeeff",
+    "https://api-user.e2ro.com/2.2/networks/n1/devices/aabbccddeeff",
+]
+PINNED_DEVICE_URL = "https://api-user.e2ro.com/2.3/networks/n1/devices/aabbccddeeff"
+
 
 class TestDevicesAPIInit:
     """Tests for DevicesAPI initialization."""
@@ -174,6 +187,27 @@ class TestDevicesAPISetNickname:
         method, url = mock_session.request.call_args.args[:2]
         assert method == "PUT"
         assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("network", NETWORK_FORMS)
+    @pytest.mark.parametrize("device", DEVICE_FORMS)
+    async def test_set_nickname_pins_v2_3_for_every_network_and_device_form(
+        self, devices_api, mock_session, network, device
+    ):
+        """A network or device path/URL cannot downgrade the nickname write to 2.2 (issue #102).
+
+        Resolving a path or URL keeps the version it advertises, so the pin has
+        to be applied to the resolved URL, not only to the template.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.set_device_nickname(network, device, "desk")
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == PINNED_DEVICE_URL
 
     @pytest.mark.asyncio
     async def test_set_nickname_not_authenticated(self, devices_api):
@@ -499,6 +533,27 @@ class TestDevicesAPIPauseDevice:
         method, url = mock_session.request.call_args.args[:2]
         assert method == "PUT"
         assert url == "https://api-user.e2ro.com/2.3/networks/network_123/devices/device_abc"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("network", NETWORK_FORMS)
+    @pytest.mark.parametrize("device", DEVICE_FORMS)
+    async def test_pause_device_pins_v2_3_for_every_network_and_device_form(
+        self, devices_api, mock_session, network, device
+    ):
+        """A network or device path/URL cannot downgrade the pause write to 2.2 (issue #102).
+
+        On 2.2 the backend returns 200 OK and silently drops the mutation, so a
+        caller passing back a network envelope's own URL must still reach 2.3.
+        """
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await devices_api.pause_device(network, device, True)
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "PUT"
+        assert url == PINNED_DEVICE_URL
 
     @pytest.mark.asyncio
     async def test_pause_device_not_authenticated(self, devices_api):

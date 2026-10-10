@@ -32,7 +32,7 @@ from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, id_from_url
 from .blacklist import BlacklistAPI
-from .links import self_url, sub_resource_url
+from .links import rewrite_version, self_url, sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
 
@@ -96,8 +96,9 @@ class DevicesAPI(AuthenticatedAPI):
         path/URL branch would otherwise treat that value as already
         identifying the full device resource and never apply the 2.3
         version pin, silently routing the write to the no-op 2.2 endpoint.
-        Normalising first means every input shape always builds through the
-        network + version-pinned template.
+        Normalising first builds through the network template. The resolved
+        URL is then pinned to 2.3, since a network path or URL can itself carry
+        the older 2.2 version.
 
         Args:
             network_id: ID of the network the device belongs to
@@ -109,6 +110,9 @@ class DevicesAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
         """
         url = self._device_url(network_id, id_from_url(mac), version=API_VERSION_DEVICE_WRITES)
+        # A network path/URL keeps its advertised version during resolution.
+        # Apply the endpoint pin afterwards so its 2.2 URL cannot undo it.
+        url = rewrite_version(url, API_VERSION_DEVICE_WRITES)
         return await self.put(url, auth_token=auth_token, json=payload)
 
     async def get_devices(
