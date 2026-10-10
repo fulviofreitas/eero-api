@@ -11,15 +11,22 @@ itself (as ``session_id``). There is no client-observable session expiry and
 no client-held refresh token -- refreshing a session reuses the current
 session token (see ``AuthAPI.refresh_session``). Records written before this
 schema existed are migrated in place the first time they are loaded.
+
+``KeyringStorage`` and ``FileStorage`` do blocking I/O (keyring calls, ``open``,
+``fsync``, ``os.replace``). Each ``load``/``save``/``clear`` runs as one
+synchronous unit on a worker thread, so a slow keyring or disk never stalls the
+event loop; see :class:`_ThreadOffloadStorage` for the locking and cancellation
+semantics.
 """
 
+import asyncio
 import json
 import os
 import stat
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import keyring
 
@@ -27,6 +34,8 @@ from ..const import CREDENTIAL_SCHEMA_VERSION
 from ..logging import get_secure_logger
 
 _LOGGER = get_secure_logger(__name__)
+
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -178,8 +187,131 @@ async def _retains(storage: CredentialStorage, credentials: AuthCredentials) -> 
     return loaded.session_id == credentials.session_id
 
 
-class KeyringStorage(CredentialStorage):
-    """Credential storage using OS keyring for secure storage."""
+class _ThreadOffloadStorage(CredentialStorage):
+    """Base for backends whose ``load``/``save``/``clear`` block on I/O.
+
+    Subclasses implement each operation as a plain synchronous method and run
+    it through :meth:`_offload`, which executes the whole unit -- including any
+    read-back or in-place migration -- on a worker thread via
+    ``asyncio.to_thread``. That is one thread hop per public operation, and a
+    synchronous unit never awaits, so it cannot re-enter the lock below.
+
+    Operations on one instance are serialised by an ``asyncio.Lock`` held for
+    the whole thread hop, so a ``save()`` and a ``clear()`` cannot interleave
+    and the last one awaited wins. Different instances (for example two
+    ``FileStorage`` objects on the same path) are not coordinated with each
+    other, exactly as before.
+
+    Cancellation: cancelling the task that awaits an operation does not stop a
+    thread that is already running. The thread runs to completion (a ``save()``
+    still finishes its atomic replace, so the destination holds either the old
+    or the new record, never a partial one), and the lock stays held until it
+    does, so a later operation on the same instance waits for it rather than
+    racing it. Only an operation still waiting for the lock is cancelled
+    outright, before any work starts. The cancelled caller never sees the
+    outcome.
+
+    The lock is per event loop. It is created lazily on first use, not in
+    ``__init__``, so constructing a backend never binds to a loop, and it is
+    replaced when the instance is next used from a different running loop
+    (for example a second ``asyncio.run()``).
+    """
+
+    def __init__(self) -> None:
+        """Initialize the (lazily created) per-loop operation lock."""
+        self._op_lock: Optional[asyncio.Lock] = None
+        self._op_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _lock_for_running_loop(self) -> asyncio.Lock:
+        """Return this instance's lock for the running loop, creating it lazily.
+
+        Returns:
+            The lock bound to the currently running event loop.
+        """
+        loop = asyncio.get_running_loop()
+        if self._op_lock is None or self._op_lock_loop is not loop:
+            self._op_lock = asyncio.Lock()
+            self._op_lock_loop = loop
+        return self._op_lock
+
+    async def _offload(self, func: Callable[..., _T], *args: Any) -> _T:
+        """Run a synchronous unit of work on a worker thread under the lock.
+
+        The lock is released by the thread's completion callback rather than
+        by this coroutine unwinding, so a cancelled caller cannot free it
+        while the thread is still running.
+
+        Args:
+            func: The synchronous operation. It must not raise for expected
+                failures (the concrete operations log and swallow them).
+            *args: Positional arguments for ``func``.
+
+        Returns:
+            Whatever ``func`` returned.
+        """
+        lock = self._lock_for_running_loop()
+        await lock.acquire()
+        try:
+            work = asyncio.ensure_future(asyncio.to_thread(func, *args))
+        except BaseException:
+            lock.release()
+            raise
+        work.add_done_callback(lambda done: _release_after(lock, done))
+        return await asyncio.shield(work)
+
+    async def _offload_save(self, credentials: AuthCredentials) -> bool:
+        """Run ``self._save_sync`` offloaded, preserving ``save()``'s no-raise contract.
+
+        The synchronous body already swallows every failure of the write. This
+        additionally covers the offload itself failing to start (for example a
+        worker thread that cannot be created), which would otherwise surface
+        as an exception from ``save()``. Cancellation still propagates.
+
+        Args:
+            credentials: The credentials to save.
+
+        Returns:
+            The synchronous body's result, or False if it could not run.
+        """
+        try:
+            return await self._offload(self._save_sync, credentials)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            _LOGGER.error("Storage save could not run on a worker thread: %s", e)
+            return False
+
+    def _save_sync(self, credentials: AuthCredentials) -> bool:
+        """Blocking body of ``save()``; subclasses implement it.
+
+        Args:
+            credentials: The credentials to save.
+
+        Returns:
+            True if a read-back found the saved session token.
+        """
+        raise NotImplementedError
+
+
+def _release_after(lock: asyncio.Lock, done: "asyncio.Future[Any]") -> None:
+    """Release the operation lock once its worker thread has finished.
+
+    Also retrieves the result's exception so an abandoned (cancelled-caller)
+    operation that failed does not log "exception was never retrieved".
+
+    Args:
+        lock: The lock held for the finished operation.
+        done: The completed worker future.
+    """
+    lock.release()
+    if not done.cancelled():
+        done.exception()
+
+
+class KeyringStorage(_ThreadOffloadStorage):
+    """Credential storage using OS keyring for secure storage.
+
+    Keyring calls run on a worker thread, serialised per instance (see
+    :class:`_ThreadOffloadStorage`).
+    """
 
     SERVICE_NAME = "eero-api"
     ACCOUNT_NAME = "auth-tokens"
@@ -193,6 +325,7 @@ class KeyringStorage(CredentialStorage):
                 when a file fallback is layered behind the keyring, where an
                 unretained keyring write is routine and handled.
         """
+        super().__init__()
         self._warn_on_unpersisted = warn_on_unpersisted
 
     async def load(self) -> AuthCredentials:
@@ -204,7 +337,14 @@ class KeyringStorage(CredentialStorage):
         themselves (see :func:`_log_migration_readback`). The in-memory
         credentials are returned to the caller either way -- a failed
         read-back does not fail the load.
+
+        Runs on a worker thread, migration and read-back included, as one
+        unit under the instance lock.
         """
+        return await self._offload(self._load_sync)
+
+    def _load_sync(self) -> AuthCredentials:
+        """Blocking body of :meth:`load`; runs on a worker thread."""
         try:
             token_data = keyring.get_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
             if token_data:
@@ -213,7 +353,7 @@ class KeyringStorage(CredentialStorage):
 
                 if migrated:
                     _LOGGER.debug("Migrated legacy credential record in keyring storage")
-                    _log_migration_readback("keyring", await self.save(credentials))
+                    _log_migration_readback("keyring", self._save_sync(credentials))
 
                 return credentials
         # Keyring backends raise arbitrary, backend-specific exception types
@@ -231,12 +371,19 @@ class KeyringStorage(CredentialStorage):
         nothing persisted; that is logged at WARNING with fixed text (never
         the token) unless ``warn_on_unpersisted`` is off.
 
+        Runs on a worker thread, read-back included, as one unit under the
+        instance lock.
+
         Args:
             credentials: The credentials to save.
 
         Returns:
             True if the read-back matches the saved session token.
         """
+        return await self._offload_save(credentials)
+
+    def _save_sync(self, credentials: AuthCredentials) -> bool:
+        """Blocking body of :meth:`save`; runs on a worker thread."""
         try:
             keyring.set_password(
                 self.SERVICE_NAME, self.ACCOUNT_NAME, json.dumps(credentials.to_dict())
@@ -260,7 +407,11 @@ class KeyringStorage(CredentialStorage):
         return persisted
 
     async def clear(self) -> None:
-        """Clear credentials from keyring."""
+        """Clear credentials from keyring (on a worker thread, under the lock)."""
+        await self._offload(self._clear_sync)
+
+    def _clear_sync(self) -> None:
+        """Blocking body of :meth:`clear`; runs on a worker thread."""
         try:
             keyring.delete_password(self.SERVICE_NAME, self.ACCOUNT_NAME)
             _LOGGER.debug("Cleared authentication data from keyring")
@@ -271,8 +422,12 @@ class KeyringStorage(CredentialStorage):
             _LOGGER.debug("Error clearing keyring: %s", e)
 
 
-class FileStorage(CredentialStorage):
-    """Credential storage using JSON file with restricted permissions."""
+class FileStorage(_ThreadOffloadStorage):
+    """Credential storage using JSON file with restricted permissions.
+
+    File I/O runs on a worker thread, serialised per instance (see
+    :class:`_ThreadOffloadStorage`).
+    """
 
     def __init__(self, file_path: str) -> None:
         """Initialize file storage.
@@ -280,6 +435,7 @@ class FileStorage(CredentialStorage):
         Args:
             file_path: Path to the cookie/credential file
         """
+        super().__init__()
         self._file_path = os.path.abspath(os.path.expanduser(file_path))
 
     @property
@@ -296,7 +452,14 @@ class FileStorage(CredentialStorage):
         themselves (see :func:`_log_migration_readback`). The in-memory
         credentials are returned to the caller either way -- a failed
         read-back does not fail the load.
+
+        Runs on a worker thread, migration and read-back included, as one
+        unit under the instance lock.
         """
+        return await self._offload(self._load_sync)
+
+    def _load_sync(self) -> AuthCredentials:
+        """Blocking body of :meth:`load`; runs on a worker thread."""
         try:
             if not os.path.exists(self._file_path):
                 _LOGGER.debug("Cookie file not found: %s", self._file_path)
@@ -309,7 +472,7 @@ class FileStorage(CredentialStorage):
 
             if migrated:
                 _LOGGER.debug("Migrated legacy credential record in file storage")
-                await self.save(credentials)
+                self._save_sync(credentials)
                 readback_matched = False
                 try:
                     with open(self._file_path, "r") as f:
@@ -362,12 +525,21 @@ class FileStorage(CredentialStorage):
         The file is read back after the swap; the result is True only if the
         stored token matches the one saved. Never raises.
 
+        The whole sequence, read-back included, runs on a worker thread as one
+        unit under the instance lock. Cancelling the awaiting task does not
+        interrupt it: the swap still completes, so the file holds either the
+        previous record or the new one.
+
         Args:
             credentials: The credentials to save.
 
         Returns:
             True if the read-back matches the saved session token.
         """
+        return await self._offload_save(credentials)
+
+    def _save_sync(self, credentials: AuthCredentials) -> bool:
+        """Blocking body of :meth:`save`; runs on a worker thread."""
         try:
             # Ensure directory exists
             cookie_dir = os.path.dirname(self._file_path) or "."
@@ -421,7 +593,11 @@ class FileStorage(CredentialStorage):
             return False
 
     async def clear(self) -> None:
-        """Clear the credential file."""
+        """Clear the credential file (on a worker thread, under the lock)."""
+        await self._offload(self._clear_sync)
+
+    def _clear_sync(self) -> None:
+        """Blocking body of :meth:`clear`; runs on a worker thread."""
         try:
             if os.path.exists(self._file_path):
                 os.remove(self._file_path)

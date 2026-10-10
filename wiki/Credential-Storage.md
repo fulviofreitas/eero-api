@@ -34,6 +34,16 @@ class CredentialStorage(ABC):
 
 There are four concrete implementations: `KeyringStorage`, `FileStorage`, `MemoryStorage`, `ChainedStorage`.
 
+### Threads, locking and cancellation
+
+`KeyringStorage` and `FileStorage` do blocking work (keyring calls, `open`, `fsync`, `os.replace`), so they run each `load()`, `save()` and `clear()` on a worker thread with `asyncio.to_thread` instead of on the event loop. A slow keyring or disk stalls only that call, not the rest of your application (which matters for a long-running async host such as a web service during login or logout).
+
+- **One thread hop per operation.** The whole synchronous unit runs in the thread: for `save()` that includes the write and its read-back; for `load()` it includes a legacy-record migration and the migration's read-back. Behaviour, return values and log lines are unchanged.
+- **Serialised per instance.** Each instance holds an `asyncio.Lock` around every thread hop, so a `save()` and a `clear()` on the same backend cannot interleave: whichever you awaited first runs first, and the other waits. Separate instances (for example two `FileStorage` objects on the same path) are not coordinated with each other.
+- **Cancellation does not stop a running thread.** If the task awaiting an operation is cancelled while its thread is already running, the thread runs to completion. A `save()` still finishes its atomic `os.replace()`, so afterwards the file holds either the previous record or the new one, never a partial one; the cancelled caller simply never sees the result. The lock stays held until the thread finishes, so the next operation on that instance waits instead of racing it. An operation that is only *waiting* for the lock is cancelled outright and does no work.
+- **The lock is per event loop.** It is created on first use rather than in the constructor, so building a backend never binds it to a loop, and a backend reused from a later `asyncio.run()` gets a fresh lock for that loop.
+- `MemoryStorage` and `ChainedStorage` use no threads of their own: the memory backend does no I/O, and the chain just awaits its backends (so it inherits their serialisation).
+
 ---
 
 ## 🧭 `create_storage()` — Selection Logic
@@ -74,7 +84,7 @@ Delegates to the third-party `keyring` package, which resolves a platform backen
 | 🐧 Linux | Secret Service (GNOME Keyring, KWallet) |
 | 🪟 Windows | Windows Credential Locker |
 
-`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()`, calls `keyring.set_password(...)`, then reads the entry back with `keyring.get_password(...)` and returns `True` only if the stored `session_id` matches. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` silently (nothing to delete is not an error) and logging any other exception at `DEBUG`; `clear()` never raises.
+`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()`, calls `keyring.set_password(...)`, then reads the entry back with `keyring.get_password(...)` and returns `True` only if the stored `session_id` matches. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` silently (nothing to delete is not an error) and logging any other exception at `DEBUG`; `clear()` never raises. Every keyring call happens on a worker thread (see [Threads, locking and cancellation](#threads-locking-and-cancellation)).
 
 > **Note**: `load()` and `save()` wrap the underlying `keyring` calls in a bare `except Exception`, so a locked keyring, a missing Secret Service daemon on headless Linux, or any other backend failure is **non-fatal**: `load()` returns an empty `AuthCredentials()` and `save()` returns `False`, never raising. A backend that reports success without persisting anything (e.g. `keyring.backends.null.Keyring`) is caught the same way, by the read-back.
 >
@@ -103,6 +113,7 @@ class FileStorage(CredentialStorage):
 
 > **Note**: If your own tooling reads this file, read `session_id` only. The extra fields 7.x wrote are no longer written, and any copy of them still sitting in an old file is dropped the first time the SDK loads it — see [Migration](Migration#the-credential-record).
 
+- Every step above, including the read-back, runs on one worker thread under the instance lock (see [Threads, locking and cancellation](#threads-locking-and-cancellation)). Cancelling a `save()` mid-flight cannot leave a half-written file: the temporary file is swapped in atomically or removed, so the destination holds the old record or the new one, still `0600`.
 - `clear()` removes the file with `os.remove()` if it exists (a missing file is a silent no-op); a removal error is logged at `WARNING` and swallowed (never raises).
 
 ---
