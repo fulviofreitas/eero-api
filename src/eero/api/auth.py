@@ -117,7 +117,7 @@ class AuthAPI(BaseAPI):
         Returns:
             True if a session token is present, False otherwise
         """
-        return bool(self._credentials.session_id)
+        return bool(self._credentials.session_id) and not self._login_in_progress
 
     async def __aenter__(self) -> "AuthAPI":
         """Enter async context manager."""
@@ -132,6 +132,7 @@ class AuthAPI(BaseAPI):
     async def _load_credentials(self) -> None:
         """Load authentication credentials from storage."""
         self._credentials = await self._storage.load()
+        self._login_in_progress = False
 
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
@@ -153,10 +154,15 @@ class AuthAPI(BaseAPI):
         leave a valid token recoverable from a non-primary backend.
         """
         self._credentials.clear_all()
+        self._login_in_progress = False
         await self._storage.clear()
 
     async def login(self, user_identifier: str) -> bool:
         """Start the login process by requesting a verification code.
+
+        Pending credentials remain in memory. The stored session is replaced
+        only after successful verification; a failed request also restores the
+        credentials previously held in memory.
 
         Args:
             user_identifier: Email address or phone number for the Eero account
@@ -175,12 +181,14 @@ class AuthAPI(BaseAPI):
                 ``EeroAuthenticationException``.
             EeroNetworkException: If there's a network error
         """
-        # Clear any previous authentication data
-        self._credentials.clear_all()
+        # Keep the stored session until verify() accepts its replacement. Saving
+        # cleared credentials or a pending token would destroy a working login
+        # when the request fails or the verification flow is abandoned.
+        previous_credentials = self._credentials
+        previous_login_in_progress = self._login_in_progress
+        self._credentials = AuthCredentials()
         self._login_in_progress = True
-
-        # Save to ensure we don't have stale data
-        await self._save_credentials()
+        started = False
 
         try:
             _LOGGER.debug("Starting login process")
@@ -198,8 +206,7 @@ class AuthAPI(BaseAPI):
                 return False
 
             self._credentials.session_id = user_token
-            await self._save_credentials()
-
+            started = True
             return True
         except EeroAPIException as err:
             _LOGGER.error("Login failed: %s", err)
@@ -218,6 +225,12 @@ class AuthAPI(BaseAPI):
             raise EeroAuthenticationException(
                 f"Login failed: {err}", envelope=err.envelope, error_code=err.error_code
             ) from err
+        finally:
+            # A rejected, interrupted, or tokenless login changes nothing on the
+            # server. Restore the session in memory as well as preserving disk.
+            if not started:
+                self._credentials = previous_credentials
+                self._login_in_progress = previous_login_in_progress
 
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.
@@ -302,6 +315,10 @@ class AuthAPI(BaseAPI):
         Raises:
             EeroNetworkException: If there's a network error
         """
+        if self._login_in_progress:
+            # Explicit logout clears local pending and durable credentials.
+            await self._destroy_stored_credentials()
+            return True
         if not self.is_authenticated:
             _LOGGER.warning("Attempted to logout when not authenticated")
             return False
@@ -357,6 +374,9 @@ class AuthAPI(BaseAPI):
                 refresh
             EeroNetworkException: If there's a network error
         """
+        if self._login_in_progress:
+            # A pending verification token is never an established session.
+            return False
         running_loop = asyncio.get_running_loop()
         existing_future = self._refresh_future
         if (
@@ -433,13 +453,16 @@ class AuthAPI(BaseAPI):
         if not self._credentials.session_id:
             raise EeroAuthenticationException("No session token available. Login first.")
 
+        refreshing_token = self._credentials.session_id
         try:
             await self.post(
                 LOGIN_REFRESH_ENDPOINT,
-                auth_token=self._credentials.session_id,
+                auth_token=refreshing_token,
                 encoding=RequestEncoding.EMPTY_JSON_STRING,
             )
         except EeroAuthenticationException as err:
+            if self._login_in_progress or self._credentials.session_id != refreshing_token:
+                return False
             group = classify_error_code(err.error_code)
             if group in _CREDENTIAL_RETENTION_GROUPS:
                 # The verification/login-state group, or the session-refresh
@@ -535,6 +558,7 @@ class AuthAPI(BaseAPI):
         _validate_header_value("token", token)
 
         self._credentials.session_id = token
+        self._login_in_progress = False
         await self._save_credentials()
 
         _LOGGER.debug("Session token injected externally")

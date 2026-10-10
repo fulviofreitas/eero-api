@@ -358,11 +358,11 @@ class MemoryStorage(CredentialStorage):
 
     async def load(self) -> AuthCredentials:
         """Load credentials from memory."""
-        return self._credentials
+        return AuthCredentials(session_id=self._credentials.session_id)
 
     async def save(self, credentials: AuthCredentials) -> None:
         """Save credentials to memory."""
-        self._credentials = credentials
+        self._credentials = AuthCredentials(session_id=credentials.session_id)
 
     async def clear(self) -> None:
         """Clear credentials from memory."""

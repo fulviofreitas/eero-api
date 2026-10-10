@@ -28,7 +28,7 @@ class CredentialStorage(ABC):
 
 `schema_version` is `eero.const.CREDENTIAL_SCHEMA_VERSION`. A stored record **without** that key is a legacy record from an earlier release — it may use the pre-v3.0.0 `user_token` key instead of `session_id`, and may carry the extra fields 7.x wrote alongside the token (named in [Migration](Migration#the-credential-record)). Each backend's `load()` migrates such a record in place: it keeps the token (reading `session_id`, falling back to `user_token`), drops every other field, and re-saves the record in the current shape. The migration runs once per backend, is idempotent (a record that already carries `schema_version` is never rewritten), and logs no values — a `DEBUG` line that a migration happened, then a read-back check that logs `DEBUG` on match or `WARNING` on mismatch (the in-memory credentials are returned either way).
 
-`AuthAPI` owns exactly one `CredentialStorage` instance (built by `create_storage()` in its `__init__`) and calls `load()` on `__aenter__`, `save()` after `login()`, `verify()` and `set_session_token()`, and `clear()` from `logout()`, `clear_session_token()`, `clear_auth_data()` and a refresh that reports the session as terminated.
+`AuthAPI` owns exactly one `CredentialStorage` instance (built by `create_storage()` in its `__init__`) and calls `load()` on `__aenter__`, `save()` after `verify()` and `set_session_token()` (never after `login()`, whose pending token stays in memory until verification succeeds), and `clear()` from `logout()`, `clear_session_token()`, `clear_auth_data()` and a refresh that reports the session as terminated.
 
 There are four concrete implementations: `KeyringStorage`, `FileStorage`, `MemoryStorage`, `ChainedStorage`.
 
@@ -139,7 +139,7 @@ class MemoryStorage(CredentialStorage):
     def __init__(self) -> None
 ```
 
-Holds one `AuthCredentials` instance as a plain attribute. `load()`/`save()`/`clear()` just read, overwrite, or reset that attribute — no I/O, no serialization, nothing ever touches disk.
+Holds one `AuthCredentials` instance as a plain attribute. `load()` and `save()` copy records; `clear()` resets the attribute — no I/O, no serialization, nothing ever touches disk.
 
 > ⚠️ **Warning:** This is the silent-data-loss backend. `EeroClient(use_keyring=False)` with no `cookie_file` resolves here automatically (see the selection table above) — there is no error, warning, or log line telling you this happened. Every session, once the process exits, is gone. Only use this deliberately (tests, short-lived ephemeral processes, secrets injected fresh every run via `set_session_token()`).
 
