@@ -24,6 +24,39 @@ from .links import Envelope, resolve_link, resource_url, self_url, sub_resource_
 _LOGGER = get_secure_logger(__name__)
 
 
+def _require_non_empty_string(field: str, value: object) -> None:
+    """Reject a value that form encoding would turn into unintended text.
+
+    Form encoding renders ``None``, ``False`` or ``0`` as the literal text
+    ``"None"``, ``"False"`` or ``"0"``, so the caller's invalid input would
+    be written to the network instead of being rejected. The value itself is
+    never included in the error message.
+
+    Args:
+        field: The parameter name to report.
+        value: The value to check.
+
+    Raises:
+        EeroValidationException: If ``value`` is not a non-empty ``str``.
+    """
+    if not isinstance(value, str) or not value:
+        raise EeroValidationException(field, "must be a non-empty string")
+
+
+def _require_bool(field: str, value: object) -> None:
+    """Reject a flag that is not a real boolean.
+
+    Args:
+        field: The parameter name to report.
+        value: The value to check.
+
+    Raises:
+        EeroValidationException: If ``value`` is not a ``bool``.
+    """
+    if not isinstance(value, bool):
+        raise EeroValidationException(field, "must be a boolean")
+
+
 def _guest_password_url(network_id: str, guest_parent: Optional[Envelope]) -> str:
     """Resolve the guest network's password link, falling back to the literal path.
 
@@ -297,9 +330,11 @@ class NetworksAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
+            EeroValidationException: If name is not a non-empty string
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
+        _require_non_empty_string("name", name)
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
@@ -339,10 +374,7 @@ class NetworksAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        # Form encoding can turn None or another non-string value into a
-        # password the caller never intended. Reject it before any request.
-        if not isinstance(password, str) or not password:
-            raise EeroValidationException("password", "must be a non-empty string")
+        _require_non_empty_string("password", password)
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
@@ -456,9 +488,14 @@ class NetworksAPI(AuthenticatedAPI):
             Raw API response: {"meta": {...}, "data": {...}}
 
         Raises:
+            EeroValidationException: If enabled is not a bool, or name is
+                supplied but is not a non-empty string
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
+        _require_bool("enabled", enabled)
+        if name is not None:
+            _require_non_empty_string("name", name)
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")
@@ -509,10 +546,7 @@ class NetworksAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        # Form encoding can turn None or another non-string value into a
-        # password the caller never intended. Reject it before any request.
-        if not isinstance(password, str) or not password:
-            raise EeroValidationException("password", "must be a non-empty string")
+        _require_non_empty_string("password", password)
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:
             raise EeroAuthenticationException("Not authenticated")

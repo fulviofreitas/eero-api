@@ -26,8 +26,12 @@ from eero.exceptions import (
 )
 
 from .conftest import (
+    INVALID_ENABLED,
+    INVALID_NAMES,
+    INVALID_OPTIONAL_NAMES,
     INVALID_PASSWORDS,
     PASSWORD_WRITES,
+    VALID_NAMES,
     VALID_PASSWORDS,
     api_success_response,
     create_mock_response,
@@ -1914,6 +1918,88 @@ class TestEeroClientPasswordValidation:
             f"https://api-user.e2ro.com/2.2/networks/network_123/{suffix}",
         )
         assert call_args.kwargs["data"] == {"password": password}
+        assert "json" not in call_args.kwargs
+
+
+class TestEeroClientNameValidation:
+    """Tests that the facade rejects unintended names and flags before resolving or sending."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed auth token."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.auth.get_auth_token = AsyncMock(return_value="auth_token")
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_NAMES)
+    async def test_invalid_network_name_sends_no_request(self, client, mock_session, name):
+        """Test a non-string or empty network name is rejected before auth and transport."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    async def test_valid_network_name_is_forwarded_unchanged(self, client, mock_session, name):
+        """Test a string name, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/settings",
+        )
+        assert call_args.kwargs["data"] == {"name": name}
+        assert "json" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_OPTIONAL_NAMES)
+    async def test_invalid_guest_name_sends_no_request(self, client, mock_session, name):
+        """Test a supplied guest name that is not a non-empty string is rejected."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_guest_network(True, name=name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", INVALID_ENABLED)
+    async def test_invalid_guest_enabled_sends_no_request(self, client, mock_session, enabled):
+        """Test a non-bool enabled flag is rejected, not coerced to "true" or "false"."""
+        with pytest.raises(EeroValidationException, match="enabled.*boolean"):
+            await client.set_guest_network(enabled)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_valid_guest_network_is_forwarded_unchanged(
+        self, client, mock_session, enabled, name
+    ):
+        """Test a bool flag and a string name, even "None", are sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_guest_network(enabled, name=name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/guestnetwork",
+        )
+        assert call_args.kwargs["data"] == {
+            "enabled": "true" if enabled else "false",
+            "name": name,
+        }
         assert "json" not in call_args.kwargs
 
 

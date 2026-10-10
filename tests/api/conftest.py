@@ -147,6 +147,29 @@ INVALID_PASSWORDS = [
 # Strings the setters must forward unchanged, including the literal "None".
 VALID_PASSWORDS = ["ordinary-password", "  preserve spaces  ", "None"]
 
+# ==================== Name / Flag Validation Parameters ====================
+
+# Values a required network or guest-network name must reject before any request.
+INVALID_NAMES = INVALID_PASSWORDS
+
+# An optional name may be omitted with None, so None is valid there.
+INVALID_OPTIONAL_NAMES = [param for param in INVALID_NAMES if param.values[0] is not None]
+
+# Strings the name setters must forward unchanged, including the literal "None".
+VALID_NAMES = ["My Network", "  preserve spaces  ", "None"]
+
+# Values the guest network's ``enabled`` flag must reject: anything but a real bool.
+INVALID_ENABLED = [
+    pytest.param(None, id="none"),
+    pytest.param("true", id="string"),
+    pytest.param("", id="empty"),
+    pytest.param(0, id="zero"),
+    pytest.param(1, id="one"),
+    pytest.param(b"true", id="bytes"),
+    pytest.param([], id="list"),
+    pytest.param({}, id="dict"),
+]
+
 # Setter method name paired with its resource path under the network.
 PASSWORD_WRITES = [
     ("set_network_password", "password"),

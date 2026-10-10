@@ -573,7 +573,18 @@ class EeroClient:
         )
 
     async def set_network_name(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Set network name - returns raw Eero API response."""
+        """Set network name - returns raw Eero API response.
+
+        Args:
+            name: The new network name.
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If name is not a non-empty string
+        """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_network_name(
             network_id, name, **self._network_parent_kwargs(network_id)
@@ -1204,6 +1215,10 @@ class EeroClient:
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If enabled is not a bool, or name is
+                supplied but is not a non-empty string
         """
         network_id = await self._ensure_network_id(network_id)
 
