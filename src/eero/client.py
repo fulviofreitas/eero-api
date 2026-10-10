@@ -141,11 +141,11 @@ class EeroClient:
 
     @property
     def credentials_persisted(self) -> bool:
-        """Whether the current session survived its last save.
+        """Whether the last saved session survived that save.
 
         ``login()``/``verify()`` return values report the API outcome only.
-        This is False when the session was accepted but no storage backend
-        retained it (for example the default keyring-only setup on a host
+        This is False when saving the session was accepted but no storage
+        backend retained it (for example the default keyring-only setup on a host
         whose keyring is unavailable), so it will not outlive the process.
         """
         return self._api.credentials_persisted

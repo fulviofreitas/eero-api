@@ -157,7 +157,7 @@ class EeroAPI:
 
     @property
     def credentials_persisted(self) -> bool:
-        """Whether the current session survived its last save (see ``AuthAPI``)."""
+        """Whether the last saved session survived that save (see ``AuthAPI``)."""
         return self.auth.credentials_persisted
 
     async def login(self, user_identifier: str) -> bool:

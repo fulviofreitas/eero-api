@@ -145,7 +145,9 @@ class CredentialStorage(ABC):
             True if the backend now holds the saved session token (verified
             by reading it back where the backend can lose a write), False if
             nothing was retained. A ``MemoryStorage`` record counts as
-            retained even though it does not outlive the process.
+            retained even though it does not outlive the process. Backends
+            written against the earlier ``-> None`` contract may still return
+            ``None``; callers treat that as "unknown, assume persisted".
         """
         pass
 
@@ -482,6 +484,11 @@ class ChainedStorage(CredentialStorage):
         """
         self._primary = primary
         self._fallback = fallback
+        # Session token this instance last loaded from, promoted out of, or
+        # wrote to the fallback. A later verified primary save may clear the
+        # fallback only if it still holds this token (or the one just saved):
+        # anything else was written by someone else and is not ours to delete.
+        self._fallback_token_seen: Optional[str] = None
 
     async def load(self) -> AuthCredentials:
         """Load credentials, trying primary first then fallback.
@@ -500,6 +507,7 @@ class ChainedStorage(CredentialStorage):
         # Fall back to secondary
         credentials = await self._fallback.load()
         if credentials.session_id:
+            self._fallback_token_seen = credentials.session_id
             # Migrate to primary storage, then remove the now-duplicate
             # fallback copy so the primary is the sole owner going forward.
             # The fallback is cleared only once a read-back proves the
@@ -510,6 +518,7 @@ class ChainedStorage(CredentialStorage):
             promoted = await self._primary.load()
             if promoted.session_id == credentials.session_id:
                 await self._fallback.clear()
+                self._fallback_token_seen = None
             else:
                 _LOGGER.debug("Primary storage did not retain the promoted record; fallback kept")
 
@@ -530,9 +539,13 @@ class ChainedStorage(CredentialStorage):
         skips the fallback. A raising read-back is treated as a failed
         verification, and ``save()`` never raises.
 
-        After a verified primary write, any older record in the fallback is
-        cleared (best effort) so it cannot be resurrected by ``load()``'s
-        promotion if the primary is wiped later.
+        After a verified primary write, the fallback record is cleared (best
+        effort) so it cannot be resurrected by ``load()``'s promotion if the
+        primary is wiped later -- but only when it is a record this instance
+        superseded: the token it last loaded from, promoted out of, or wrote
+        to the fallback, or the token just saved. A different session left
+        there by another process (two processes sharing one cookie file, one
+        without a working keyring) is left alone.
 
         Args:
             credentials: The credentials to save.
@@ -548,7 +561,7 @@ class ChainedStorage(CredentialStorage):
         else:
             if await _retains(self._primary, credentials):
                 _LOGGER.debug("Saved to primary storage")
-                await self._clear_superseded_fallback()
+                await self._clear_superseded_fallback(credentials)
                 return True
             _LOGGER.debug("Primary storage did not retain the saved record; trying fallback")
 
@@ -560,12 +573,31 @@ class ChainedStorage(CredentialStorage):
             _LOGGER.error("Both primary and fallback storage failed: %s", fallback_error)
             return False
         _LOGGER.debug("Saved to fallback storage")
-        return await _retains(self._fallback, credentials)
+        retained = await _retains(self._fallback, credentials)
+        if retained:
+            self._fallback_token_seen = credentials.session_id
+        return retained
 
-    async def _clear_superseded_fallback(self) -> None:
-        """Best-effort removal of a fallback record the primary has superseded."""
+    async def _clear_superseded_fallback(self, saved: AuthCredentials) -> None:
+        """Best-effort removal of a fallback record the primary has superseded.
+
+        The fallback is read back first and cleared only if its session token
+        is the one this instance last saw there or the one just saved to the
+        primary. A read that raises, an empty fallback, or a different token
+        leaves it untouched.
+
+        Args:
+            saved: The credentials just verified in the primary.
+        """
         try:
+            held = (await self._fallback.load()).session_id
+            if not held:
+                return
+            if held not in (self._fallback_token_seen, saved.session_id):
+                _LOGGER.debug("Fallback holds a record this instance did not write; left in place")
+                return
             await self._fallback.clear()
+            self._fallback_token_seen = None
         except Exception as e:  # pylint: disable=broad-exception-caught
             _LOGGER.debug("Could not clear superseded fallback record: %s", e)
 

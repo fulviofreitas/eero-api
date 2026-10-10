@@ -2111,6 +2111,48 @@ class TestKeyringOnlyPersistenceSignal:
         assert api.credentials_persisted is True
 
     @pytest.mark.asyncio
+    async def test_legacy_backend_returning_none_is_assumed_persisted(self, mock_session):
+        """A third-party backend written against the old ``-> None`` contract is not a failure."""
+
+        class LegacyStorage(MemoryStorage):
+            async def save(self, credentials):  # type: ignore[override]
+                await super().save(credentials)
+
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._storage = LegacyStorage()
+
+        await api.set_session_token("injected_token")
+
+        assert api.is_authenticated is True
+        assert api.credentials_persisted is True
+
+    @pytest.mark.asyncio
+    async def test_login_installing_a_pending_token_resets_a_stale_failed_save(self, mock_session):
+        """The pending token is never saved, so an earlier failed save does not carry over."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+        api._last_persist_ok = False
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"user_token": "ut_pending"})
+        )
+
+        assert await api.login("user@example.com") is True
+
+        assert api.credentials_persisted is True
+
+    @pytest.mark.asyncio
+    async def test_failed_login_keeps_the_previous_sessions_persistence_flag(self, mock_session):
+        """A login that installs no token leaves the restored session's flag as it was."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        api._session = mock_session
+        api._last_persist_ok = False
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        assert await api.login("user@example.com") is False
+
+        assert api.credentials_persisted is False
+
+    @pytest.mark.asyncio
     async def test_credentials_persisted_defaults_to_true_and_is_exposed_on_the_facades(self):
         """EeroAPI and EeroClient delegate the read-only property to AuthAPI."""
         client = EeroClient(use_keyring=False)
@@ -2166,16 +2208,19 @@ class TestChainedStorageClearsSupersededFallback:
     """A verified primary write must retire an older fallback record (issue #169)."""
 
     @pytest.mark.asyncio
-    async def test_stale_fallback_is_not_resurrected_after_the_primary_is_wiped(
-        self, working_keyring, tmp_path
+    async def test_fallback_this_instance_wrote_is_not_resurrected_after_the_primary_is_wiped(
+        self, mock_keyring, working_keyring, tmp_path
     ):
-        """The old file token is gone after a verified save, so load() cannot promote it."""
+        """Single process: fell back to the file with S0, keyring recovers, S1 retires S0."""
         cookie_file = tmp_path / "cookies.json"
-        stale = FileStorage(str(cookie_file))
-        await stale.save(AuthCredentials(session_id="stale_token"))
         storage = ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(str(cookie_file)))
+        working_set = mock_keyring.set_password.side_effect
+        mock_keyring.set_password.side_effect = OSError("keyring locked")
+        assert await storage.save(AuthCredentials(session_id="first_token")) is True
+        assert json.loads(cookie_file.read_text())["session_id"] == "first_token"
 
-        assert await storage.save(AuthCredentials(session_id="fresh_token")) is True
+        mock_keyring.set_password.side_effect = working_set
+        assert await storage.save(AuthCredentials(session_id="second_token")) is True
 
         assert not cookie_file.exists()
         working_keyring.clear()  # the primary is wiped out from under us
@@ -2202,6 +2247,7 @@ class TestChainedStorageClearsSupersededFallback:
         primary = AsyncMock()
         primary.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
         fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
         fallback.clear = AsyncMock(side_effect=OSError("read-only"))
         storage = ChainedStorage(primary=primary, fallback=fallback)
 
@@ -2219,6 +2265,66 @@ class TestChainedStorageClearsSupersededFallback:
         primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
         fallback = AsyncMock()
         fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        assert await storage.save(AuthCredentials(session_id="live_token")) is True
+
+        fallback.clear.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_other_process_session_in_the_shared_file_is_left_alone(
+        self, working_keyring, tmp_path, caplog
+    ):
+        """A different live session in the cookie file belongs to someone else."""
+        cookie_file = tmp_path / "cookies.json"
+        await FileStorage(str(cookie_file)).save(AuthCredentials(session_id="other_process_token"))
+        storage = ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(str(cookie_file)))
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            assert await storage.save(AuthCredentials(session_id="my_token")) is True
+
+        assert json.loads(cookie_file.read_text())["session_id"] == "other_process_token"
+        assert "did not write; left in place" in caplog.text
+        assert "other_process_token" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_fallback_this_instance_loaded_is_cleared_when_primary_cannot_take_it(
+        self, mock_keyring, working_keyring, tmp_path
+    ):
+        """A record loaded from the fallback (promotion failed) is ours to retire later."""
+        cookie_file = tmp_path / "cookies.json"
+        await FileStorage(str(cookie_file)).save(AuthCredentials(session_id="first_token"))
+        storage = ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(str(cookie_file)))
+        working_set = mock_keyring.set_password.side_effect
+        mock_keyring.set_password.side_effect = OSError("keyring locked")
+        assert (await storage.load()).session_id == "first_token"
+        assert cookie_file.exists()
+
+        mock_keyring.set_password.side_effect = working_set
+        assert await storage.save(AuthCredentials(session_id="second_token")) is True
+
+        assert not cookie_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_of_the_saved_session_in_the_fallback_is_cleared(
+        self, working_keyring, tmp_path
+    ):
+        """The file holds the very token just saved (an earlier chain save wrote both)."""
+        cookie_file = tmp_path / "cookies.json"
+        await FileStorage(str(cookie_file)).save(AuthCredentials(session_id="same_token"))
+        storage = ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(str(cookie_file)))
+
+        assert await storage.save(AuthCredentials(session_id="same_token")) is True
+
+        assert not cookie_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_unreadable_fallback_is_left_alone(self):
+        """If the fallback cannot be read back, nothing is deleted and save() still succeeds."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(side_effect=OSError("io error"))
         storage = ChainedStorage(primary=primary, fallback=fallback)
 
         assert await storage.save(AuthCredentials(session_id="live_token")) is True
