@@ -1872,6 +1872,8 @@ class TestInflightReadInvalidation:
             lambda: getattr(client, writer)(*args, **kwargs),
             cached_before=cached_before,
         )
+
+
 class TestEeroClientPasswordValidation:
     """Tests that the facade rejects unintended passwords before resolving or sending."""
 
