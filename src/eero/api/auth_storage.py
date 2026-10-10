@@ -276,7 +276,7 @@ class _ThreadOffloadStorage(CredentialStorage):
         try:
             return await self._offload(self._save_sync, credentials)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            _LOGGER.error("Error saving credentials off the event loop: %s", e)
+            _LOGGER.error("Storage save could not run on a worker thread: %s", e)
             return False
 
     def _save_sync(self, credentials: AuthCredentials) -> bool:
