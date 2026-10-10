@@ -124,6 +124,10 @@ def _require_plain_path(value: str, field: str) -> str:
         EeroValidationException: If ``value`` contains whitespace or a control
             character, a query (``?``) or fragment (``#``) delimiter, a
             ``.`` or ``..`` path segment, or a percent-encoded dot.
+
+    Dots inside a segment (``a..b``, ``v1.2``) are allowed; only a whole ``.``
+    or ``..`` segment is rejected. A bare identifier is stricter and also
+    rejects ``..`` anywhere in it (see :func:`_validate_identifier`).
     """
     if _CONTROL_CHARS_RE.search(value):
         raise EeroValidationException(field, "must not contain whitespace or control characters")
@@ -134,11 +138,15 @@ def _require_plain_path(value: str, field: str) -> str:
     return value
 
 
-def _validate_link_path(link: str) -> str:
-    """Validate a link value read from an envelope before joining it.
+def _validate_link_path(link: str, field: str = "link") -> str:
+    """Validate a host-relative path before joining it onto the API host.
 
     Args:
-        link: The link value as the API returned it.
+        link: The path, as the API returned it in an envelope or as a caller
+            supplied it.
+        field: The parameter name to report in the validation error. Defaults
+            to ``"link"`` for values read from an envelope; callers validating
+            their own argument pass its name.
 
     Returns:
         ``link`` unchanged, once validated.
@@ -151,8 +159,8 @@ def _validate_link_path(link: str) -> str:
             resource, on whatever version the API serves it.
     """
     if not isinstance(link, str) or not link or "://" in link or link.startswith("//"):
-        raise EeroValidationException("link", "must be a host-relative API path")
-    return _require_plain_path(link, "link")
+        raise EeroValidationException(field, "must be a host-relative API path")
+    return _require_plain_path(link, field)
 
 
 def _as_data(parent: Envelope) -> Envelope:
@@ -369,7 +377,7 @@ def resource_url(
     if id_or_url.lower().startswith(("http://", "https://")):
         supplied = _validate_absolute_url(id_or_url)
     elif id_or_url.startswith("/"):
-        supplied = join_api_path(_validate_link_path(id_or_url))
+        supplied = join_api_path(_validate_link_path(id_or_url, "id_or_url"))
 
     if supplied is not None:
         if family:
