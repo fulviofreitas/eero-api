@@ -595,6 +595,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_guest_network` | `async def set_guest_network(self, network_id: str, *, enabled: bool, name: Optional[str]=None, parent=None)` | PUT form `enabled=` (+ `name=`) to the `guestnetwork` link | verified write (2026-09-20); disconnects guests |
 | `set_guest_password` | `async def set_guest_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the guest network's `password` link | verified write (2026-09-20); disconnects guests |
 | `clear_guest_password` | `async def clear_guest_password(self, network_id: str, *, parent=None)` | DELETE the guest network's `password` link | verified write (2026-09-20); disconnects guests |
+| `set_hide_5g` | `async def set_hide_5g(self, network_id: str, enabled: bool)` | `True`: PUT JSON `{"value": true}` to `networks/{id}/temporary_flags/hide_5g`; `False`: DELETE it | disconnects 5 GHz clients; unverified |
 
 </details>
 
