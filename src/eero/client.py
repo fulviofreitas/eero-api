@@ -344,7 +344,10 @@ class EeroClient:
         Returns:
             True if login request was successful
         """
-        return await self._api.login(user_identifier)
+        result = await self._api.login(user_identifier)
+        if result:
+            self.clear_cache()
+        return result
 
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.

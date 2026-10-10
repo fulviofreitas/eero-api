@@ -139,7 +139,7 @@ class MemoryStorage(CredentialStorage):
     def __init__(self) -> None
 ```
 
-Holds one `AuthCredentials` instance as a plain attribute. `load()`/`save()`/`clear()` just read, overwrite, or reset that attribute — no I/O, no serialization, nothing ever touches disk.
+Holds one `AuthCredentials` instance as a plain attribute. `load()` and `save()` copy records; `clear()` resets the attribute — no I/O, no serialization, nothing ever touches disk.
 
 > ⚠️ **Warning:** This is the silent-data-loss backend. `EeroClient(use_keyring=False)` with no `cookie_file` resolves here automatically (see the selection table above) — there is no error, warning, or log line telling you this happened. Every session, once the process exits, is gone. Only use this deliberately (tests, short-lived ephemeral processes, secrets injected fresh every run via `set_session_token()`).
 

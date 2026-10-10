@@ -35,7 +35,7 @@ asyncio.run(main())
 
 ### `login(user_identifier)`
 
-`EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and holds it in memory as the (not-yet-verified) `session_id`. The pending token is never written to storage: the stored session is left untouched until `verify()` succeeds. A login that fails, is rejected, returns no token, or is cancelled restores the credentials previously held in memory, and a pending login that is abandoned without verifying is never persisted — other processes sharing the store keep loading the previous session.
+`EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and stores it as the (not-yet-verified) `session_id`. The pending token stays in memory; the previously stored session is preserved until verification succeeds. A successful login also clears the client response cache.
 
 Returns `True` when the response carried a token, `False` when it did not. Raises `EeroAuthenticationException` if the API rejects the request — including a server-rejected identifier (HTTP 400 with an `error.form.*` code, which the transport raises as `EeroValidationException` and `login()` re-wraps); the exception carries the response `envelope` and `error_code`. Raises `EeroRateLimitException` if the login endpoint rate-limits, and `EeroNetworkException`/`EeroTimeoutException` on transport failure.
 
@@ -79,7 +79,7 @@ Every request also carries `Accept: application/json`, the SDK's `User-Agent`, a
 
 ## ⏳ Session Lifetime
 
-**There is no client-side session expiry.** `AuthCredentials` stores exactly one value — the session token — and `is_authenticated` means "a session token is present". The server is the sole authority on whether that token is still valid; it signals invalidity with a `401`, which the SDK raises as `EeroAuthenticationException`.
+**There is no client-side session expiry.** `AuthCredentials` stores exactly one value — the session token — and `is_authenticated` means "an established session token is present, with no login pending". The server is the sole authority on whether that token is still valid; it signals invalidity with a `401`, which the SDK raises as `EeroAuthenticationException`.
 
 Consequences:
 
@@ -92,6 +92,7 @@ Consequences:
 
 | Outcome | Return / raise |
 |---|---|
+| Login verification pending | returns `False` without a request or storage change |
 | HTTP 200 | returns `True` |
 | 401 whose `error_code` is in the verification group (`error.verification.*`, `error.login.unknown`, `error.login.blocked`, `error.too.many.resends`, `error.email.unverified`) or is `error.session.refresh` | returns `False`; stored credentials are **kept** (the session is mid-verification — finish `verify()` — or merely due for a refresh) |
 | Any other 401 — `error.session.expired` / `.invalid` / `.revoked`, any other recognised catalogue string, or an unrecognised/absent `error_code` | returns `False`; stored credentials are **deleted** from memory and every storage backend |
@@ -103,11 +104,11 @@ Consequences:
 
 ### `ensure_authenticated()`
 
-Returns `is_authenticated` — `True` if a session token is present, `False` otherwise. It never raises for the "not logged in" case and never triggers a refresh: refreshes are exclusively server-driven (below).
+Returns `is_authenticated` — `True` if an established token is present and no login is pending, `False` otherwise. It never raises for the "not logged in" case and never triggers a refresh: refreshes are exclusively server-driven (below).
 
 ### `get_auth_token()`
 
-Returns the current `session_id` string, or `None` when no token is present. This is what `EeroClient.get_account()` uses under the hood before each `/account` call, and what the transport uses to source the token for a post-refresh replay.
+Returns the established `session_id` string, or `None` when no token is present or login verification is pending. This is what `EeroClient.get_account()` uses under the hood before each `/account` call, and what the transport uses to source the token for a post-refresh replay.
 
 > **Note**: None of `refresh_session()`, `ensure_authenticated()`, or `get_auth_token()` are exposed on `EeroClient` or `EeroAPI` — they live only on `AuthAPI`. In normal usage you never need to call any of them directly (see transparent refresh below).
 
@@ -215,3 +216,16 @@ All exception classes derive from `EeroException`, expose `is_auth_error()`, and
 - [Credential Storage](Credential-Storage) — Deep dive on `CredentialStorage` backends
 - [Error Handling](Error-Handling) — The `EeroException` hierarchy and the `envelope` / `error_code` attributes
 - [Troubleshooting](Troubleshooting) — Common issues & fixes, including Amazon-login accounts
+
+
+### Pending verification is not an authenticated session
+
+A token received by `login()` remains pending until `verify()` succeeds.
+While pending, `is_authenticated` is false, `get_auth_token()` returns None,
+and authenticated resource reads are refused. `refresh_session()` returns
+false without sending a refresh or changing storage. The previous durable
+session survives failed or abandoned login/verification; verification alone
+saves its replacement. Explicit token injection establishes an authenticated
+session and cancels pending state. Explicit credential clearing removes both
+pending and stored credentials. `MemoryStorage` copies records at save/load
+boundaries so mutation cannot bypass persistence.
