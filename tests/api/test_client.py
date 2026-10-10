@@ -7,6 +7,7 @@ Tests cover:
 - Context manager lifecycle
 """
 
+import asyncio
 import inspect
 import time
 from typing import Any, Dict
@@ -1558,6 +1559,225 @@ class TestCacheIsolation:
 
         second_result = client._eero_parent_kwargs("network_123", "eero_1")
         assert second_result["parent"]["id"] == "eero_1"
+
+
+# ========================== In-flight reads versus invalidation ==========================
+
+# A hang guard only: the events below decide the ordering, never this bound.
+INFLIGHT_WAIT_SECONDS = 30
+
+# (reader, reader args, domain, domain method, cache key, subkey, invalidator, invalidator args)
+INFLIGHT_INVALIDATION_CASES = [
+    (
+        "get_network",
+        (),
+        "networks",
+        "get_network",
+        "network",
+        "n1",
+        "_invalidate_network_cache",
+        ("n1",),
+    ),
+    (
+        "get_eeros",
+        (),
+        "eeros",
+        "get_eeros",
+        "eeros",
+        "n1_eeros",
+        "_invalidate_eeros_cache",
+        ("n1",),
+    ),
+    (
+        "get_devices",
+        (),
+        "devices",
+        "get_devices",
+        "devices",
+        "n1_devices",
+        "_invalidate_device_cache",
+        ("n1", "d1"),
+    ),
+    (
+        "get_device",
+        ("d1",),
+        "devices",
+        "get_device",
+        "devices",
+        "n1_d1",
+        "_invalidate_device_cache",
+        ("n1", "d1"),
+    ),
+    (
+        "get_profiles",
+        (),
+        "profiles",
+        "get_profiles",
+        "profiles",
+        "n1_profiles",
+        "_invalidate_profiles_list_cache",
+        ("n1",),
+    ),
+    (
+        "get_profile",
+        ("p1",),
+        "profiles",
+        "get_profile",
+        "profiles",
+        "n1_p1",
+        "_invalidate_profile_cache",
+        ("n1", "p1"),
+    ),
+    (
+        "get_profile",
+        ("p1",),
+        "profiles",
+        "get_profile",
+        "profiles",
+        "n1_p1",
+        "_invalidate_all_profile_caches",
+        ("n1",),
+    ),
+    ("get_account", (), "auth", "get", "account", None, "clear_cache", ()),
+    ("get_networks", (), "networks", "get_networks", "networks", None, "clear_cache", ()),
+]
+
+# (public write, args, kwargs, account API method it calls)
+INFLIGHT_ACCOUNT_WRITES = [
+    ("set_account_name", ("name",), {}, "set_name"),
+    ("verify_account_email", ("code",), {}, "verify_email"),
+    ("verify_account_phone", ("code",), {}, "verify_phone"),
+    ("set_account_consents", (), {"marketing_emails": True}, "set_consents"),
+]
+
+
+class TestInflightReadInvalidation:
+    """A read overtaken by an invalidation must not populate the cache.
+
+    Each test holds a read open on an event, runs the invalidation while it
+    is in flight, then releases it. The caller still receives its response,
+    but the entry stays empty and the next read fetches again.
+    """
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "n1"
+        return client
+
+    @staticmethod
+    async def _assert_fill_rejected(
+        client, domain, method, key, subkey, read, invalidate, *, cached_before=False
+    ):
+        """Hold ``read`` in flight across ``invalidate`` and check the cache stays empty.
+
+        Args:
+            client: The client under test.
+            domain: Name of the domain API whose ``method`` is held open.
+            method: Name of the domain API call made by ``read``.
+            key: Cache section ``read`` fills.
+            subkey: Cache entry ``read`` fills, or None for a single-entry section.
+            read: Zero-argument callable that performs the cached read.
+            invalidate: Zero-argument callable that invalidates the cache; it may
+                return an awaitable.
+            cached_before: Whether the entry is populated before the read starts.
+        """
+        started, release = asyncio.Event(), asyncio.Event()
+        stale = {"meta": {"code": 200}, "data": {"name": "old"}}
+        fresh = {"meta": {"code": 200}, "data": {"name": "new"}}
+        if key == "account" and hasattr(client._api.account, "get_account"):
+            # Account reads move to the authenticated resource in the account
+            # follow-up; keep exercising the actual facade transport in either layout.
+            domain, method = "account", "get_account"
+        if key == "networks":
+            # A valid collection avoids account fallback, which is a separate behavior.
+            stale = {"meta": {"code": 200}, "data": {"networks": [{"id": "n1", "name": "old"}]}}
+            fresh = {"meta": {"code": 200}, "data": {"networks": [{"id": "n1", "name": "new"}]}}
+
+        async def delayed(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return stale
+
+        request = AsyncMock(side_effect=delayed)
+        setattr(getattr(client._api, domain), method, request)
+        if cached_before:
+            client._update_cache(key, subkey, fresh)
+        task = asyncio.create_task(read(refresh_cache=True))
+        try:
+            await asyncio.wait_for(started.wait(), INFLIGHT_WAIT_SECONDS)
+            outcome = invalidate()
+            if inspect.isawaitable(outcome):
+                await outcome
+        finally:
+            release.set()
+
+        assert await task == stale
+        assert client._get_from_cache(key, subkey) is None
+        request.side_effect = None
+        request.return_value = fresh
+        assert await read() == fresh
+        assert await read() == fresh
+        assert request.await_count == 2
+
+    @pytest.mark.parametrize("cached_before", [False, True])
+    @pytest.mark.parametrize(
+        "case",
+        INFLIGHT_INVALIDATION_CASES,
+        ids=[f"{case[0]}-{case[6]}" for case in INFLIGHT_INVALIDATION_CASES],
+    )
+    async def test_invalidation_rejects_inflight_cache_fill(self, client, case, cached_before):
+        """Every invalidator that bumps the epoch blocks the fill of an overtaken read."""
+        reader, args, domain, method, key, subkey, invalidator, invalidator_args = case
+
+        await self._assert_fill_rejected(
+            client,
+            domain,
+            method,
+            key,
+            subkey,
+            lambda **kwargs: getattr(client, reader)(*args, **kwargs),
+            lambda: getattr(client, invalidator)(*invalidator_args),
+            cached_before=cached_before,
+        )
+
+    async def test_public_write_cannot_be_undone_by_an_inflight_read(self, client):
+        """A public write that invalidates the cache wins over a read already in flight."""
+        client._api.devices.set_device_nickname = AsyncMock(return_value={"data": {}})
+
+        await self._assert_fill_rejected(
+            client,
+            "devices",
+            "get_device",
+            "devices",
+            "n1_d1",
+            lambda **kwargs: client.get_device("d1", **kwargs),
+            lambda: client.set_device_nickname("d1", "new"),
+        )
+
+    @pytest.mark.parametrize("cached_before", [False, True])
+    @pytest.mark.parametrize(
+        ("writer", "args", "kwargs", "method"),
+        INFLIGHT_ACCOUNT_WRITES,
+        ids=[write[0] for write in INFLIGHT_ACCOUNT_WRITES],
+    )
+    async def test_account_write_rejects_inflight_account_fill(
+        self, client, writer, args, kwargs, method, cached_before
+    ):
+        """The account writes block the fill of an account read already in flight."""
+        setattr(client._api.account, method, AsyncMock(return_value={"meta": {"code": 200}}))
+
+        await self._assert_fill_rejected(
+            client,
+            "auth",
+            "get",
+            "account",
+            None,
+            client.get_account,
+            lambda: getattr(client, writer)(*args, **kwargs),
+            cached_before=cached_before,
+        )
 
 
 # ========================== Cache invalidation for new write wrappers ==========================
