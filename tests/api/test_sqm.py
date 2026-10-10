@@ -2,7 +2,7 @@
 
 Tests cover:
 - Getting SQM settings (raw response, via the network's own URL)
-- Setting the SQM boolean via a query parameter with no body
+- Setting the SQM boolean via a flat JSON boolean
 - id/path/URL polymorphism and parent-link preference
 - The uncharacterised-write warning
 """
@@ -83,11 +83,11 @@ class TestSqmAPISetSqm:
     """Tests for set_sqm method."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("enabled,expected", [(True, "true"), (False, "false")])
-    async def test_set_sqm_sends_query_param_with_no_body(
+    @pytest.mark.parametrize("enabled,expected", [(True, True), (False, False)])
+    async def test_set_sqm_sends_flat_json_boolean(
         self, sqm_api, mock_session, caplog, enabled, expected
     ):
-        """Test set_sqm PUTs to the settings link with sqm as a query param and no body."""
+        """Test set_sqm PUTs to the settings link with sqm as a flat JSON boolean."""
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
@@ -99,8 +99,8 @@ class TestSqmAPISetSqm:
         call_args = mock_session.request.call_args
         assert call_args.args[0] == "PUT"
         assert call_args.args[1].endswith("/2.2/networks/network_123/settings")
-        assert call_args.kwargs["params"] == {"sqm": expected}
-        assert "json" not in call_args.kwargs or call_args.kwargs["json"] is None
+        assert call_args.kwargs["json"] == {"sqm": expected}
+        assert call_args.kwargs.get("params") is None
         assert "data" not in call_args.kwargs or call_args.kwargs["data"] is None
         assert any("set SQM for network" in m for m in caplog.messages)
 

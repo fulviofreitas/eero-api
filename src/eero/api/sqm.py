@@ -81,14 +81,14 @@ class SqmAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Enable or disable SQM (Smart Queue Management) - returns raw Eero API response.
 
-        Issues a PUT with no request body to the network's ``settings``
-        link, carrying the new value as the ``sqm`` query parameter
-        (``true``/``false``).
+        Issues a PUT to the network's ``settings`` link with the flat JSON
+        body ``{"sqm": enabled}``. A query-only PUT can return success
+        without changing the setting. This boolean write was verified on
+        a live network; upload/download caps and mode controls are not implied.
 
         .. warning::
-            This is a settings-class write: it has not been confirmed
-            against a live network, and -- like other writes to this
-            endpoint -- may trigger a mesh reboot. Follow the
+            This is a settings-class write: like other writes to this endpoint,
+            it may trigger a mesh reboot. Follow the
             read-compare-skip discipline: read `get_sqm_settings` first, and
             only issue this write when the stored value differs from the
             desired one. Never retry on failure.
@@ -118,5 +118,5 @@ class SqmAPI(AuthenticatedAPI):
         return await self.put(
             url,
             auth_token=auth_token,
-            params={"sqm": "true" if enabled else "false"},
+            json={"sqm": enabled},
         )
