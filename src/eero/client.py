@@ -7,6 +7,7 @@ Response format: {"meta": {...}, "data": {...}}
 
 import copy
 import logging
+import re
 import time
 from typing import Any, Dict, List, Mapping, Optional, Union
 
@@ -14,10 +15,15 @@ from aiohttp import ClientSession, ClientTimeout
 
 from .api import EeroAPI
 from .api._params import require_bool, require_non_empty_string
+from .api.base import id_from_url
 from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
 
 _LOGGER = logging.getLogger(__name__)
+
+# A MAC is 12 hex digits once the ``:``, ``-`` and ``.`` separators are removed.
+_MAC_SEPARATORS = str.maketrans("", "", ":-.")
+_MAC_HEX = re.compile(r"[0-9a-fA-F]{12}")
 
 
 class EeroClient:
@@ -106,6 +112,9 @@ class EeroClient:
         # already be in flight and must not restore a pre-write response.
         self._cache_epoch = 0
         self._preferred_network_id: Optional[str] = None
+        # True only after set_preferred_network(); a value found by discovery
+        # leaves this False and is dropped when the session changes.
+        self._preferred_network_explicit = False
         self._cache: Dict[str, Dict] = {
             "account": {"data": None, "timestamp": 0},
             "networks": {"data": None, "timestamp": 0},
@@ -151,7 +160,18 @@ class EeroClient:
         return self._api.credentials_persisted
 
     def _is_cache_valid(self, cache_key: str, subkey: Optional[str] = None) -> bool:
-        """Check if a cache entry is valid."""
+        """Check if a cache entry is valid, pruning it when it has expired.
+
+        Args:
+            cache_key: Top-level cache section to check.
+            subkey: Entry within the section, or None for a section holding a
+                single entry.
+
+        Returns:
+            True when a fresh entry is present. An expired keyed entry is
+            deleted and an expired single-entry section is reset to its empty
+            state, so this check has the side effect of evicting them.
+        """
         if cache_key not in self._cache:
             return False
 
@@ -165,8 +185,15 @@ class EeroClient:
         if not cache_entry or "timestamp" not in cache_entry:
             return False
 
-        current_time = time.monotonic()
-        return (current_time - cache_entry["timestamp"]) < self._cache_timeout
+        if (time.monotonic() - cache_entry["timestamp"]) < self._cache_timeout:
+            return True
+        # Expired: drop the stale copy now so a long-lived client does not
+        # accumulate entries it will never serve again.
+        if subkey is None:
+            self._cache[cache_key] = {"data": None, "timestamp": 0}
+        else:
+            del self._cache[cache_key][subkey]
+        return False
 
     def _update_cache(
         self, cache_key: str, subkey: Optional[str], data: Any, *, epoch: Optional[int] = None
@@ -363,6 +390,32 @@ class EeroClient:
         match = self._find_by_id_or_url(cached.get("data"), eero_id)
         return {"parent": match} if match is not None else {}
 
+    @staticmethod
+    def _device_cache_key(network_id: str, device_id: str) -> str:
+        """Build the cache key of one device, identical for every spelling of its id.
+
+        Takes the last path segment of ``device_id`` (so a bare id, a path and
+        an absolute URL agree). When that segment is a 12-hex-digit MAC in any
+        spelling (colons, dashes, dots or none, any case) it is reduced to
+        lowercase hex without separators; any other id is kept as it is. Only
+        the cache key is canonicalised: requests still carry the caller's value.
+
+        Args:
+            network_id: The resolved network ID the device belongs to.
+            device_id: A bare id or MAC, API-returned path, or absolute URL.
+
+        Returns:
+            The key for the ``devices`` cache section.
+
+        Raises:
+            EeroValidationException: If ``device_id`` is empty or not a string.
+        """
+        segment = id_from_url(device_id)
+        mac = segment.translate(_MAC_SEPARATORS)
+        if _MAC_HEX.fullmatch(mac):
+            segment = mac.lower()
+        return f"{network_id}_{segment}"
+
     def _device_parent_kwargs(self, network_id: str, device_id: str) -> Dict[str, Any]:
         """Build a ``parent=`` kwarg dict from a cached single-device envelope.
 
@@ -374,13 +427,28 @@ class EeroClient:
             ``{"parent": <cached device envelope>}`` when a fresh cached
             envelope exists for this exact device, else ``{}``.
         """
-        cache_key = f"{network_id}_{device_id}"
+        cache_key = self._device_cache_key(network_id, device_id)
         if not self._is_cache_valid("devices", cache_key):
             return {}
         cached = self._get_from_cache("devices", cache_key)
         return {"parent": cached} if cached is not None else {}
 
     # ==================== Authentication ====================
+
+    def _forget_discovered_network(self) -> None:
+        """Drop the preferred network when discovery chose it.
+
+        A network chosen with :meth:`set_preferred_network` is kept. Called
+        whenever the credentials may change, so calls without ``network_id``
+        never keep targeting the previous account's network.
+        """
+        if not self._preferred_network_explicit:
+            self._preferred_network_id = None
+
+    def _reset_session_state(self) -> None:
+        """Clear the cache and any discovered network after a session change."""
+        self.clear_cache()
+        self._forget_discovered_network()
 
     async def login(self, user_identifier: str) -> bool:
         """Start the login process by requesting a verification code.
@@ -390,8 +458,16 @@ class EeroClient:
 
         Returns:
             True if login request was successful
+
+        Note:
+            A successful request forgets an auto-discovered preferred network,
+            since the credentials are about to change. See
+            :meth:`set_preferred_network`.
         """
-        return await self._api.login(user_identifier)
+        result = await self._api.login(user_identifier)
+        if result:
+            self._forget_discovered_network()
+        return result
 
     async def verify(self, verification_code: str) -> bool:
         """Verify login with the code sent to the user.
@@ -404,7 +480,7 @@ class EeroClient:
         """
         result = await self._api.verify(verification_code)
         if result:
-            self.clear_cache()
+            self._reset_session_state()
         return result
 
     async def logout(self) -> bool:
@@ -415,7 +491,7 @@ class EeroClient:
         """
         result = await self._api.logout()
         if result:
-            self.clear_cache()
+            self._reset_session_state()
         return result
 
     async def set_session_token(self, token: str) -> None:
@@ -426,7 +502,8 @@ class EeroClient:
         variable, or test fixture).
 
         Any in-memory cache entries are invalidated so that the very next
-        request uses the new session.
+        request uses the new session, and an auto-discovered preferred network
+        is forgotten (see :meth:`set_preferred_network`).
 
         Args:
             token: The opaque session-cookie value (the ``s=`` cookie).
@@ -435,16 +512,18 @@ class EeroClient:
             EeroValidationException: If the token is empty or non-string.
         """
         await self._api.auth.set_session_token(token)
-        self.clear_cache()
+        self._reset_session_state()
 
     async def clear_session_token(self) -> None:
         """Clear the active session token from cookie jar, in-memory creds, and storage.
 
         Any in-memory cache entries are invalidated alongside the token so that
         subsequent requests are not served stale data from a previous session.
+        An auto-discovered preferred network is forgotten as well (see
+        :meth:`set_preferred_network`).
         """
         await self._api.auth.clear_session_token()
-        self.clear_cache()
+        self._reset_session_state()
 
     # ==================== Account ====================
 
@@ -830,7 +909,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id)
 
-        cache_key = f"{network_id}_{device_id}"
+        cache_key = self._device_cache_key(network_id, device_id)
         if not refresh_cache and self._is_cache_valid("devices", cache_key):
             cached = self._get_from_cache("devices", cache_key)
             if cached:
@@ -1011,16 +1090,19 @@ class EeroClient:
         self._invalidate_device_cache(network_id, device_id)
         return response
 
-    def _invalidate_device_cache(self, network_id: str, device_id: str) -> None:
-        """Invalidate device-related cache entries."""
-        self._cache_epoch += 1
-        cache_key = f"{network_id}_{device_id}"
-        if cache_key in self._cache.get("devices", {}):
-            del self._cache["devices"][cache_key]
+    def _invalidate_device_cache(self, network_id: str, *device_ids: str) -> None:
+        """Invalidate the cached entries of devices and the network's device list.
 
-        cache_key = f"{network_id}_devices"
-        if cache_key in self._cache.get("devices", {}):
-            del self._cache["devices"][cache_key]
+        Args:
+            network_id: The resolved network ID the devices belong to.
+            *device_ids: Devices to drop, each as a bare id or MAC, path, or
+                absolute URL in any spelling :meth:`_device_cache_key` accepts.
+        """
+        self._cache_epoch += 1
+        devices = self._cache.get("devices", {})
+        for device_id in device_ids:
+            devices.pop(self._device_cache_key(network_id, device_id), None)
+        devices.pop(f"{network_id}_devices", None)
 
     # ==================== Profiles ====================
 
@@ -1341,6 +1423,14 @@ class EeroClient:
         This is an in-memory preference only. For persistent storage,
         the CLI application should manage its own configuration file.
 
+        The choice is explicit and survives session changes. A network found
+        by auto-discovery is not: it is forgotten on :meth:`login`,
+        :meth:`verify`, :meth:`logout`, :meth:`set_session_token` and
+        :meth:`clear_session_token`, so the next call without ``network_id``
+        discovers the network of the new credentials. Call this again after a
+        session change only if you want a different network than the one
+        already chosen.
+
         Args:
             network_id: ID of the network to use. Accepted as ``str`` or
                 ``int`` since the Eero API returns network ids as a JSON
@@ -1349,6 +1439,7 @@ class EeroClient:
                 type.
         """
         self._preferred_network_id = str(network_id)
+        self._preferred_network_explicit = True
 
     @property
     def preferred_network_id(self) -> Optional[str]:
@@ -2430,10 +2521,26 @@ class EeroClient:
         device_urls: List[str],
         network_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Set profile devices - returns raw Eero API response."""
+        """Set profile devices - returns raw Eero API response.
+
+        Besides the profile's own entries, drops the cached entry of every
+        device named in ``device_urls`` and the network's device list, which
+        report the profile a device belongs to.
+
+        Args:
+            profile_id: The profile's bare ID, path, or absolute URL.
+            device_urls: Device URLs (or ids) that replace the profile's devices.
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+        """
         network_id = await self._ensure_network_id(network_id)
         response = await self._api.profiles.set_profile_devices(network_id, profile_id, device_urls)
         self._invalidate_profile_cache(network_id, profile_id)
+        self._invalidate_device_cache(
+            network_id, *(url for url in device_urls if isinstance(url, str) and url)
+        )
         return response
 
     # ==================== Entitlements & Capabilities ====================

@@ -102,6 +102,13 @@ current = client.preferred_network_id  # "<network-id>"
 
 This is **in-memory only** — it is not persisted to disk, keyring, or any config file, and does not survive process restart or a new `EeroClient` instance.
 
+An explicit choice also **survives session changes**. A preferred network found by auto-discovery
+(below) does not: it is forgotten on `login()`, `verify()`, `logout()`, `set_session_token()` and
+`clear_session_token()`, so after you switch accounts the next call without `network_id`
+discovers the new account's network instead of targeting the previous one. If you call
+`set_preferred_network()` and then switch to credentials that cannot see that network, it is still
+used — set it again, or pass `network_id=`, after the switch.
+
 ---
 
 ## Auto-Discovery Side Effect of `get_networks()`
@@ -112,6 +119,8 @@ Calling `client.get_networks()` has a side effect: if no preferred network is cu
 await client.get_networks()               # preferred_network_id was None
 client.preferred_network_id               # now populated with the first network's ID
 ```
+
+The value found this way is dropped when the session changes (see above); it is a per-session default, not a setting.
 
 This means the very first call you make against a multi-network account — even a read-only one — can silently pin every subsequent call (that omits `network_id`) to that first network.
 
