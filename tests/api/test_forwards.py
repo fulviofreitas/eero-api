@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.forwards import ForwardsAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import api_success_response, create_mock_response
 
@@ -228,3 +228,65 @@ class TestForwardsAPIUpdateForward:
             await forwards_api.update_forward(
                 "/2.2/networks/network_123/forwards/f_1", {"enabled": True}
             )
+
+
+class TestForwardsAPIGetPinnedUrlForms:
+    """get_forwards stays on 2.2 for every network form, and refuses unsafe ones (#135)."""
+
+    @pytest.fixture
+    def api(self, mock_session):
+        """Create a ForwardsAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return ForwardsAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "network",
+        [
+            "network_123",
+            "/2.3/networks/network_123",
+            "https://api-user.e2ro.com/2.3/networks/network_123",
+            "HTTPS://api-user.e2ro.com/2.3/networks/network_123",
+            "hTTps://api-user.e2ro.com/2.3/networks/network_123",
+        ],
+        ids=["id", "path", "url", "uppercase-scheme", "mixed-case-scheme"],
+    )
+    async def test_every_network_form_is_pinned_to_2_2(self, api, mock_session, network):
+        """A path or URL on 2.3, in any scheme case, is rewritten to 2.2."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get_forwards(network)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.2/networks/network_123/forwards"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", " ", "\x00"])
+    async def test_control_character_in_network_raises_before_request(
+        self, api, mock_session, control
+    ):
+        """A control character cannot slip past the pin; the call fails before transport."""
+        for network in (
+            f"/2.3/networks/network_123{control}",
+            f"/2.3/networks/net{control}work_123",
+            f"https://api-user.e2ro.com/2.3/networks/network_123{control}",
+        ):
+            with pytest.raises(EeroValidationException):
+                await api.get_forwards(network)
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", "\x00"])
+    async def test_control_character_in_parent_link_raises_before_request(
+        self, api, mock_session, control
+    ):
+        """A published link carrying a control character is refused, not pinned."""
+        parent = {"resources": {"forwards": f"/2.3/networks/network_123/forwards{control}"}}
+
+        with pytest.raises(EeroValidationException):
+            await api.get_forwards("network_123", parent=parent)
+
+        mock_session.request.assert_not_called()

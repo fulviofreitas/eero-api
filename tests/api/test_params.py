@@ -85,6 +85,27 @@ class TestResolveNestedUrlChildValidation:
         )
 
 
+class TestResolveNetworkUrlConfinement:
+    """A caller-supplied network path or URL must name exactly one network."""
+
+    @pytest.mark.parametrize(
+        "network",
+        [
+            "/2.2/account",
+            "/2.2/eeros/9",
+            "/2.2/networks/network_123/devices",
+            "/2.2/networks/network_123?x=1",
+            "/2.2/networks/network_123/..",
+            "/2.2/networks/network_123\n",
+            "https://api-user.e2ro.com/2.2/account",
+        ],
+        ids=["account", "eero", "sub-resource", "query", "dotdot", "newline", "url-account"],
+    )
+    def test_non_network_path_is_rejected(self, network):
+        with pytest.raises(EeroValidationException):
+            resolve_network_url(network)
+
+
 class TestResolveNestedUrlPathChildFamily:
     """A path or URL child must name the addressed network's nested resource."""
 
@@ -112,6 +133,58 @@ class TestResolveNestedUrlPathChildFamily:
     def test_path_outside_the_family_is_rejected(self, child):
         with pytest.raises(EeroValidationException):
             resolve_nested_url("network_123", child, prefix="profiles", suffix="/schedules")
+
+    @pytest.mark.parametrize(
+        "child",
+        [
+            "/2.2/networks/123/profiles/..",
+            "/2.2/networks/123/profiles/.",
+            "/2.2/networks/123/profiles/../profile_1",
+            "/2.2/networks/123/profiles/profile_1/../..",
+            "/2.2/networks/../profiles/profile_1",
+            "/2.2/networks/123/profiles/%2e%2e",
+            "/2.2/networks/123/profiles/%2E",
+            "/2.2/networks/123/profiles/profile_1\n",
+            "/2.2/networks/123/profiles/profile\t_1",
+            "/2.2/networks/123/profiles/profile_1 ",
+            "/2.2/networks/123/profiles/profile\x00_1",
+            "https://api-user.e2ro.com/2.2/networks/123/profiles/..",
+            "https://api-user.e2ro.com/2.2/networks/123/profiles/profile_1\r\n",
+        ],
+        ids=[
+            "dotdot-child",
+            "dot-child",
+            "dotdot-then-child",
+            "dotdot-after-child",
+            "dotdot-network",
+            "encoded-dotdot",
+            "encoded-dot",
+            "newline",
+            "tab",
+            "space",
+            "nul",
+            "url-dotdot-child",
+            "url-crlf",
+        ],
+    )
+    @pytest.mark.parametrize("suffix", ["", "/schedules"])
+    def test_dot_segments_and_control_characters_are_rejected(self, child, suffix):
+        with pytest.raises(EeroValidationException):
+            resolve_nested_url("123", child, prefix="profiles", suffix=suffix)
+
+    def test_nested_prefix_with_several_segments_is_matched_literally(self):
+        url = resolve_nested_url(
+            "network_123",
+            "/2.2/networks/network_123/insights/devices/aa:bb:cc:11:22:33",
+            prefix="insights/devices",
+        )
+        assert url.endswith("/networks/network_123/insights/devices/aa:bb:cc:11:22:33")
+        with pytest.raises(EeroValidationException):
+            resolve_nested_url(
+                "network_123",
+                "/2.2/networks/network_123/insights/profiles/p_1",
+                prefix="insights/devices",
+            )
 
     def test_path_child_in_the_family_is_accepted(self):
         url = resolve_nested_url(

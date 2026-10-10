@@ -122,6 +122,7 @@ _VERIFIED_WRITE_ALLOWLIST = {
 # method's warning call -- a generic "placeholder-id" string would be
 # rejected before ever reaching (and thus never exercising) the warning.
 _PARAM_OVERRIDES = {
+    ("create_schedule", "days"): ["Monday"],
     ("set_mlo_mode", "mode"): "disabled",
     ("set_connection_mode", "mode"): "BRIDGE",
     ("node_action", "action"): "POWER_CYCLE_ALL_PORTS",
@@ -136,6 +137,9 @@ _PARAM_OVERRIDES = {
     # A path avoids the separate `network`-required-for-a-bare-id branch.
     ("update_forward", "forward"): "/2.2/networks/net/forwards/f1",
     ("update_reservation", "reservation"): "/2.2/networks/net/reservations/r1",
+    # A bare schedule id is refused (it cannot name its network and profile).
+    ("update_schedule", "schedule"): "/2.2/networks/net/profiles/p1/schedules/s1",
+    ("delete_schedule", "schedule"): "/2.2/networks/net/profiles/p1/schedules/s1",
 }
 
 # Per-(method name, parameter name) values forced onto the call even though
@@ -169,7 +173,7 @@ _FORCE_INCLUDE_OPTIONAL = {
 _GET_RESPONSE_OVERRIDES = {
     "clear_profile_schedule": {
         "meta": {"code": 200},
-        "data": [{"url": "/2.2/networks/net/profiles/p1/schedules/s1"}],
+        "data": {"schedule": [{"url": "/2.2/networks/net/profiles/p1/schedules/s1"}]},
     },
 }
 
@@ -297,6 +301,10 @@ class TestEveryWriteWarnsOrIsAllowlisted:
         instance = _make_instance(cls)
         method = getattr(instance, method_name)
         kwargs = _build_call_kwargs(getattr(cls, method_name))
+        if cls.__name__ == "ScheduleAPI" and method_name == "update_schedule":
+            kwargs.update(
+                name="Bedtime", days=["Monday"], start="21:00", end="07:00", enabled=False
+            )
 
         if method_name in _GET_RESPONSE_OVERRIDES:
             _mocked_transport.setattr(

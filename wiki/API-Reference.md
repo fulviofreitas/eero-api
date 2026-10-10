@@ -38,7 +38,9 @@ shaped `{"meta": {...}, "data": {...}}` unless noted otherwise. See [Raw Respons
 
 - **Resource arguments are polymorphic.** Every `network_id` / `eero_id` / `mac` / `profile` /
   `forward` / `reservation` / `invite_id` argument accepts a bare ID, the resource's API path,
-  or an absolute API-host URL. See [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
+  or an absolute API-host URL. A path or URL must name exactly one resource of the family the
+  method addresses (no other family, extra components, query, fragment, `.`/`..` segment or
+  control character). See [Network Targeting](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
 - **`parent=`** is a keyword-only, read-only envelope on every domain method. The "Parent"
   note in each table says which envelope the method uses it for (network / eero / device /
   profile / guest network) and which link it reads. "unused" means the argument is accepted
@@ -520,7 +522,7 @@ the package root.
 | `join_api_path` | `join_api_path(path: str) -> str` | `API_HOST` + host-relative path; version prefix preserved; `EeroValidationException` on empty/non-string |
 | `resolve_link` | `resolve_link(parent: Envelope, name: str) -> Optional[str]` | `parent["resources"][name]` (full envelope or `data` object) joined onto the host; `None` when absent |
 | `self_url` | `self_url(parent: Envelope) -> Optional[str]` | The envelope's own `url` joined onto the host |
-| `resource_url` | `resource_url(id_or_url: str, template: str, *, version: str=API_VERSION_DEFAULT) -> str` | Bare ID → `template` (exactly one `{id}`) on `version`; path → joined, suffix after `{id}` appended; absolute URL → validated (API host + scheme only), suffix appended |
+| `resource_url` | `resource_url(id_or_url: str, template: str, *, version: str=API_VERSION_DEFAULT) -> str` | Bare ID → `template` (exactly one `{id}`) on `version`; path → joined, suffix after `{id}` appended; absolute URL → validated (API host + scheme), suffix appended. A path or URL must be exactly `/<version>/<family>/<id>` for the template's family (the text before `{id}`); otherwise `EeroValidationException` |
 | `sub_resource_url` | `sub_resource_url(id_or_url: str, template: str, *, link: str, parent: Optional[Envelope]=None, version: str=API_VERSION_DEFAULT) -> str` | `resolve_link(parent, link)` if it yields a URL, else `resource_url(...)` |
 | `Envelope` | `Dict[str, Any]` | Type alias |
 
@@ -669,9 +671,9 @@ Scheduled pauses live at `networks/{id}/profiles/{profile}/schedules` (the profi
 
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
-| `get_schedules` | `async def get_schedules(self, network: str, profile: str, *, parent=None)` | GET the schedules collection | read |
+| `get_schedules` | `async def get_schedules(self, network: str, profile: str, *, parent=None)` | GET the profile; expose its `schedule` list with original metadata | read |
 | `create_schedule` | `async def create_schedule(self, network: str, profile: str, *, name: str, days: List[str], start: str, end: str, enabled: bool=True, parent=None)` | POST JSON to the collection | unverified write |
-| `update_schedule` | `async def update_schedule(self, schedule: Any, *, name: Optional[str]=None, days: Optional[List[str]]=None, start: Optional[str]=None, end: Optional[str]=None, enabled: Optional[bool]=None)` | PUT JSON of the supplied fields to the pause's own URL (`schedule` is a path/URL or envelope) | unverified write |
+| `update_schedule` | `async def update_schedule(self, schedule: Any, *, name: Optional[str]=None, days: Optional[List[str]]=None, start: Optional[str]=None, end: Optional[str]=None, enabled: Optional[bool]=None)` | PUT complete JSON replacement to the pause's own URL; omitted fields read from the profile | unverified write |
 | `delete_schedule` | `async def delete_schedule(self, schedule: Any)` | DELETE the pause's own URL | unverified write |
 | `clear_profile_schedule` | `async def clear_profile_schedule(self, network: str, profile: str, *, parent=None) -> List[Dict[str, Any]]` | one GET + one DELETE per pause | unverified write; never retried |
 | `enable_bedtime` | `async def enable_bedtime(self, network: str, profile: str, start_time: str, end_time: str, days: Optional[List[str]]=None, *, parent=None)` | one `create_schedule` | unverified write |
@@ -1139,3 +1141,14 @@ defined in `const.py` — see [Module-level exports](#module-level-exports) for 
 - [Error Handling](Error-Handling) — The `EeroException` hierarchy and handling patterns
 - [Deprecations](Deprecations) — No-op and removed surface, and what replaces it
 - [Credential Storage](Credential-Storage) — Keyring, file, and memory storage backends
+
+
+### Schedule behavior corrections
+
+`get_schedules` reads a fresh profile envelope and returns its `schedule` array
+as `data`, retaining the profile response metadata. The collection GET is not
+used. Full day names are normalized to `Monday` through `Sunday`. Partial
+updates first read the current schedule and send all replacement fields,
+including its current `enabled` state. A missing or incomplete schedule is
+refused; callers can supply every field for a direct replacement. This
+read-modify-write is not atomic and can overwrite concurrent edits.

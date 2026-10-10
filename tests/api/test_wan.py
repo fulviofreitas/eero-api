@@ -9,6 +9,8 @@ Tests cover:
 - set_device_secondary_wan_access: JSON body, on version 2.3, the
   settings-class reboot warning
 - Not-authenticated errors on every method
+- get_multistaticip pinned to 2.3 for the id, path, URL and parent-link forms
+- Unsafe network, device or link values rejected before any request
 """
 
 import logging
@@ -17,7 +19,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.wan import WanAPI
-from eero.exceptions import EeroAuthenticationException, EeroNotFoundException
+from eero.exceptions import (
+    EeroAuthenticationException,
+    EeroNotFoundException,
+    EeroValidationException,
+)
 
 from .conftest import api_error_response, api_success_response, create_mock_response
 
@@ -199,3 +205,135 @@ class TestWanAPISetDeviceSecondaryWanAccess:
             await wan_api.set_device_secondary_wan_access(
                 "network_123", "AA:BB:CC:DD:EE:FF", deny=True
             )
+
+
+class TestWanAPIGetMultistaticipPinnedUrlForms:
+    """get_multistaticip lands on 2.3 whichever form the network and its link take."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "network",
+        [
+            "network_123",
+            "/2.2/networks/network_123",
+            "/2.3/networks/network_123",
+            "https://api-user.e2ro.com/2.2/networks/network_123",
+            "HTTPS://api-user.e2ro.com/2.2/networks/network_123",
+            "hTTps://api-user.e2ro.com/2.2/networks/network_123",
+        ],
+        ids=["id", "path-2.2", "path-2.3", "url-2.2", "uppercase-scheme", "mixed-case-scheme"],
+    )
+    async def test_every_network_form_is_pinned_to_2_3(self, wan_api, mock_session, network):
+        """A network path or URL carrying 2.2 is rewritten to the 2.3-only endpoint."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await wan_api.get_multistaticip(network)
+
+        method, url = mock_session.request.call_args.args[:2]
+        assert method == "GET"
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/multistaticip"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("version", ["2.2", "2.3"])
+    async def test_parent_link_on_any_version_is_pinned_to_2_3(
+        self, wan_api, mock_session, version
+    ):
+        """A published link on another version does not move the read off 2.3."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        parent = {"resources": {"multistaticip": f"/{version}/networks/network_123/multistaticip"}}
+
+        await wan_api.get_multistaticip("network_123", parent=parent)
+
+        _, url = mock_session.request.call_args.args[:2]
+        assert url == "https://api-user.e2ro.com/2.3/networks/network_123/multistaticip"
+
+
+#: Every WanAPI request method, as (label, call) where `call` takes
+#: (api, network, mac) and returns the awaitable to invoke.
+WAN_NETWORK_CALLS = [
+    ("get_multistaticip", lambda api, network, mac: api.get_multistaticip(network)),
+    ("set_multistaticip", lambda api, network, mac: api.set_multistaticip(network, {})),
+    (
+        "set_secondary_wan_config",
+        lambda api, network, mac: api.set_secondary_wan_config(network, {}),
+    ),
+    (
+        "set_device_secondary_wan_access",
+        lambda api, network, mac: api.set_device_secondary_wan_access(network, mac, deny=True),
+    ),
+]
+
+
+class TestWanAPIUnsafeUrlsRejectedBeforeTransport:
+    """No WAN method sends a request for a network or device that is not one safe path."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "label, call", WAN_NETWORK_CALLS, ids=[c[0] for c in WAN_NETWORK_CALLS]
+    )
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", " ", "\x00"])
+    async def test_control_character_in_network_raises(
+        self, wan_api, mock_session, label, call, control
+    ):
+        """A control character in a network id, path or URL raises before transport."""
+        for network in (
+            f"net{control}work_123",
+            f"/2.2/networks/network_123{control}",
+            f"https://api-user.e2ro.com/2.2/networks/network_123{control}",
+            f"HTTPS://api-user.e2ro.com/2.2/networks/net{control}work_123",
+        ):
+            with pytest.raises(EeroValidationException):
+                await call(wan_api, network, "AA:BB:CC:DD:EE:FF")
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "label, call", WAN_NETWORK_CALLS, ids=[c[0] for c in WAN_NETWORK_CALLS]
+    )
+    @pytest.mark.parametrize(
+        "network",
+        [
+            "/2.2/account",
+            "/2.2/networks/network_123/../../account",
+            "/2.2/networks/network_123?x=1",
+            "/2.2/networks/%2e%2e/account",
+        ],
+        ids=["other-family", "dotdot", "query", "encoded-dotdot"],
+    )
+    async def test_path_that_is_not_one_network_raises(
+        self, wan_api, mock_session, label, call, network
+    ):
+        """A path naming another resource, or carrying dot segments or a query, raises."""
+        with pytest.raises(EeroValidationException):
+            await call(wan_api, network, "AA:BB:CC:DD:EE:FF")
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", " ", "\x00"])
+    async def test_get_multistaticip_parent_link_with_control_character_raises(
+        self, wan_api, mock_session, control
+    ):
+        """A published link carrying a control character is refused, not pinned."""
+        parent = {"resources": {"multistaticip": f"/2.2/networks/network_123/multi{control}"}}
+
+        with pytest.raises(EeroValidationException):
+            await wan_api.get_multistaticip("network_123", parent=parent)
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "mac",
+        ["AA:BB:CC:DD:EE:FF\n", "AA:BB:CC\t:DD:EE:FF", "..", "AA:BB:CC:DD:EE:FF?x=1", ""],
+        ids=["newline", "tab", "dotdot", "query", "empty"],
+    )
+    async def test_set_device_secondary_wan_access_unsafe_mac_raises(
+        self, wan_api, mock_session, mac
+    ):
+        """A device identifier that is not one safe path segment raises before transport."""
+        with pytest.raises(EeroValidationException):
+            await wan_api.set_device_secondary_wan_access("network_123", mac, deny=True)
+
+        mock_session.request.assert_not_called()
