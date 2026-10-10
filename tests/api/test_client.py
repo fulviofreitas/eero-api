@@ -1888,6 +1888,358 @@ class TestInflightReadInvalidation:
         )
 
 
+MAC_SPELLINGS = [
+    "aabbccddeeff",
+    "AA:BB:CC:DD:EE:FF",
+    "aa-bb-cc-dd-ee-ff",
+    "aabb.ccdd.eeff",
+    "/2.2/networks/n1/devices/aabbccddeeff",
+    "/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF/",
+    "https://api.example.test/2.2/networks/n1/devices/aabbccddeeff",
+]
+
+# (client method, arguments after the device id, domain API, domain method)
+DEVICE_WRITES = [
+    ("set_device_nickname", ("new",), "devices", "set_device_nickname"),
+    ("block_device", (), "devices", "block_device"),
+    ("unblock_device", (), "devices", "unblock_device"),
+    ("pause_device", (True,), "devices", "pause_device"),
+    ("set_device_type", ("phone",), "devices", "set_device_type"),
+    ("set_device_labels", (), "devices", "set_device_labels"),
+]
+
+
+class TestDeviceCacheKeys:
+    """Every spelling of a device identifier shares one cache entry."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and stubbed device calls."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "n1"
+        ok = {"meta": {"code": 200}, "data": {"id": "d1"}}
+        for name in (
+            "get_device",
+            "update_device_via_link",
+            *(write[3] for write in DEVICE_WRITES),
+        ):
+            setattr(client._api.devices, name, AsyncMock(return_value=ok))
+        client._api.wan.set_device_secondary_wan_access = AsyncMock(return_value=ok)
+        return client
+
+    @pytest.mark.parametrize("spelling", MAC_SPELLINGS)
+    def test_mac_spellings_share_one_key(self, spelling):
+        """Separators, case, path and URL forms of a MAC all map to the same key."""
+        assert EeroClient._device_cache_key("n1", spelling) == "n1_aabbccddeeff"
+
+    @pytest.mark.parametrize(
+        ("device_id", "expected"),
+        [
+            ("d1", "n1_d1"),
+            ("/2.2/networks/n1/devices/D1", "n1_D1"),
+            ("ABC-123", "n1_ABC-123"),
+            ("zz:bb:cc:dd:ee:ff", "n1_zz:bb:cc:dd:ee:ff"),
+            ("aa:bb:cc:dd:ee:ff:00", "n1_aa:bb:cc:dd:ee:ff:00"),
+        ],
+    )
+    def test_other_ids_are_kept_as_they_are(self, device_id, expected):
+        """An id that is not a 12-hex MAC is only reduced to its last path segment."""
+        assert EeroClient._device_cache_key("n1", device_id) == expected
+
+    @pytest.mark.parametrize("device_id", ["", None])
+    def test_invalid_id_is_rejected(self, device_id):
+        """An empty or non-string id has no key."""
+        with pytest.raises(EeroValidationException):
+            EeroClient._device_cache_key("n1", device_id)
+
+    async def test_equivalent_spellings_are_served_from_one_entry(self, client):
+        """A read under one spelling is a cache hit for every other spelling."""
+        first = await client.get_device("aabbccddeeff")
+        for spelling in MAC_SPELLINGS:
+            assert await client.get_device(spelling) == first
+
+        assert client._api.devices.get_device.await_count == 1
+        assert list(client._cache["devices"]) == ["n1_aabbccddeeff"]
+
+    async def test_requests_carry_the_callers_spelling(self, client):
+        """Only the cache key is canonicalised; the API receives the caller's value."""
+        await client.get_device("AA:BB:CC:DD:EE:FF")
+        await client.pause_device("AA:BB:CC:DD:EE:FF", True)
+
+        client._api.devices.get_device.assert_awaited_once_with("n1", "AA:BB:CC:DD:EE:FF")
+        client._api.devices.pause_device.assert_awaited_once_with("n1", "AA:BB:CC:DD:EE:FF", True)
+
+    async def test_pause_by_colon_form_invalidates_entry_read_by_bare_form(self, client):
+        """The scenario from the issue: the write must not leave the old entry behind."""
+        await client.get_device("aabbccddeeff")
+        assert client._api.devices.get_device.await_count == 1
+
+        await client.pause_device("AA:BB:CC:DD:EE:FF", True)
+        assert "n1_aabbccddeeff" not in client._cache["devices"]
+
+        await client.get_device("aabbccddeeff")
+        assert client._api.devices.get_device.await_count == 2
+
+    @pytest.mark.parametrize(
+        ("method", "args", "domain", "domain_method"),
+        DEVICE_WRITES,
+        ids=[write[0] for write in DEVICE_WRITES],
+    )
+    async def test_every_device_write_invalidates_across_spellings(
+        self, client, method, args, domain, domain_method
+    ):
+        """Each wrapper drops the entry and the device list however the id is spelled."""
+        for spelling in MAC_SPELLINGS:
+            client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+            client._update_cache("devices", "n1_devices", {"data": []})
+
+            await getattr(client, method)(spelling, *args)
+
+            assert client._cache["devices"] == {}, spelling
+
+    async def test_update_device_via_link_invalidates_across_spellings(self, client):
+        """The link-based update drops the entry read under another spelling."""
+        client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+
+        await client.update_device_via_link("AA:BB:CC:DD:EE:FF", nickname="x")
+
+        assert client._cache["devices"] == {}
+
+    async def test_secondary_wan_write_invalidates_across_spellings(self, client):
+        """The secondary-WAN access write drops the device entry too."""
+        client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+
+        await client.set_device_secondary_wan_access("AA:BB:CC:DD:EE:FF", deny=True)
+
+        assert client._cache["devices"] == {}
+
+    async def test_cached_envelope_is_reused_as_parent_across_spellings(self, client):
+        """A cached device envelope is found as ``parent`` whichever way it was read."""
+        await client.get_device("aabbccddeeff")
+
+        assert client._device_parent_kwargs("n1", "AA:BB:CC:DD:EE:FF") == {
+            "parent": {"meta": {"code": 200}, "data": {"id": "d1"}}
+        }
+
+
+class TestSetProfileDevicesInvalidation:
+    """Assigning devices to a profile drops what reports the old assignment."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed profile write."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "n1"
+        client._api.profiles.set_profile_devices = AsyncMock(return_value={"meta": {"code": 200}})
+        return client
+
+    @staticmethod
+    def _seed(client, *keys):
+        for key in keys:
+            client._update_cache("devices", key, {"data": {}})
+
+    async def test_named_devices_and_device_list_are_invalidated(self, client):
+        """Each named device, in any spelling, and the network's device list go."""
+        self._seed(client, "n1_aabbccddeeff", "n1_d1", "n1_devices", "n1_other")
+        client._update_cache("profiles", "n1_p1", {"data": {}})
+        client._update_cache("profiles", "n1_profiles", {"data": []})
+        epoch = client._cache_epoch
+
+        await client.set_profile_devices(
+            "p1",
+            ["/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF", "/2.2/networks/n1/devices/d1"],
+        )
+
+        assert list(client._cache["devices"]) == ["n1_other"]
+        assert client._cache["profiles"] == {}
+        assert client._cache_epoch > epoch
+
+    async def test_request_carries_the_urls_as_given(self, client):
+        """The URLs sent to the API are not rewritten."""
+        urls = ["/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF"]
+
+        await client.set_profile_devices("p1", urls)
+
+        client._api.profiles.set_profile_devices.assert_awaited_once_with("n1", "p1", urls)
+
+    async def test_empty_assignment_still_drops_the_device_list(self, client):
+        """Clearing a profile cannot name devices but the list still changes."""
+        self._seed(client, "n1_devices", "n1_d1")
+
+        await client.set_profile_devices("p1", [])
+
+        assert list(client._cache["devices"]) == ["n1_d1"]
+
+    async def test_unusable_entries_do_not_fail_a_completed_write(self, client):
+        """The write has been applied by then, so odd entries are skipped, not raised."""
+        self._seed(client, "n1_devices", "n1_d1")
+
+        await client.set_profile_devices("p1", ["", "/2.2/networks/n1/devices/d1"])
+
+        assert client._cache["devices"] == {}
+
+    async def test_failed_write_leaves_the_cache_alone(self, client):
+        """Nothing is invalidated when the write raises."""
+        client._api.profiles.set_profile_devices.side_effect = EeroException("boom")
+        self._seed(client, "n1_d1", "n1_devices")
+
+        with pytest.raises(EeroException):
+            await client.set_profile_devices("p1", ["/2.2/networks/n1/devices/d1"])
+
+        assert set(client._cache["devices"]) == {"n1_d1", "n1_devices"}
+
+
+def _session_transitions(client):
+    """Return (name, coroutine factory) pairs, one per session transition.
+
+    Args:
+        client: The client whose lower layers are stubbed in place.
+
+    Returns:
+        A list of ``(name, call)`` pairs where ``call()`` runs that transition.
+    """
+    client._api.login = AsyncMock(return_value=True)
+    client._api.verify = AsyncMock(return_value=True)
+    client._api.logout = AsyncMock(return_value=True)
+    client._api.auth.set_session_token = AsyncMock()
+    client._api.auth.clear_session_token = AsyncMock()
+    return [
+        ("login", lambda: client.login("user")),
+        ("verify", lambda: client.verify("123456")),
+        ("logout", client.logout),
+        ("set_session_token", lambda: client.set_session_token("token")),
+        ("clear_session_token", client.clear_session_token),
+    ]
+
+
+SESSION_TRANSITIONS = ["login", "verify", "logout", "set_session_token", "clear_session_token"]
+
+
+class TestPreferredNetworkAcrossSessionChanges:
+    """An auto-discovered network is dropped on a session change; an explicit one is kept."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client whose auth layer is stubbed."""
+        return EeroClient(session=mock_session)
+
+    @staticmethod
+    def _transition(client, name):
+        return dict(_session_transitions(client))[name]()
+
+    @staticmethod
+    async def _discover(client, network_id):
+        """Let the client discover ``network_id`` the way a first call would."""
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": network_id}]}}
+        )
+        await client.get_networks(refresh_cache=True)
+
+    @pytest.mark.parametrize("name", SESSION_TRANSITIONS)
+    async def test_discovered_network_is_reset(self, client, name):
+        """The next call without ``network_id`` rediscovers instead of reusing the old one."""
+        await self._discover(client, "n1")
+        assert client.preferred_network_id == "n1"
+
+        await self._transition(client, name)
+
+        assert client.preferred_network_id is None
+        await self._discover(client, "n2")
+        assert await client._ensure_network_id(None) == "n2"
+
+    @pytest.mark.parametrize("name", SESSION_TRANSITIONS)
+    async def test_explicit_network_survives(self, client, name):
+        """A network chosen with ``set_preferred_network`` is kept."""
+        client.set_preferred_network("n1")
+
+        await self._transition(client, name)
+
+        assert client.preferred_network_id == "n1"
+
+    async def test_explicit_choice_wins_over_a_later_discovery(self, client):
+        """Choosing explicitly after discovery makes the value survive."""
+        await self._discover(client, "n1")
+        client.set_preferred_network(7)
+
+        await self._transition(client, "set_session_token")
+
+        assert client.preferred_network_id == "7"
+
+    @pytest.mark.parametrize("name", ["login", "verify", "logout"])
+    async def test_failed_transition_keeps_the_discovered_network(self, client, name):
+        """A login, verify or logout that reports failure changes nothing."""
+        await self._discover(client, "n1")
+        transitions = dict(_session_transitions(client))
+        getattr(client._api, name).return_value = False
+
+        await transitions[name]()
+
+        assert client.preferred_network_id == "n1"
+
+
+class TestExpiredEntryPruning:
+    """Reading an expired entry removes it."""
+
+    @pytest.fixture
+    def client(self):
+        """A client whose cache entries are all older than the timeout."""
+        return EeroClient(cache_timeout=60)
+
+    @staticmethod
+    def _expired():
+        return {"data": {"stale": True}, "timestamp": time.monotonic() - 120}
+
+    def test_expired_keyed_entry_is_deleted(self, client):
+        """The entry is gone after the check, not just reported invalid."""
+        client._cache["devices"]["n1_d1"] = self._expired()
+        client._cache["devices"]["n1_d2"] = {"data": {}, "timestamp": time.monotonic()}
+
+        assert client._is_cache_valid("devices", "n1_d1") is False
+
+        assert list(client._cache["devices"]) == ["n1_d2"]
+        assert client._get_from_cache("devices", "n1_d1") is None
+
+    def test_expired_single_entry_is_reset(self, client):
+        """A single-entry section returns to its empty shape."""
+        client._cache["networks"] = self._expired()
+
+        assert client._is_cache_valid("networks") is False
+
+        assert client._cache["networks"] == {"data": None, "timestamp": 0}
+
+    def test_fresh_entries_are_left_alone(self, client):
+        """Pruning never touches a valid entry."""
+        client._update_cache("devices", "n1_d1", {"x": 1})
+        client._update_cache("account", None, {"y": 2})
+
+        assert client._is_cache_valid("devices", "n1_d1") is True
+        assert client._is_cache_valid("account") is True
+
+        assert client._get_from_cache("devices", "n1_d1") == {"x": 1}
+        assert client._get_from_cache("account") == {"y": 2}
+
+    def test_repeated_checks_of_a_pruned_entry_are_safe(self, client):
+        """Once removed, further checks just report a miss."""
+        client._cache["profiles"]["n1_p1"] = self._expired()
+
+        assert client._is_cache_valid("profiles", "n1_p1") is False
+        assert client._is_cache_valid("profiles", "n1_p1") is False
+        assert client._cache["profiles"] == {}
+
+    async def test_expired_entry_is_replaced_by_the_next_read(self, mock_session):
+        """A read that finds a stale entry fetches and stores a fresh one."""
+        client = EeroClient(session=mock_session, cache_timeout=60)
+        client._preferred_network_id = "n1"
+        fresh = {"meta": {"code": 200}, "data": {"id": "d1"}}
+        client._api.devices.get_device = AsyncMock(return_value=fresh)
+        client._cache["devices"]["n1_d1"] = self._expired()
+
+        assert await client.get_device("d1") == fresh
+
+        assert client._get_from_cache("devices", "n1_d1") == fresh
+        assert client._is_cache_valid("devices", "n1_d1") is True
+
+
 class TestEeroClientPasswordValidation:
     """Tests that the facade rejects unintended passwords before resolving or sending."""
 
