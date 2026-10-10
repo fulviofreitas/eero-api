@@ -82,6 +82,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | Context manager | `async def __aexit__(self, exc_type, exc_val, exc_tb) -> None` | `None` | Closes and discards a session the client created; never closes a caller-supplied one. Exceptions propagate |
 | `close` | `async def close(self) -> None` | `None` | Releases an owned session for callers not using `async with`. Idempotent; no-op before entry or for a caller-supplied session |
 | `is_authenticated` | `def is_authenticated(self) -> bool` | `bool` | **Property** — no `()` |
+| `credentials_persisted` | `def credentials_persisted(self) -> bool` | `bool` | **Property** — `False` when the last save of the session was read back and no storage backend retained it; `login()`/`verify()` return values are unchanged |
 | `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | |
 | `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | |
 | `logout` | `async def logout(self) -> bool` | `bool` | |
@@ -536,6 +537,7 @@ Owns login/session lifecycle and credential storage.
 |--------|-----------|---------|-------|
 | Constructor | `def __init__(self, session: Optional[ClientSession]=None, cookie_file: Optional[str]=None, use_keyring: bool=True, *, send_legacy_cookie: bool=True, accept_language: str='en-US', get_retries: int=0) -> None` | `AuthAPI` | |
 | `is_authenticated` | `def is_authenticated(self) -> bool` | `bool` | **Property** — `True` when a session token is present; no client-side expiry |
+| `credentials_persisted` | `def credentials_persisted(self) -> bool` | `bool` | **Property** — `False` when the last save was read back and nothing retained it |
 | `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | Form-encoded `login=` body |
 | `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | Form-encoded `code=` body |
 | `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | No `EeroClient` wrapper; sends `{}` |
