@@ -25,6 +25,14 @@ from eero.exceptions import (
     EeroValidationException,
 )
 
+from .conftest import (
+    INVALID_PASSWORDS,
+    PASSWORD_WRITES,
+    VALID_PASSWORDS,
+    api_success_response,
+    create_mock_response,
+)
+
 
 class TestEeroClientInit:
     """Tests for EeroClient initialization."""
@@ -1864,6 +1872,49 @@ class TestInflightReadInvalidation:
             lambda: getattr(client, writer)(*args, **kwargs),
             cached_before=cached_before,
         )
+
+
+class TestEeroClientPasswordValidation:
+    """Tests that the facade rejects unintended passwords before resolving or sending."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed auth token."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.auth.get_auth_token = AsyncMock(return_value="auth_token")
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", [method for method, _ in PASSWORD_WRITES])
+    @pytest.mark.parametrize("password", INVALID_PASSWORDS)
+    async def test_invalid_password_sends_no_request(self, client, mock_session, method, password):
+        """Test a non-string or empty password is rejected before auth and transport."""
+        with pytest.raises(EeroValidationException, match="password.*non-empty string"):
+            await getattr(client, method)(password)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method,suffix", PASSWORD_WRITES)
+    @pytest.mark.parametrize("password", VALID_PASSWORDS)
+    async def test_valid_password_is_forwarded_unchanged(
+        self, client, mock_session, method, suffix, password
+    ):
+        """Test a string password, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await getattr(client, method)(password)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            f"https://api-user.e2ro.com/2.2/networks/network_123/{suffix}",
+        )
+        assert call_args.kwargs["data"] == {"password": password}
+        assert "json" not in call_args.kwargs
 
 
 # ========================== Cache invalidation for new write wrappers ==========================
