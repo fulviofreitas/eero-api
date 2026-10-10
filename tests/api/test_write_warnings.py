@@ -136,6 +136,9 @@ _PARAM_OVERRIDES = {
     # A path avoids the separate `network`-required-for-a-bare-id branch.
     ("update_forward", "forward"): "/2.2/networks/net/forwards/f1",
     ("update_reservation", "reservation"): "/2.2/networks/net/reservations/r1",
+    # A bare schedule id is refused (it cannot name its network and profile).
+    ("update_schedule", "schedule"): "/2.2/networks/net/profiles/p1/schedules/s1",
+    ("delete_schedule", "schedule"): "/2.2/networks/net/profiles/p1/schedules/s1",
 }
 
 # Per-(method name, parameter name) values forced onto the call even though

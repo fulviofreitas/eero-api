@@ -562,3 +562,77 @@ class TestDevicesAPIPauseDevice:
 
         with pytest.raises(EeroAuthenticationException):
             await devices_api.pause_device("network_123", "device_abc", True)
+
+
+class TestDevicesAPIWriteUrlSafety:
+    """Device writes refuse a network or device that is not one safe path, before transport."""
+
+    @pytest.fixture
+    def devices_api(self, mock_session):
+        """Create a DevicesAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return DevicesAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("write", ["pause_device", "set_device_nickname"])
+    @pytest.mark.parametrize("control", ["\n", "\t", "\r", " ", "\x00"])
+    async def test_control_character_in_network_raises(
+        self, devices_api, mock_session, write, control
+    ):
+        """A control character in a network id, path or URL raises before transport."""
+        call = {
+            "pause_device": lambda network: devices_api.pause_device(network, "device_abc", True),
+            "set_device_nickname": lambda network: devices_api.set_device_nickname(
+                network, "device_abc", "nick"
+            ),
+        }[write]
+
+        for network in (
+            f"net{control}work_123",
+            f"/2.2/networks/network_123{control}",
+            f"https://api-user.e2ro.com/2.2/networks/network_123{control}",
+            f"HTTPS://api-user.e2ro.com/2.2/networks/net{control}work_123",
+        ):
+            with pytest.raises(EeroValidationException):
+                await call(network)
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("write", ["pause_device", "set_device_nickname"])
+    @pytest.mark.parametrize(
+        "network",
+        [
+            "/2.2/account",
+            "/2.2/networks/network_123/../../account",
+            "/2.2/networks/network_123?x=1",
+            "/2.2/networks/%2e%2e/account",
+        ],
+        ids=["other-family", "dotdot", "query", "encoded-dotdot"],
+    )
+    async def test_path_that_is_not_one_network_raises(
+        self, devices_api, mock_session, write, network
+    ):
+        """A path naming another resource, or carrying dot segments or a query, raises."""
+        call = {
+            "pause_device": lambda: devices_api.pause_device(network, "device_abc", True),
+            "set_device_nickname": lambda: devices_api.set_device_nickname(
+                network, "device_abc", "nick"
+            ),
+        }[write]
+
+        with pytest.raises(EeroValidationException):
+            await call()
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mac", ["device_abc\n", "device\t_abc", "..", "."])
+    async def test_unsafe_device_identifier_raises(self, devices_api, mock_session, mac):
+        """A device identifier that is not one safe path segment raises before transport."""
+        with pytest.raises(EeroValidationException):
+            await devices_api.pause_device("network_123", mac, True)
+
+        mock_session.request.assert_not_called()

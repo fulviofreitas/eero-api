@@ -249,6 +249,129 @@ class TestScheduleAPIDeleteSchedule:
         assert len(warnings) == 1
 
 
+_SCHEDULE_PATH = "/2.2/networks/n1/profiles/p1/schedules/s1"
+_SCHEDULE_URL = f"https://api-user.e2ro.com{_SCHEDULE_PATH}"
+
+
+class TestScheduleOwnUrlConfinement:
+    """A caller-supplied schedule path or URL must name a scheduled pause."""
+
+    @pytest.fixture(params=["update", "delete"])
+    def write(self, request, schedule_api):
+        """Return the write under test and its expected HTTP method."""
+        if request.param == "update":
+            return "PUT", lambda target: schedule_api.update_schedule(target, enabled=False)
+        return "DELETE", schedule_api.delete_schedule
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "/2.2/networks/n1",
+            "/2.2/networks/n1/forwards/f1",
+            "/2.2/account",
+            "/2.2/networks/n1/profiles/p1",
+            "/2.2/networks/n1/profiles/p1/schedules",
+            "/2.2/networks/n1/profiles/p1/schedules/s1/extra",
+            "/2.2/networks/n1/profiles/p1/devices/s1",
+            "/2.2/networks/n1/extra/profiles/p1/schedules/s1",
+            "/2.2/profiles/p1/schedules/s1",
+            "https://api-user.e2ro.com/2.2/networks/n1/forwards/f1",
+            "https://api-user.e2ro.com/2.2/account",
+            "https://api-user.e2ro.com/2.2/networks/n1/profiles/p1/schedules/s1/extra",
+        ],
+        ids=[
+            "network",
+            "forward",
+            "account",
+            "profile",
+            "collection",
+            "extra-tail",
+            "other-subresource",
+            "extra-head",
+            "no-network",
+            "forward-url",
+            "account-url",
+            "extra-tail-url",
+        ],
+    )
+    async def test_other_resource_is_refused_before_transport(
+        self, write, mock_session, target
+    ) -> None:
+        """A path or URL of another shape never reaches the transport."""
+        _, call = write
+        with pytest.raises(EeroValidationException) as caught:
+            await call(target)
+        assert caught.value.field == "schedule"
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", [_SCHEDULE_PATH, _SCHEDULE_URL, f"{_SCHEDULE_PATH}/"])
+    async def test_schedule_path_and_url_reach_the_own_url(
+        self, write, mock_session, target
+    ) -> None:
+        """A correctly shaped path or absolute URL is written to unchanged."""
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+        method, call = write
+
+        await call(target)
+
+        sent_method, url = mock_session.request.call_args.args[:2]
+        assert sent_method == method
+        assert url == _SCHEDULE_URL.rstrip("/")
+
+    @pytest.mark.asyncio
+    async def test_version_of_a_schedule_path_is_the_callers_own(self, write, mock_session) -> None:
+        """Confinement is to the shape, not to the default API version."""
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+        _, call = write
+
+        await call("/2.3/networks/n1/profiles/p1/schedules/s1")
+
+        assert mock_session.request.call_args.args[1].endswith(
+            "/2.3/networks/n1/profiles/p1/schedules/s1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_published_envelope_url_is_not_confined(self, write, mock_session) -> None:
+        """A link the API published in an envelope is used as published."""
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+        _, call = write
+
+        await call({"url": "/2.4/some/other/published/shape"})
+
+        assert mock_session.request.call_args.args[1] == (
+            "https://api-user.e2ro.com/2.4/some/other/published/shape"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["s1", "account", "networks", "S1", "../account"])
+    async def test_bare_id_is_refused_before_transport(self, write, mock_session, target) -> None:
+        """A bare id cannot name its network and profile, so it is never sent.
+
+        In particular a one-segment endpoint name such as ``account`` must not
+        reach the transport as ``/2.2/account``.
+        """
+        _, call = write
+        with pytest.raises(EeroValidationException) as caught:
+            await call(target)
+        assert caught.value.field == "schedule"
+        assert "bare id" in str(caught.value)
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_envelope_url_branch_is_unchanged_by_bare_id_rule(
+        self, write, mock_session
+    ) -> None:
+        """A full envelope still resolves to its published own URL."""
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+        _, call = write
+
+        await call({"meta": {"code": 200}, "data": {"url": _SCHEDULE_PATH}})
+
+        assert mock_session.request.call_args.args[1] == _SCHEDULE_URL
+
+
 class TestScheduleAPIClearProfileSchedule:
     """Tests for clear_profile_schedule (one read + N deletes)."""
 

@@ -44,7 +44,8 @@ class WanAPI(AuthenticatedAPI):
         """Get the network's multi-static-IP configuration - returns raw Eero API response.
 
         GETs the network's ``multistaticip`` sub-resource on API version
-        2.3. This is a verified read.
+        2.3, whichever form ``network_id`` takes and even when ``parent``
+        publishes the link on another version. This is a verified read.
 
         Note: on a network without the multi-static-IP feature, the API has
         been observed to return HTTP 404 with the error code
@@ -77,6 +78,9 @@ class WanAPI(AuthenticatedAPI):
             parent=as_envelope(parent),
             version=API_VERSION_MULTISTATICIP,
         )
+        # A network path/URL or a published link keeps its own version during
+        # resolution; pin the 2.3-only endpoint afterwards.
+        url = rewrite_version(url, API_VERSION_MULTISTATICIP)
         _LOGGER.debug("Getting multi-static-IP configuration for network %s", network_id)
         return await self.get(url, auth_token=auth_token)
 

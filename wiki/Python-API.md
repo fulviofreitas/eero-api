@@ -121,13 +121,15 @@ await client.get_eeros(network_id="<network-id>")     # explicit network
 ### IDs, paths, and URLs are interchangeable
 
 Every resource argument — `network_id`, `eero_id`, `device_id`, `profile_id`, `forward_id`,
-`reservation_id`, `invite_id`, a `schedule` — accepts a bare ID, the resource's API path (the
+`reservation_id`, `invite_id` — accepts a bare ID, the resource's API path (the
 `url` value from its envelope), or that path joined onto the API host. A URL on any other host
 or scheme raises `EeroValidationException` before any request. A path or URL for a *child*
 resource (profile, device, invite, reservation, forward, admin) must also sit under the
 addressed network in the matching family — `/2.2/networks/<network-id>/profiles/<profile-id>`
 for a profile, with nothing after the id — or it is rejected before any request; a bare ID
-must be a single path segment (letters, digits, `.`, `_`, `:`, `-`). Domain methods
+must be a single path segment (letters, digits, `.`, `_`, `:`, `-`). A `schedule` takes the
+path, URL or envelope only, since a bare ID cannot name the network and profile it lives under.
+Domain methods
 additionally take a keyword-only `parent=` envelope so the link the API published is used instead of a template;
 `EeroClient` passes its cached envelopes as `parent=` for you. Full description:
 [Network Targeting — Resource links](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
