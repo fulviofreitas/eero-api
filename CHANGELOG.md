@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.7](https://github.com/fulviofreitas/eero-api/compare/v8.1.6...v8.1.7) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **api:** reject invalid names and flags in network and guest setters ([f94127f](https://github.com/fulviofreitas/eero-api/commit/f94127fb8c9c1ae45637a3e8776fc25020207054)), closes [#166](https://github.com/fulviofreitas/eero-api/issues/166)
+
 ## [8.1.6](https://github.com/fulviofreitas/eero-api/compare/v8.1.5...v8.1.6) (2026-10-10)
 
 ### 🐛 Bug Fixes
