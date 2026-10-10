@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.4](https://github.com/fulviofreitas/eero-api/compare/v8.1.3...v8.1.4) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **auth:** preserve stored sessions until login verification succeeds ([931b425](https://github.com/fulviofreitas/eero-api/commit/931b42554ed819be4644a9342140647e889b9f48))
+
 ## [8.1.3](https://github.com/fulviofreitas/eero-api/compare/v8.1.2...v8.1.3) (2026-10-10)
 
 ### 🐛 Bug Fixes
