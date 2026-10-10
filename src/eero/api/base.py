@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
