@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.6](https://github.com/fulviofreitas/eero-api/compare/v8.1.5...v8.1.6) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **api:** reject invalid Wi-Fi passwords before sending requests ([5be91f8](https://github.com/fulviofreitas/eero-api/commit/5be91f8aa202b28025c20d61623b387249ebfa21))
+
 ## [8.1.5](https://github.com/fulviofreitas/eero-api/compare/v8.1.4...v8.1.5) (2026-10-10)
 
 ### 🐛 Bug Fixes
