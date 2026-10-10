@@ -62,7 +62,7 @@ Two exceptions also carry what the response said about timing and status, both o
 | Attribute | On | Value |
 |---|---|---|
 | `err.status_code` | `EeroAuthenticationException`, `EeroRateLimitException` (every `EeroAPIException` subclass has it too) | The HTTP status of the response. Always `401` on an authentication exception raised for a response, and the **actual** status on a rate-limit exception — `error.rate.limit` is classified as a rate limit on any status, so it is not always `429`. `None` when the exception was raised locally, with no response (for example "No session token available") |
-| `err.retry_after` | `EeroRateLimitException` | The delay in seconds the server asked for in its `Retry-After` header: either delta-seconds, or an HTTP-date converted to the (non-negative) number of seconds from now. `None` when the header was absent or in neither form. The SDK never sleeps or retries on it — it only reports it |
+| `err.retry_after` | `EeroRateLimitException` | The delay in seconds the server asked for in its `Retry-After` header: either delta-seconds, or an HTTP-date converted to the (non-negative) number of seconds from now. Either form is capped at one day (86400). `None` when the header was absent or in neither form. The SDK never sleeps or retries on it — it only reports it |
 
 Both are **keyword-only** constructor arguments that default to `None`, so `EeroAuthenticationException("msg")` and `EeroRateLimitException("msg", envelope=..., error_code=...)` construct exactly as before.
 
