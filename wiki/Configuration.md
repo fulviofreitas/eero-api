@@ -7,7 +7,7 @@ How `EeroClient` is constructed, where credentials live, and what is (and isn't)
 ## 📋 Requirements
 
 - Python **>=3.12** (3.13 and 3.14 also supported)
-- Dependencies: `aiohttp>=3.8.0`, `pydantic>=2.0.0`, `keyring>=23.0.0`
+- Dependencies: `aiohttp>=3.9.1`, `pydantic>=2.0.0`, `keyring>=23.0.0`
 
 ```bash
 pip install eero-api
