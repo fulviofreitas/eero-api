@@ -135,7 +135,13 @@ class AuthAPI(BaseAPI):
 
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
-        await self._storage.save(self._credentials)
+        try:
+            await self._storage.save(self._credentials)
+        except Exception:
+            _LOGGER.warning(
+                "Could not persist eero credentials; this in-memory session remains usable, "
+                "but stored credentials may be stale and authentication may be needed next time"
+            )
 
     async def _destroy_stored_credentials(self) -> None:
         """Clear the in-memory session token and destroy the persisted record in every backend.
