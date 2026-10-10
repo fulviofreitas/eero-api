@@ -139,6 +139,17 @@ class EeroClient:
         """Check if the client is authenticated."""
         return self._api.is_authenticated
 
+    @property
+    def credentials_persisted(self) -> bool:
+        """Whether the current session survived its last save.
+
+        ``login()``/``verify()`` return values report the API outcome only.
+        This is False when the session was accepted but no storage backend
+        retained it (for example the default keyring-only setup on a host
+        whose keyring is unavailable), so it will not outlive the process.
+        """
+        return self._api.credentials_persisted
+
     def _is_cache_valid(self, cache_key: str, subkey: Optional[str] = None) -> bool:
         """Check if a cache entry is valid."""
         if cache_key not in self._cache:

@@ -155,6 +155,11 @@ class EeroAPI:
         """Check if the client is authenticated."""
         return self.auth.is_authenticated
 
+    @property
+    def credentials_persisted(self) -> bool:
+        """Whether the current session survived its last save (see ``AuthAPI``)."""
+        return self.auth.credentials_persisted
+
     async def login(self, user_identifier: str) -> bool:
         """Start the login process by requesting a verification code.
 

@@ -22,10 +22,20 @@ import stat
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
+import keyring
+import keyring.backends.fail
+import keyring.backends.null
 import pytest
 
 from eero.api.auth import AuthAPI
-from eero.api.auth_storage import AuthCredentials, ChainedStorage, FileStorage, KeyringStorage
+from eero.api.auth_storage import (
+    AuthCredentials,
+    ChainedStorage,
+    FileStorage,
+    KeyringStorage,
+    MemoryStorage,
+)
+from eero.client import EeroClient
 from eero.const import CREDENTIAL_SCHEMA_VERSION, DEFAULT_ACCEPT_LANGUAGE
 from eero.exceptions import (
     EeroAPIException,
@@ -1980,6 +1990,356 @@ class TestCredentialMigrationReadback:
         assert len(warning_records) == 1
         assert legacy_session_data["session_id"] not in caplog.text
         assert "unexpectedly-different" not in caplog.text
+
+
+# ================ Storage Persistence Signal and Cleanup Tests (issue #169) ================
+
+
+@pytest.fixture(params=["fail", "null"])
+def lying_keyring(request):
+    """Install a real keyring backend that cannot persist, restoring the previous one.
+
+    ``fail`` raises on every call; ``null`` accepts writes and retains nothing.
+    """
+    previous = keyring.get_keyring()
+    backend = (
+        keyring.backends.fail.Keyring()
+        if request.param == "fail"
+        else keyring.backends.null.Keyring()
+    )
+    keyring.set_keyring(backend)
+    yield request.param
+    keyring.set_keyring(previous)
+
+
+@pytest.fixture
+def working_keyring(mock_keyring):
+    """A mocked keyring that really retains what is written to it."""
+    stored: dict[str, str] = {}
+    mock_keyring.get_password.side_effect = lambda service, account: stored.get("record")
+    mock_keyring.set_password.side_effect = lambda service, account, value: stored.__setitem__(
+        "record", value
+    )
+    mock_keyring.delete_password.side_effect = lambda service, account: stored.pop("record", None)
+    return stored
+
+
+class TestKeyringOnlyPersistenceSignal:
+    """A keyring-only setup must make an unpersisted save visible (issue #169)."""
+
+    @pytest.mark.asyncio
+    async def test_save_returns_false_and_warns_without_leaking_the_token(
+        self, lying_keyring, caplog
+    ):
+        """The keyring's own read-back finds nothing: save() is False and warns."""
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            persisted = await KeyringStorage().save(AuthCredentials(session_id="secret_token"))
+
+        assert persisted is False
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Keyring did not retain the session" in warnings[0].getMessage()
+        assert "secret_token" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_warning_can_be_silenced_for_a_chained_keyring(self, lying_keyring, caplog):
+        """Behind a file fallback the unretained write is routine: no WARNING."""
+        storage = KeyringStorage(warn_on_unpersisted=False)
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            persisted = await storage.save(AuthCredentials(session_id="secret_token"))
+
+        assert persisted is False
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    @pytest.mark.asyncio
+    async def test_save_returns_true_when_the_keyring_retains_the_record(
+        self, working_keyring, caplog
+    ):
+        """A real read-back match returns True and does not warn."""
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            persisted = await KeyringStorage().save(AuthCredentials(session_id="live_token"))
+
+        assert persisted is True
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    @pytest.mark.asyncio
+    async def test_login_and_verify_still_succeed_but_credentials_are_not_persisted(
+        self, lying_keyring, mock_session, sample_verify_response, caplog
+    ):
+        """verify() keeps returning True; the new property carries the persistence outcome."""
+        api = AuthAPI(session=mock_session, use_keyring=True)
+        api._session = mock_session
+        mock_session.request.return_value = create_mock_response(
+            200, api_success_response({"user_token": "ut_pending"})
+        )
+        assert await api.login("user@example.com") is True
+
+        mock_session.request.return_value = create_mock_response(200, sample_verify_response)
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            assert await api.verify("123456") is True
+
+        assert api.is_authenticated is True
+        assert api.credentials_persisted is False
+        assert any(
+            r.levelno == logging.WARNING and "Keyring did not retain" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_session_token_reports_the_outcome(self, lying_keyring, mock_session):
+        """An injected token that nothing retains is flagged, and the call still succeeds."""
+        api = AuthAPI(session=mock_session, use_keyring=True)
+
+        await api.set_session_token("injected_token")
+
+        assert api.is_authenticated is True
+        assert api.credentials_persisted is False
+
+    @pytest.mark.asyncio
+    async def test_credentials_persisted_is_true_when_the_keyring_works(
+        self, working_keyring, mock_session
+    ):
+        """The healthy path reports True, and clearing resets a previous False."""
+        api = AuthAPI(session=mock_session, use_keyring=True)
+
+        await api.set_session_token("injected_token")
+        assert api.credentials_persisted is True
+
+        api._last_persist_ok = False
+        await api.clear_session_token()
+        assert api.credentials_persisted is True
+
+    @pytest.mark.asyncio
+    async def test_credentials_persisted_defaults_to_true_and_is_exposed_on_the_facades(self):
+        """EeroAPI and EeroClient delegate the read-only property to AuthAPI."""
+        client = EeroClient(use_keyring=False)
+
+        assert client.credentials_persisted is True
+        assert client._api.credentials_persisted is True
+
+        client._api.auth._last_persist_ok = False
+        assert client._api.credentials_persisted is False
+        assert client.credentials_persisted is False
+        with pytest.raises(AttributeError):
+            client.credentials_persisted = True  # type: ignore[misc]
+
+    @pytest.mark.asyncio
+    async def test_file_storage_save_reports_whether_the_file_was_written(self, tmp_path):
+        """FileStorage.save() is True after a read-back match and False on a failed write."""
+        good = FileStorage(str(tmp_path / "creds.json"))
+        assert await good.save(AuthCredentials(session_id="file_token")) is True
+
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("x")
+        bad = FileStorage(str(blocker / "creds.json"))
+        assert await bad.save(AuthCredentials(session_id="file_token")) is False
+
+    @pytest.mark.asyncio
+    async def test_file_storage_save_warns_when_the_read_back_does_not_match(
+        self, tmp_path, caplog
+    ):
+        """A file that ends up holding a different token is reported, not trusted."""
+        target = tmp_path / "creds.json"
+
+        def swap_in_other_record(src, dst):
+            os.remove(src)
+            target.write_text(
+                json.dumps({"session_id": "other", "schema_version": CREDENTIAL_SCHEMA_VERSION})
+            )
+
+        with patch("eero.api.auth_storage.os.replace", swap_in_other_record):
+            with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+                persisted = await FileStorage(str(target)).save(
+                    AuthCredentials(session_id="file_token")
+                )
+
+        assert persisted is False
+        assert any(
+            r.levelno == logging.WARNING and "did not retain" in r.getMessage()
+            for r in caplog.records
+        )
+        assert "file_token" not in caplog.text
+
+
+class TestChainedStorageClearsSupersededFallback:
+    """A verified primary write must retire an older fallback record (issue #169)."""
+
+    @pytest.mark.asyncio
+    async def test_stale_fallback_is_not_resurrected_after_the_primary_is_wiped(
+        self, working_keyring, tmp_path
+    ):
+        """The old file token is gone after a verified save, so load() cannot promote it."""
+        cookie_file = tmp_path / "cookies.json"
+        stale = FileStorage(str(cookie_file))
+        await stale.save(AuthCredentials(session_id="stale_token"))
+        storage = ChainedStorage(primary=KeyringStorage(), fallback=FileStorage(str(cookie_file)))
+
+        assert await storage.save(AuthCredentials(session_id="fresh_token")) is True
+
+        assert not cookie_file.exists()
+        working_keyring.clear()  # the primary is wiped out from under us
+        assert (await storage.load()).session_id is None
+
+    @pytest.mark.asyncio
+    async def test_unverified_primary_keeps_the_fallback_and_reports_it(
+        self, lying_keyring, tmp_path
+    ):
+        """A primary that retains nothing leaves the new record in the fallback, untouched."""
+        cookie_file = tmp_path / "cookies.json"
+        storage = ChainedStorage(
+            primary=KeyringStorage(warn_on_unpersisted=False),
+            fallback=FileStorage(str(cookie_file)),
+        )
+
+        assert await storage.save(AuthCredentials(session_id="fresh_token")) is True
+
+        assert json.loads(cookie_file.read_text())["session_id"] == "fresh_token"
+
+    @pytest.mark.asyncio
+    async def test_failing_fallback_clear_never_escapes_save(self, caplog):
+        """The cleanup is best effort: a raising fallback.clear() is logged at DEBUG only."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
+        fallback = AsyncMock()
+        fallback.clear = AsyncMock(side_effect=OSError("read-only"))
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            persisted = await storage.save(AuthCredentials(session_id="live_token"))
+
+        assert persisted is True
+        fallback.clear.assert_awaited_once()
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    @pytest.mark.asyncio
+    async def test_unverified_primary_never_clears_the_fallback(self):
+        """The fallback is the only copy when the primary did not retain the record."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id="live_token"))
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        assert await storage.save(AuthCredentials(session_id="live_token")) is True
+
+        fallback.clear.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_reports_false_when_no_backend_retains_the_record(self):
+        """Both backends failing is reported as not persisted, without raising."""
+        primary = AsyncMock()
+        primary.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        fallback = AsyncMock()
+        fallback.load = AsyncMock(return_value=AuthCredentials(session_id=None))
+        storage = ChainedStorage(primary=primary, fallback=fallback)
+
+        assert await storage.save(AuthCredentials(session_id="live_token")) is False
+
+
+class TestChainedStorageClearIsolation:
+    """Each backend is cleared independently of the other (issue #169)."""
+
+    @staticmethod
+    def _backends(primary_error=None, fallback_error=None):
+        primary = AsyncMock()
+        primary.clear = AsyncMock(side_effect=primary_error)
+        fallback = AsyncMock()
+        fallback.clear = AsyncMock(side_effect=fallback_error)
+        return primary, fallback
+
+    @pytest.mark.asyncio
+    async def test_raising_primary_does_not_skip_the_fallback(self, caplog):
+        """The fallback is still cleared, one WARNING is logged, nothing escapes."""
+        primary, fallback = self._backends(primary_error=RuntimeError("keyring locked"))
+
+        with caplog.at_level(logging.DEBUG, logger="eero.api.auth_storage"):
+            await ChainedStorage(primary=primary, fallback=fallback).clear()
+
+        fallback.clear.assert_awaited_once()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Could not clear every credential storage backend" in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_raising_fallback_does_not_undo_the_primary_clear(self):
+        """The primary is cleared first and the fallback's failure does not escape."""
+        primary, fallback = self._backends(fallback_error=OSError("busy"))
+
+        await ChainedStorage(primary=primary, fallback=fallback).clear()
+
+        primary.clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_both_failing_raises_the_first_error_after_attempting_both(self):
+        """Only when nothing could be cleared does clear() raise, and then the first error."""
+        first, second = RuntimeError("keyring locked"), OSError("busy")
+        primary, fallback = self._backends(primary_error=first, fallback_error=second)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            await ChainedStorage(primary=primary, fallback=fallback).clear()
+
+        assert excinfo.value is first
+        primary.clear.assert_awaited_once()
+        fallback.clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_credential_destroying_calls_survive_a_raising_primary(self, mock_session):
+        """logout(), clear_session_token() and clear_auth_data() clear the fallback and don't raise."""
+        for destroy in ("logout", "clear_session_token", "clear_auth_data"):
+            primary = AsyncMock()
+            primary.clear = AsyncMock(side_effect=RuntimeError("keyring locked"))
+            fallback = AsyncMock()
+            api = AuthAPI(session=mock_session, use_keyring=False)
+            api._session = mock_session
+            api._storage = ChainedStorage(primary=primary, fallback=fallback)
+            api._credentials.session_id = "live_token"
+            mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+            result = await getattr(api, destroy)()
+
+            assert result in (True, None), destroy
+            assert api.is_authenticated is False, destroy
+            fallback.clear.assert_awaited_once()
+
+
+class TestMemoryStorageCopies:
+    """MemoryStorage must not alias the caller's credentials object (issue #169)."""
+
+    @pytest.mark.asyncio
+    async def test_load_returns_a_copy_the_store_does_not_share(self, mock_session):
+        """After load, the live object is distinct from the stored one and mutating it is inert."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        await api._storage.save(AuthCredentials(session_id="stored_token"))
+
+        await api._load_credentials()
+
+        assert api._storage._credentials is not api._credentials
+        api._credentials.session_id = "mutated_in_place"
+        assert api._storage._credentials.session_id == "stored_token"
+        assert (await api._storage.load()).session_id == "stored_token"
+
+    @pytest.mark.asyncio
+    async def test_save_stores_a_copy(self):
+        """Mutating the object that was saved does not change the stored record."""
+        storage = MemoryStorage()
+        credentials = AuthCredentials(session_id="saved_token")
+
+        assert await storage.save(credentials) is True
+        credentials.session_id = "mutated_after_save"
+
+        assert (await storage.load()).session_id == "saved_token"
+
+    @pytest.mark.asyncio
+    async def test_clear_wipes_the_record_even_after_in_place_mutation(self, mock_session):
+        """In-place edits cannot make the store diverge from what clear() reports."""
+        api = AuthAPI(session=mock_session, use_keyring=False)
+        await api.set_session_token("live_token")
+        api._credentials.session_id = "mutated_in_place"
+
+        await api.clear_session_token()
+
+        assert (await api._storage.load()).session_id is None
 
 
 # ========================== Context Manager Tests ==========================
