@@ -234,3 +234,18 @@ Request timeouts are hardcoded in `BaseAPI._request()` and are not configurable 
 - [Network Targeting](Network-Targeting) — how `network_id` resolution interacts with cache keys, and how cached envelopes become `parent=`
 - [Python API](Python-API#writes-and-safety) — the read-compare-skip discipline for every write
 - [Troubleshooting](Troubleshooting) — common issues & fixes
+
+
+### Resource identity and credential changes
+
+Cache keys use the final resource identifier for paths and absolute URLs,
+and normalize MAC case and colon/hyphen separators. Writes invalidate the
+same entry regardless of identifier spelling. Profile membership writes
+invalidate cached devices and affected profile collections/details; schedule
+writes invalidate profile details and lists. Expired entries are pruned when
+the cache is read or updated.
+
+Changing credentials forgets automatically discovered network preferences;
+explicit `set_preferred_network()` choices remain. Discovery that spans a
+session change raises instead of adopting the old account's network. This
+change complements the in-flight cache generation work in PR #145.
