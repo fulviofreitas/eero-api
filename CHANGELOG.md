@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.9](https://github.com/fulviofreitas/eero-api/compare/v8.1.8...v8.1.9) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **cache:** canonical device keys, profile-device invalidation, session reset ([aa288c0](https://github.com/fulviofreitas/eero-api/commit/aa288c09f9f1838e07ed15e811f5bb7479e1d7dc)), closes [#168](https://github.com/fulviofreitas/eero-api/issues/168)
+
 ## [8.1.8](https://github.com/fulviofreitas/eero-api/compare/v8.1.7...v8.1.8) (2026-10-10)
 
 ### 🐛 Bug Fixes
