@@ -14,7 +14,7 @@ from aiohttp import ClientSession
 
 from .api import EeroAPI
 from .const import DEFAULT_ACCEPT_LANGUAGE
-from .exceptions import EeroException
+from .exceptions import EeroAuthenticationException, EeroException, EeroRateLimitException
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -415,9 +415,7 @@ class EeroClient:
             if cached:
                 return cached
 
-        response = await self._api.auth.get(
-            "/account", auth_token=await self._api.auth.get_auth_token()
-        )
+        response = await self._api.account.get_account()
         self._update_cache("account", None, response)
         return response
 
@@ -473,7 +471,9 @@ class EeroClient:
                     }
             # Must not mask the (already-valid) primary /networks result --
             # any account-endpoint fallback failure is logged, not raised.
-            except Exception as e:  # pylint: disable=broad-exception-caught
+            except (EeroAuthenticationException, EeroRateLimitException):
+                raise
+            except EeroException as e:
                 _LOGGER.debug("Failed to get networks from account endpoint: %s", e)
 
         self._update_cache("networks", None, response)

@@ -48,6 +48,13 @@ class AccountAPI(AuthenticatedAPI):
         """
         super().__init__(auth_api, API_ENDPOINT)
 
+    async def get_account(self) -> Dict[str, Any]:
+        """Read the raw account envelope with normal session refresh handling."""
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+        return await self.get("account", auth_token=auth_token)
+
     async def set_name(self, name: str) -> Dict[str, Any]:
         """Set the account's display name.
 
