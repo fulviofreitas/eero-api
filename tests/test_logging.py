@@ -726,3 +726,50 @@ class TestSecureLoggerRedactionCoverage:
         assert record.levelno == logging.ERROR
         assert record.exc_info is not None
         assert CANARY not in record.getMessage()
+
+    @pytest.mark.parametrize("method", ["debug", "info", "warning", "error", "critical"])
+    def test_record_is_attributed_to_the_caller(self, secure_logger, caplog, method):
+        """The record names the calling test, not eero/logging.py."""
+        with caplog.at_level(logging.DEBUG):
+            getattr(secure_logger, method)("hello")
+
+        (record,) = caplog.records
+        assert record.pathname == __file__
+        assert record.funcName == "test_record_is_attributed_to_the_caller"
+
+    def test_log_and_exception_are_attributed_to_the_caller(self, secure_logger, caplog):
+        """log() and exception() attribute the record to the caller as well."""
+        with caplog.at_level(logging.DEBUG):
+            secure_logger.log(logging.INFO, "hello")
+            secure_logger.exception("hello")
+
+        assert len(caplog.records) == 2
+        for record in caplog.records:
+            assert record.pathname == __file__
+            assert record.funcName == "test_log_and_exception_are_attributed_to_the_caller"
+
+    def test_explicit_stacklevel_moves_the_record_one_frame_up(self, secure_logger, caplog):
+        """stacklevel=2 attributes the record to the caller's caller."""
+
+        def helper(**kwargs):
+            secure_logger.info("hello", **kwargs)
+
+        with caplog.at_level(logging.DEBUG):
+            helper()
+            helper(stacklevel=2)
+
+        default, shifted = caplog.records
+        assert default.funcName == "helper"
+        assert shifted.funcName == "test_explicit_stacklevel_moves_the_record_one_frame_up"
+        assert shifted.pathname == __file__
+
+    def test_attribution_through_get_secure_logger(self, caplog):
+        """A logger from get_secure_logger() attributes records to the caller."""
+        logger = get_secure_logger("test.secure.attribution")
+
+        with caplog.at_level(logging.DEBUG):
+            logger.info("hello")
+
+        (record,) = caplog.records
+        assert record.pathname == __file__
+        assert record.funcName == "test_attribution_through_get_secure_logger"

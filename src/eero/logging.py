@@ -51,7 +51,7 @@ DEFAULT_SENSITIVE_PATTERNS: FrozenSet[str] = frozenset(
 # The subset of sensitive patterns considered credential-shaped rather than
 # merely identifier-shaped. A key matching one of these must never have any
 # of its value's leading characters logged -- only its length (see
-# _redact_value / _redact_dict). Identifier-shaped fields (email, phone,
+# _redact_value / _redact). Identifier-shaped fields (email, phone,
 # ...) still show a short prefix for debugging usability.
 _ZERO_VISIBILITY_PATTERNS: FrozenSet[str] = frozenset(
     {
@@ -180,7 +180,8 @@ def _redact(
     Mappings, lists and tuples are walked; every other value is returned
     as-is. The argument is never mutated: each container is rebuilt, a
     mapping as a plain ``dict`` (keys preserved as-is) and a list or tuple as
-    the same kind of sequence.
+    the same kind of sequence. Named tuples and other tuple subclasses come
+    back as plain tuples, and their field names are not used for matching.
 
     Args:
         value: The value to redact
@@ -312,15 +313,23 @@ class SecureLoggerAdapter(logging.LoggerAdapter):  # type: ignore[type-arg]
             level: Log level
             msg: Log message format string
             *args: Positional arguments for string formatting
-            **kwargs: Keyword arguments for the underlying logger
+            **kwargs: Keyword arguments for the underlying logger. A
+                ``stacklevel`` (default 1) is honoured relative to the caller
+                of this method, so records are attributed to the calling
+                code rather than to this module.
         """
         if not self.isEnabledFor(level):
             return
+        stacklevel = kwargs.pop("stacklevel", 1)
         redacted_msg, redacted_kwargs = self.process(msg, kwargs)
         redacted_args = tuple(
             redact_sensitive(arg, self._sensitive_patterns, self._visible_chars) for arg in args
         )
-        self.logger.log(level, redacted_msg, *redacted_args, **redacted_kwargs)
+        # +1 accounts for this frame. The stdlib frames of the inherited level
+        # methods (info, debug, ...) are skipped by Logger.findCaller itself.
+        self.logger.log(
+            level, redacted_msg, *redacted_args, stacklevel=stacklevel + 1, **redacted_kwargs
+        )
 
 
 @lru_cache(maxsize=128)
