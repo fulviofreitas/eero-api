@@ -809,6 +809,23 @@ class TestLinkValueValidation:
         with pytest.raises(EeroValidationException):
             self_url({"url": hostile})
 
+    @pytest.mark.parametrize(
+        "bad",
+        ["/2.2/networks/n/../account", "/2.2/networks/n?x=1", "//evil.example/x", "/2.2/n\n/x"],
+        ids=["dotdot", "query", "authority", "newline"],
+    )
+    def test_error_field_names_the_callers_argument_or_the_envelope_link(self, bad: str) -> None:
+        """A bad caller path reports ``id_or_url``; a bad published link reports ``link``."""
+        with pytest.raises(EeroValidationException) as supplied:
+            resource_url(bad, "networks/{id}")
+        assert supplied.value.field == "id_or_url"
+        with pytest.raises(EeroValidationException) as published:
+            resolve_link({"resources": {"x": bad}}, "x")
+        assert published.value.field == "link"
+        with pytest.raises(EeroValidationException) as own:
+            self_url({"url": bad})
+        assert own.value.field == "link"
+
     @pytest.mark.parametrize("link", ["/2.2/account", "/2.3/networks/other/eeros", "/2.1/x/y"])
     def test_published_link_is_not_confined_to_a_family(self, link: str) -> None:
         """A published link may name any resource, on any version (hypermedia design)."""
