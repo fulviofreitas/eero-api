@@ -1139,3 +1139,20 @@ defined in `const.py` — see [Module-level exports](#module-level-exports) for 
 - [Error Handling](Error-Handling) — The `EeroException` hierarchy and handling patterns
 - [Deprecations](Deprecations) — No-op and removed surface, and what replaces it
 - [Credential Storage](Credential-Storage) — Keyring, file, and memory storage backends
+
+
+### Profile content-filter policies
+
+`await client.get_profile_dns_policies(profile_id, network_id=...)` returns
+the complete separate profile DNS-policy envelope, including
+`unified_content_filters`. `await client.set_profile_content_filters(
+profile_id, {"block_gaming_content": True}, network_id=...)` sends a flat POST
+to `networks/{network}/dns_policies/profiles/{profile}`. Profile identifiers
+are bare IDs; network identifiers may be IDs, API paths, or absolute API URLs.
+Only names in `eero.api.dns_policies.CONTENT_FILTER_FLAGS` and actual boolean
+values are accepted.
+
+The write was measured with eero Plus and DNS policies enabled; capability
+availability alone does not establish enabled state. Other subscription and
+hardware combinations are not established. Read the separate policy resource
+to confirm persistence: success status alone is insufficient.

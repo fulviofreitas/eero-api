@@ -2570,6 +2570,27 @@ class EeroClient:
         self._invalidate_profiles_list_cache(network_id)
         return response
 
+    async def get_profile_dns_policies(
+        self, profile_id: str, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Read the complete premium profile policy envelope (bare profile ID)."""
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.dns_policies.get_profile_dns_policies(network_id, profile_id)
+
+    async def set_profile_content_filters(
+        self, profile_id: str, filters: Mapping[str, bool], network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set flat premium content-filter flags; requires DNS policies enabled.
+
+        Read get_profile_dns_policies afterwards to confirm persistence.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns_policies.set_profile_content_filters(
+            network_id, profile_id, filters
+        )
+        self._invalidate_profile_cache(network_id, profile_id)
+        return response
+
     async def get_dns_policy_applications(
         self, profile_id: str, network_id: Optional[str] = None
     ) -> Dict[str, Any]:

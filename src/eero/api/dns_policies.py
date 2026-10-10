@@ -11,23 +11,15 @@ filtering, domain allow/block lists, and per-profile application blocking
 actually live.
 
 Two read operations are live-verified: `get_advanced_content_filter` and
-`get_profile_applications`. Every write in this module is unverified: its
+`get_profile_applications`. Except for the flat profile content-filter POST, writes are unverified: its
 request shape follows the API's own field declarations, but no write here
 has been confirmed against a live network. Each write logs one warning via
 `warn_uncharacterised_write` before it is issued; follow the read-compare-
 skip discipline and never retry a failed write in a loop.
 
-Not exposed by this module: network-level and profile-level DNS-policy
-*settings* (the twelve boolean content-category toggles such as
-``ad_block``, ``block_malware``, ``safe_search_enabled``, and the matching
-ad-block on/off switches). The network envelope's ``premium_dns`` field and
-its ``resources`` object carry no link to these settings endpoints, and a
-profile's own ``premium_dns``/``resources`` fields are equally silent --
-there is no field anywhere in either envelope this SDK can read to build
-the request URL, so hardcoding a guessed literal path would be unverifiable
-and is deliberately avoided. The operations left unexposed for this reason
-are: reading or writing a network's DNS-policy settings, updating a
-network's ad-block settings, and the profile equivalents of all three.
+The complete profile policy read and flat content-filter POST were measured
+with eero Plus and the DNS-policy subsystem enabled. This is separate from
+capability availability. Network policy settings remain outside this module.
 Removal on the list-mutation endpoints below is expressed through the
 API's own ``is_delete`` field on a PUT -- there is no DELETE verb for these
 resources.
@@ -36,7 +28,7 @@ resources.
 from typing import Any, Dict, List, Mapping, Optional
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
 from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
@@ -45,6 +37,22 @@ from .base import AuthenticatedAPI, id_from_url
 from .links import sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
+
+
+CONTENT_FILTER_FLAGS = frozenset(
+    {
+        "block_pornographic_content",
+        "block_illegal_content",
+        "block_violent_content",
+        "safe_search_enabled",
+        "block_gaming_content",
+        "block_messaging_content",
+        "block_social_content",
+        "block_shopping_content",
+        "block_streaming_content",
+        "youtube_restricted",
+    }
+)
 
 
 def _payload(required: Dict[str, Any], **optional: Any) -> Dict[str, Any]:
@@ -546,3 +554,37 @@ class DnsPoliciesAPI(AuthenticatedAPI):
         url = self._profile_applications_blocked_url(network_id, profile_id)
         warn_uncharacterised_write(_LOGGER, "set blocked applications for profile on network")
         return await self.put(url, auth_token=auth_token, json={"applications": applications})
+
+    async def get_profile_dns_policies(self, network_id: str, profile_id: str) -> Dict[str, Any]:
+        """Read the complete profile DNS-policy envelope, including unified_content_filters.
+
+        profile_id is a bare profile identifier. network_id accepts an ID, path,
+        or absolute API URL. This premium resource was observed on eero Plus.
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+        url = resolve_nested_url(network_id, profile_id, prefix="dns_policies/profiles")
+        return await self.get(url, auth_token=auth_token)
+
+    async def set_profile_content_filters(
+        self, network_id: str, profile_id: str, filters: Mapping[str, bool]
+    ) -> Dict[str, Any]:
+        """POST flat content-filter flags to the profile DNS-policy resource.
+
+        Measured with eero Plus and DNS policies enabled. Capability availability
+        alone does not establish that the subsystem is enabled; when disabled,
+        the service may accept a write without applying it. Read this resource
+        back to verify a change. No subscription or hardware universality is implied.
+        """
+        if not isinstance(filters, Mapping) or not filters:
+            raise EeroValidationException("filters", "must be a non-empty mapping")
+        if any(flag not in CONTENT_FILTER_FLAGS for flag in filters):
+            raise EeroValidationException("filters", "contains an unsupported content-filter flag")
+        if any(not isinstance(value, bool) for value in filters.values()):
+            raise EeroValidationException("filters", "every flag value must be a boolean")
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+        url = resolve_nested_url(network_id, profile_id, prefix="dns_policies/profiles")
+        return await self.post(url, auth_token=auth_token, json=dict(filters))
