@@ -86,6 +86,28 @@ class TestAuthCredentials:
 
         assert creds.session_id is None
 
+    def test_repr_does_not_contain_session_token(self):
+        """Test repr()/str()/f-string formatting never expose the session token."""
+        creds = AuthCredentials(session_id="s_CANARY-repr-7e1")
+
+        assert "s_CANARY-repr-7e1" not in repr(creds)
+        assert "s_CANARY-repr-7e1" not in str(creds)
+        assert "s_CANARY-repr-7e1" not in f"{creds!r} {[creds]} {{'c': {creds!r}}}"
+        assert repr(creds) == "AuthCredentials()"
+
+    def test_equality_and_serialisation_still_use_session_token(self):
+        """Test excluding session_id from repr leaves equality and (de)serialisation intact."""
+        creds = AuthCredentials(session_id="s_456")
+
+        assert creds == AuthCredentials(session_id="s_456")
+        assert creds != AuthCredentials(session_id="s_789")
+        assert creds != AuthCredentials()
+        assert creds.to_dict() == {
+            "session_id": "s_456",
+            "schema_version": CREDENTIAL_SCHEMA_VERSION,
+        }
+        assert AuthCredentials.from_dict(creds.to_dict()) == creds
+
 
 # ========================== AuthAPI Init Tests ==========================
 
