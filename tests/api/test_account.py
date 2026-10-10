@@ -31,6 +31,32 @@ def account_api(mock_session):
     return AccountAPI(auth_api)
 
 
+class TestGetAccount:
+    """Tests for get_account."""
+
+    @pytest.mark.asyncio
+    async def test_gets_account(self, account_api, mock_session):
+        """Test the verb and path."""
+        envelope = api_success_response({"name": "Jane Doe", "networks": {"count": 0, "data": []}})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await account_api.get_account()
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "GET"
+        assert call_args.args[1].endswith("/2.2/account")
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, account_api, mock_session):
+        """Test it raises before any request when there is no token."""
+        account_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await account_api.get_account()
+        mock_session.request.assert_not_called()
+
+
 class TestSetName:
     """Tests for set_name."""
 
