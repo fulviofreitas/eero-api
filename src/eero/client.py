@@ -452,9 +452,7 @@ class EeroClient:
                 return cached
 
         cache_epoch = self._cache_epoch
-        response = await self._api.auth.get(
-            "/account", auth_token=await self._api.auth.get_auth_token()
-        )
+        response = await self._api.account.get_account()
         self._update_cache("account", None, response, epoch=cache_epoch)
         return response
 
@@ -472,6 +470,15 @@ class EeroClient:
         Note:
             The Eero API may return an empty list from the /networks endpoint.
             In this case, we fall back to extracting networks from the /account endpoint.
+            A failure of that fallback (authentication, rate limit, timeout,
+            transport or API error) propagates and nothing is cached: it
+            means the account could not be consulted, which is not the same
+            as the account having no networks. Only a successful fallback
+            that finds no networks yields a cacheable empty result.
+
+        Raises:
+            EeroException: If the account fallback fails, e.g.
+                ``EeroAuthenticationException`` or ``EeroRateLimitException``.
         """
         if not refresh_cache and self._is_cache_valid("networks"):
             cached = self._get_from_cache("networks")
@@ -492,27 +499,14 @@ class EeroClient:
         # If /networks returns empty, fall back to /account endpoint
         if not networks:
             _LOGGER.debug("Networks endpoint returned empty, falling back to account endpoint")
-            try:
-                account_response = await self.get_account(refresh_cache=True)
-                account_data = account_response.get("data", {})
-                networks_data = account_data.get("networks", {})
-
-                # Extract networks from account response
-                if isinstance(networks_data, dict):
-                    networks = networks_data.get("data", [])
-                elif isinstance(networks_data, list):
-                    networks = networks_data
-
-                if networks:
-                    # Construct a response in the expected format
-                    response = {
-                        "meta": response.get("meta", {}),
-                        "data": {"networks": networks},
-                    }
-            # Must not mask the (already-valid) primary /networks result --
-            # any account-endpoint fallback failure is logged, not raised.
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                _LOGGER.debug("Failed to get networks from account endpoint: %s", e)
+            account_response = await self.get_account(refresh_cache=True)
+            networks = self._networks_from_account(account_response)
+            if networks:
+                # Construct a response in the expected format
+                response = {
+                    "meta": response.get("meta", {}),
+                    "data": {"networks": networks},
+                }
 
         self._update_cache("networks", None, response, epoch=cache_epoch)
 
@@ -538,6 +532,26 @@ class EeroClient:
                     self._preferred_network_id = str(net_id)
 
         return response
+
+    @staticmethod
+    def _networks_from_account(account_response: Dict[str, Any]) -> List[Any]:
+        """Extract the network list from a raw ``/account`` envelope.
+
+        Args:
+            account_response: Raw ``/account`` response.
+
+        Returns:
+            The networks listed under ``data.networks`` (either a bare list or
+            wrapped in ``{"data": [...]}``), or an empty list when absent or
+            malformed.
+        """
+        if not isinstance(account_response, dict):
+            return []
+        account_data = account_response.get("data")
+        networks_data = account_data.get("networks") if isinstance(account_data, dict) else None
+        if isinstance(networks_data, dict):
+            networks_data = networks_data.get("data")
+        return networks_data if isinstance(networks_data, list) else []
 
     async def get_network(
         self, network_id: Optional[str] = None, refresh_cache: bool = False

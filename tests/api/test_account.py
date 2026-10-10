@@ -31,6 +31,68 @@ def account_api(mock_session):
     return AccountAPI(auth_api)
 
 
+class TestGetAccount:
+    """Tests for get_account."""
+
+    SESSION_REFRESH_BODY = {"meta": {"code": 401, "error": "error.session.refresh"}}
+
+    @pytest.mark.asyncio
+    async def test_get_account_endpoint(self, account_api, mock_session):
+        """Test the verb, URL, and credential."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await account_api.get_account()
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "GET"
+        assert call_args.args[1].endswith("/account")
+        assert call_args.kwargs["headers"]["X-User-Token"] == "auth_token"
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_envelope(self, account_api, mock_session):
+        """Test the raw envelope is returned unchanged."""
+        envelope = api_success_response({"networks": {"data": [{"url": "/2.2/networks/1"}]}})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await account_api.get_account()
+
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, account_api, mock_session):
+        """Test raises before any request when there is no session."""
+        account_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await account_api.get_account()
+
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_refresh_signal_refreshes_and_replays_once(self, mock_session):
+        """Test a 401 error.session.refresh refreshes once and replays with the new token."""
+        envelope = api_success_response({"name": "Jane Doe"})
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.refresh_session = AsyncMock(return_value=True)
+        auth_api.get_auth_token = AsyncMock(side_effect=["stale_token", "new_token"])
+        account_api = AccountAPI(auth_api)
+        mock_session.request.side_effect = [
+            create_mock_response(401, self.SESSION_REFRESH_BODY),
+            create_mock_response(200, envelope),
+        ]
+
+        result = await account_api.get_account()
+
+        assert result == envelope
+        auth_api.refresh_session.assert_awaited_once()
+        assert mock_session.request.call_count == 2
+        first, second = mock_session.request.call_args_list
+        assert first.kwargs["headers"]["X-User-Token"] == "stale_token"
+        assert second.kwargs["headers"]["X-User-Token"] == "new_token"
+        assert second.args[1].endswith("/account")
+
+
 class TestSetName:
     """Tests for set_name."""
 

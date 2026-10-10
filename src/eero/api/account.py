@@ -34,8 +34,9 @@ _LOGGER = get_secure_logger(__name__)
 class AccountAPI(AuthenticatedAPI):
     """Account API for Eero.
 
-    Manages the caller's own account profile: display name, email, phone,
-    marketing consent, and the SMS country-code catalogue. All methods
+    Reads and manages the caller's own account profile: the account record,
+    display name, email, phone, marketing consent, and the SMS country-code
+    catalogue. All methods
     return raw, unmodified JSON responses from the Eero Cloud API.
     Response format: {"meta": {...}, "data": {...}}
     """
@@ -47,6 +48,27 @@ class AccountAPI(AuthenticatedAPI):
             auth_api: Authentication API instance
         """
         super().__init__(auth_api, API_ENDPOINT)
+
+    async def get_account(self) -> Dict[str, Any]:
+        """Get the caller's account record.
+
+        GETs ``account``. Because this class is an `AuthenticatedAPI`, a
+        ``401 error.session.refresh`` response refreshes the session and
+        replays the request once.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug("Getting account")
+        return await self.get("account", auth_token=auth_token)
 
     async def set_name(self, name: str) -> Dict[str, Any]:
         """Set the account's display name.
