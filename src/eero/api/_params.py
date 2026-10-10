@@ -50,6 +50,39 @@ def validate_cadence(value: str, *, allowed: Sequence[str] = CADENCE_VALUES) -> 
     return value
 
 
+def require_non_empty_string(field: str, value: object) -> None:
+    """Reject a value that form encoding would turn into unintended text.
+
+    Form encoding renders ``None``, ``False`` or ``0`` as the literal text
+    ``"None"``, ``"False"`` or ``"0"``, so the caller's invalid input would
+    be written to the network instead of being rejected. The value itself is
+    never included in the error message.
+
+    Args:
+        field: The parameter name to report.
+        value: The value to check.
+
+    Raises:
+        EeroValidationException: If ``value`` is not a non-empty ``str``.
+    """
+    if not isinstance(value, str) or not value:
+        raise EeroValidationException(field, "must be a non-empty string")
+
+
+def require_bool(field: str, value: object) -> None:
+    """Reject a flag that is not a real boolean.
+
+    Args:
+        field: The parameter name to report.
+        value: The value to check.
+
+    Raises:
+        EeroValidationException: If ``value`` is not a ``bool``.
+    """
+    if not isinstance(value, bool):
+        raise EeroValidationException(field, "must be a boolean")
+
+
 def resolve_network_url(
     network: str,
     parent: Optional[Mapping[str, Any]] = None,
@@ -205,6 +238,8 @@ def _require_nested_family(url: str, network: str, prefix: str, suffix: str) -> 
 __all__ = [
     "CADENCE_VALUES",
     "validate_cadence",
+    "require_non_empty_string",
+    "require_bool",
     "resolve_network_url",
     "resolve_nested_url",
 ]

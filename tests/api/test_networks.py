@@ -19,12 +19,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from eero.api._params import require_bool, require_non_empty_string
 from eero.api.networks import NetworksAPI
 from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
 from .conftest import (
+    INVALID_ENABLED,
+    INVALID_NAMES,
+    INVALID_OPTIONAL_NAMES,
     INVALID_PASSWORDS,
     PASSWORD_WRITES,
+    VALID_NAMES,
     VALID_PASSWORDS,
     api_success_response,
     create_mock_response,
@@ -497,3 +502,111 @@ class TestNetworksAPIPasswordValidation:
         )
         assert call_args.kwargs["data"] == {"password": password}
         assert "json" not in call_args.kwargs
+
+
+class TestNetworksAPINameValidation:
+    """Tests that unintended name and flag values never reach the form body."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_NAMES)
+    async def test_invalid_network_name_sends_no_request(self, networks_api, mock_session, name):
+        """Test a non-string or empty network name is rejected before auth and transport.
+
+        Form-encoding would otherwise turn None, False or 0 into the literal text
+        "None", "False" or "0" and rename the network to that.
+        """
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await networks_api.set_network_name("network_123", name)
+
+        networks_api._auth_api.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    async def test_valid_network_name_is_forwarded_unchanged(
+        self, networks_api, mock_session, name
+    ):
+        """Test a string name, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await networks_api.set_network_name("network_123", name)
+
+        networks_api._auth_api.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/settings",
+        )
+        assert call_args.kwargs["data"] == {"name": name}
+        assert "json" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_OPTIONAL_NAMES)
+    async def test_invalid_guest_name_sends_no_request(self, networks_api, mock_session, name):
+        """Test a supplied guest name that is not a non-empty string is rejected."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await networks_api.set_guest_network("network_123", enabled=True, name=name)
+
+        networks_api._auth_api.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", INVALID_ENABLED)
+    async def test_invalid_guest_enabled_sends_no_request(
+        self, networks_api, mock_session, enabled
+    ):
+        """Test a non-bool enabled flag is rejected, not coerced to "true" or "false"."""
+        with pytest.raises(EeroValidationException, match="enabled.*boolean"):
+            await networks_api.set_guest_network("network_123", enabled=enabled)
+
+        networks_api._auth_api.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_valid_guest_network_is_forwarded_unchanged(
+        self, networks_api, mock_session, enabled, name
+    ):
+        """Test a bool flag and a string name, even "None", are sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await networks_api.set_guest_network("network_123", enabled=enabled, name=name)
+
+        networks_api._auth_api.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/guestnetwork",
+        )
+        assert call_args.kwargs["data"] == {
+            "enabled": "true" if enabled else "false",
+            "name": name,
+        }
+        assert "json" not in call_args.kwargs
+
+
+class TestSharedSetterValidators:
+    """Tests the shared validators the API and the facade both run before any I/O."""
+
+    @pytest.mark.parametrize("value", INVALID_NAMES)
+    def test_require_non_empty_string_rejects_without_echoing_value(self, value):
+        """Test a non-string or empty value is rejected and never echoed in the message."""
+        with pytest.raises(EeroValidationException, match="field.*must be a non-empty string"):
+            require_non_empty_string("field", value)
+
+    @pytest.mark.parametrize("value", ["x", "None", "  padded  "])
+    def test_require_non_empty_string_accepts_any_non_empty_string(self, value):
+        """Test any non-empty string is accepted, including "None" and padded text."""
+        assert require_non_empty_string("field", value) is None
+
+    @pytest.mark.parametrize("value", INVALID_ENABLED)
+    def test_require_bool_rejects_non_bool(self, value):
+        """Test a non-bool flag is rejected."""
+        with pytest.raises(EeroValidationException, match="field.*must be a boolean"):
+            require_bool("field", value)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_require_bool_accepts_bool(self, value):
+        """Test a real bool is accepted."""
+        assert require_bool("field", value) is None

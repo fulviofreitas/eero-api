@@ -26,8 +26,12 @@ from eero.exceptions import (
 )
 
 from .conftest import (
+    INVALID_ENABLED,
+    INVALID_NAMES,
+    INVALID_OPTIONAL_NAMES,
     INVALID_PASSWORDS,
     PASSWORD_WRITES,
+    VALID_NAMES,
     VALID_PASSWORDS,
     api_success_response,
     create_mock_response,
@@ -1915,6 +1919,158 @@ class TestEeroClientPasswordValidation:
         )
         assert call_args.kwargs["data"] == {"password": password}
         assert "json" not in call_args.kwargs
+
+
+class TestEeroClientNameValidation:
+    """Tests that the facade rejects unintended names and flags before resolving or sending."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed auth token."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.auth.get_auth_token = AsyncMock(return_value="auth_token")
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_NAMES)
+    async def test_invalid_network_name_sends_no_request(self, client, mock_session, name):
+        """Test a non-string or empty network name is rejected before auth and transport."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    async def test_valid_network_name_is_forwarded_unchanged(self, client, mock_session, name):
+        """Test a string name, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/settings",
+        )
+        assert call_args.kwargs["data"] == {"name": name}
+        assert "json" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_OPTIONAL_NAMES)
+    async def test_invalid_guest_name_sends_no_request(self, client, mock_session, name):
+        """Test a supplied guest name that is not a non-empty string is rejected."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_guest_network(True, name=name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", INVALID_ENABLED)
+    async def test_invalid_guest_enabled_sends_no_request(self, client, mock_session, enabled):
+        """Test a non-bool enabled flag is rejected, not coerced to "true" or "false"."""
+        with pytest.raises(EeroValidationException, match="enabled.*boolean"):
+            await client.set_guest_network(enabled)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_valid_guest_network_is_forwarded_unchanged(
+        self, client, mock_session, enabled, name
+    ):
+        """Test a bool flag and a string name, even "None", are sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_guest_network(enabled, name=name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/guestnetwork",
+        )
+        assert call_args.kwargs["data"] == {
+            "enabled": "true" if enabled else "false",
+            "name": name,
+        }
+        assert "json" not in call_args.kwargs
+
+
+class TestEeroClientValidatesBeforeResolvingNetwork:
+    """Tests that setter inputs are validated before any network id resolution."""
+
+    # (wrapper, resource method it forwards to, invalid args, valid args)
+    _CASES = [
+        ("set_network_name", "set_network_name", ("",), ("Home",)),
+        ("set_network_password", "set_network_password", (None,), ("hunter2",)),
+        ("set_guest_password", "set_guest_password", (0,), ("guestpw",)),
+        ("set_guest_network", "set_guest_network", ("yes",), (True,)),
+    ]
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with no preferred network, discovery mocked, and writes stubbed."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": "network_123"}]}}
+        )
+        ok = {"meta": {"code": 200}, "data": {}}
+        for _, method, _, _ in self._CASES:
+            setattr(client._api.networks, method, AsyncMock(return_value=ok))
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_never_triggers_discovery(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test an invalid input raises validation without discovery or a resource call."""
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+        client._api.networks.get_networks.assert_not_awaited()
+        getattr(client._api.networks, method).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_wins_over_discovery_failure(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test a failing discovery cannot mask the validation error."""
+        client._api.networks.get_networks.side_effect = EeroException("discovery failed")
+
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_valid_input_still_resolves_and_forwards(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test valid input with an explicit network id is forwarded to the resource method."""
+        await getattr(client, wrapper)(*valid, network_id="network_123")
+
+        client._api.networks.get_networks.assert_not_awaited()
+        resource = getattr(client._api.networks, method)
+        resource.assert_awaited_once()
+        assert resource.await_args.args[0] == "network_123"
+
+    @pytest.mark.asyncio
+    async def test_valid_guest_network_still_discovers_network(self, client):
+        """Test set_guest_network with valid input and no network id still auto-discovers."""
+        await client.set_guest_network(True)
+
+        client._api.networks.get_networks.assert_awaited_once()
+        client._api.networks.set_guest_network.assert_awaited_once()
+        assert client._api.networks.set_guest_network.await_args.args[0] == "network_123"
 
 
 # ========================== Cache invalidation for new write wrappers ==========================

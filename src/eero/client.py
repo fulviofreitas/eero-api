@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 from aiohttp import ClientSession, ClientTimeout
 
 from .api import EeroAPI
+from .api._params import require_bool, require_non_empty_string
 from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
 
@@ -573,7 +574,19 @@ class EeroClient:
         )
 
     async def set_network_name(self, name: str, network_id: Optional[str] = None) -> Dict[str, Any]:
-        """Set network name - returns raw Eero API response."""
+        """Set network name - returns raw Eero API response.
+
+        Args:
+            name: The new network name.
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If name is not a non-empty string
+        """
+        require_non_empty_string("name", name)
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_network_name(
             network_id, name, **self._network_parent_kwargs(network_id)
@@ -591,6 +604,7 @@ class EeroClient:
             not been confirmed against a live network. Follow the
             read-compare-skip discipline and do not retry on failure.
         """
+        require_non_empty_string("password", password)
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_network_password(
             network_id, password, **self._network_parent_kwargs(network_id)
@@ -1204,7 +1218,14 @@ class EeroClient:
 
         Returns:
             Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If enabled is not a bool, or name is
+                supplied but is not a non-empty string
         """
+        require_bool("enabled", enabled)
+        if name is not None:
+            require_non_empty_string("name", name)
         network_id = await self._ensure_network_id(network_id)
 
         response = await self._api.networks.set_guest_network(
@@ -1228,6 +1249,7 @@ class EeroClient:
         This write disconnects guest clients while it takes effect -- never
         retry a failed write in a loop.
         """
+        require_non_empty_string("password", password)
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.networks.set_guest_password(network_id, password)
         self._invalidate_network_cache(network_id)
