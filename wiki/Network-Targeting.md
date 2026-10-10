@@ -205,6 +205,10 @@ Anything else — another host, `http://`, a userinfo trick like
 request is made. The session token therefore can never be sent anywhere but the API host, even
 if a link value is attacker-controlled.
 
+The one exception is `schedule` (`update_schedule` / `delete_schedule`): a pause lives under a
+network and a profile those methods are not given, so a bare ID is rejected with
+`EeroValidationException` before any request. Pass the pause's path, URL or envelope.
+
 When a template continues past the resource (for example `networks/{id}/settings`), a bare ID is
 substituted into the whole template, while a path or URL is taken to identify the *parent*
 resource and the suffix is appended to it.

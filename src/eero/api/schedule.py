@@ -49,7 +49,7 @@ WEEKEND = ("saturday", "sunday")
 
 
 def _resolve_schedule_url(schedule: Any) -> str:
-    """Resolve a scheduled pause's own URL from a URL, path, or envelope.
+    """Resolve a scheduled pause's own URL from a path, URL, or envelope.
 
     Args:
         schedule: Either a path/absolute URL as previously returned by the
@@ -60,16 +60,18 @@ def _resolve_schedule_url(schedule: Any) -> str:
 
     Raises:
         EeroValidationException: If ``schedule`` is a mapping with no
-            resolvable ``url`` field, or a string that isn't a valid path,
-            or absolute URL, or a path/URL that is not a scheduled pause
+            resolvable ``url`` field, a bare identifier, a path/URL that is
+            not a scheduled pause
             (``/<version>/networks/{id}/profiles/{id}/schedules/{id}``), or
             neither a string nor a mapping.
 
     A path or URL a caller supplies is confined to that shape, so a write
     cannot be redirected to another resource on the API host. A link the API
     published in an envelope is trusted as published and not confined. A bare
-    identifier is not confined either: it cannot name the network and profile
-    a pause lives under, so it is placed under the version root unchanged.
+    identifier is refused: a pause lives under a network and a profile that
+    the update and delete methods are not given, so the id alone cannot be
+    resolved, and placing it under the version root would address whatever
+    one-segment endpoint shares its name.
     """
     if isinstance(schedule, Mapping):
         envelope = as_envelope(schedule)
@@ -78,9 +80,14 @@ def _resolve_schedule_url(schedule: Any) -> str:
             raise EeroValidationException("schedule", "envelope has no resolvable 'url' field")
         return url
     if isinstance(schedule, str):
+        if not (schedule.startswith("/") or schedule.lower().startswith(("http://", "https://"))):
+            raise EeroValidationException(
+                "schedule",
+                "must be the schedule's path, absolute URL or envelope; "
+                "a bare id cannot be resolved",
+            )
         url = resource_url(schedule, "{id}")
-        if schedule.startswith("/") or schedule.lower().startswith(("http://", "https://")):
-            require_family_path(url, _SCHEDULE_FAMILY, field="schedule")
+        require_family_path(url, _SCHEDULE_FAMILY, field="schedule")
         return url
     raise EeroValidationException(
         "schedule", "must be a URL/path string or a pause envelope (mapping)"
@@ -218,8 +225,10 @@ class ScheduleAPI(AuthenticatedAPI):
         """Update a scheduled pause via its own URL - returns raw Eero API response.
 
         Args:
-            schedule: The pause's own path/absolute URL (as returned by
+            schedule: The pause's own path or absolute URL (as returned by
                 `get_schedules`/`create_schedule`), or its cached envelope.
+                A bare id is rejected: this method is not given the network
+                and profile the pause lives under.
             name: New name, or ``None`` to omit.
             days: New days list, or ``None`` to omit.
             start: New start time, or ``None`` to omit.
@@ -231,7 +240,8 @@ class ScheduleAPI(AuthenticatedAPI):
 
         Raises:
             EeroAuthenticationException: If not authenticated
-            EeroValidationException: If ``schedule`` cannot be resolved to a URL
+            EeroValidationException: If ``schedule`` is a bare id, or cannot
+                be resolved to a scheduled pause's URL
             EeroAPIException: If the API returns an error
         """
         auth_token = await self._auth_api.get_auth_token()
@@ -265,15 +275,17 @@ class ScheduleAPI(AuthenticatedAPI):
         """Delete a scheduled pause via its own URL - returns raw Eero API response.
 
         Args:
-            schedule: The pause's own path/absolute URL, or its cached
-                envelope.
+            schedule: The pause's own path or absolute URL, or its cached
+                envelope. A bare id is rejected: this method is not given
+                the network and profile the pause lives under.
 
         Returns:
             Raw API response: {"meta": {...}, ...}
 
         Raises:
             EeroAuthenticationException: If not authenticated
-            EeroValidationException: If ``schedule`` cannot be resolved to a URL
+            EeroValidationException: If ``schedule`` is a bare id, or cannot
+                be resolved to a scheduled pause's URL
             EeroAPIException: If the API returns an error
         """
         auth_token = await self._auth_api.get_auth_token()

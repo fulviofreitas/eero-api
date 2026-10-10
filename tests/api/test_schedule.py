@@ -345,14 +345,31 @@ class TestScheduleOwnUrlConfinement:
         )
 
     @pytest.mark.asyncio
-    async def test_bare_id_is_placed_under_the_version_root(self, write, mock_session) -> None:
-        """A bare id cannot name its network and profile, so it is not confined."""
+    @pytest.mark.parametrize("target", ["s1", "account", "networks", "S1", "../account"])
+    async def test_bare_id_is_refused_before_transport(self, write, mock_session, target) -> None:
+        """A bare id cannot name its network and profile, so it is never sent.
+
+        In particular a one-segment endpoint name such as ``account`` must not
+        reach the transport as ``/2.2/account``.
+        """
+        _, call = write
+        with pytest.raises(EeroValidationException) as caught:
+            await call(target)
+        assert caught.value.field == "schedule"
+        assert "bare id" in str(caught.value)
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_envelope_url_branch_is_unchanged_by_bare_id_rule(
+        self, write, mock_session
+    ) -> None:
+        """A full envelope still resolves to its published own URL."""
         mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
         _, call = write
 
-        await call("s1")
+        await call({"meta": {"code": 200}, "data": {"url": _SCHEDULE_PATH}})
 
-        assert mock_session.request.call_args.args[1] == "https://api-user.e2ro.com/2.2/s1"
+        assert mock_session.request.call_args.args[1] == _SCHEDULE_URL
 
 
 class TestScheduleAPIClearProfileSchedule:
