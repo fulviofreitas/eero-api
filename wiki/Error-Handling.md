@@ -11,8 +11,8 @@ All exceptions are defined in `src/eero/exceptions.py`:
 ```text
 Exception
 └── EeroException                      (.message, .envelope, .error_code, is_auth_error())
-    ├── EeroAuthenticationException    is_auth_error() → True
-    ├── EeroRateLimitException
+    ├── EeroAuthenticationException    (.status_code) is_auth_error() → True
+    ├── EeroRateLimitException         (.status_code, .retry_after)
     ├── EeroNetworkException
     ├── EeroTimeoutException
     ├── EeroValidationException        (.field) — client-side validation AND API 400 form errors
@@ -57,6 +57,15 @@ except EeroAPIException as err:
         print(err.envelope["meta"])                 # the API's own error metadata, unmodified
 ```
 
+Two exceptions also carry what the response said about timing and status, both optional and `None` when unknown:
+
+| Attribute | On | Value |
+|---|---|---|
+| `err.status_code` | `EeroAuthenticationException`, `EeroRateLimitException` (every `EeroAPIException` subclass has it too) | The HTTP status of the response. Always `401` on an authentication exception raised for a response, and the **actual** status on a rate-limit exception — `error.rate.limit` is classified as a rate limit on any status, so it is not always `429`. `None` when the exception was raised locally, with no response (for example "No session token available") |
+| `err.retry_after` | `EeroRateLimitException` | The delay in seconds the server asked for in its `Retry-After` header: either delta-seconds, or an HTTP-date converted to the (non-negative) number of seconds from now. Either form is capped at one day (86400). `None` when the header was absent or in neither form. The SDK never sleeps or retries on it — it only reports it |
+
+Both are **keyword-only** constructor arguments that default to `None`, so `EeroAuthenticationException("msg")` and `EeroRateLimitException("msg", envelope=..., error_code=...)` construct exactly as before.
+
 Branch on `error_code` (or on the exception class), never on the message string — the message is a fixed, leak-safe label; `error_code` is what the API sent. The envelope is the API's exact response; the SDK does not rewrite or trim it.
 
 The same rule applies to log output: the transport logs the parsed envelope through the redacting secure logger at `DEBUG` for every error status (plus a status-and-method-only `ERROR` line for statuses other than 401/404/429) and never the raw body text. See [Logging and Security](Logging-and-Security#other-transport-security-behavior).
@@ -72,7 +81,7 @@ The API reports failures as `{"meta": {"code": <status>, "error": "<string>"}}`.
 | `ErrorGroup` (`str, Enum`) | `SESSION`, `SESSION_REFRESH`, `VERIFICATION`, `ACCESS_DENIED`, `NOT_FOUND`, `RATE_LIMIT`, `VALIDATION`, `PREMIUM`, `FEATURE_UNAVAILABLE`, `CLIENT_BLOCKED`, `DOMAIN` |
 | `classify_error_code(error_code) -> Optional[ErrorGroup]` | The group a `meta.error` string belongs to, or `None` for `None`/empty/unrecognised/free-text input |
 | `message_for_error_code(error_code) -> str` | The normalised catalogue string, or `"unrecognised error string"` (`eero.errors` only — not re-exported from the package root) |
-| `exception_for_error(status_code, *, envelope, error_code) -> EeroException` | Builds (does not raise) the exception the transport will raise for a non-2xx/3xx response, with `envelope` and `error_code` attached |
+| `exception_for_error(status_code, *, envelope, error_code, retry_after=None) -> EeroException` | Builds (does not raise) the exception the transport will raise for a non-2xx/3xx response, with `envelope` and `error_code` attached. `status_code` is attached to authentication and rate-limit exceptions, and `retry_after` to rate-limit exceptions (it is ignored for every other class) |
 | `SESSION_ERRORS`, `VERIFICATION_ERRORS`, … `DOMAIN_ERRORS` (`FrozenSet[str]`) | The member strings of each group (`eero.errors` only) |
 
 `exception_for_error` is the single place classification happens, and its precedence is fixed:
@@ -115,11 +124,11 @@ classify_error_code(None)                      # None
 | Exception | When it's raised | Extra attributes |
 |---|---|---|
 | `EeroException` | Base class — not raised directly by the SDK | — |
-| `EeroAuthenticationException` | Every HTTP 401 (after the refresh-and-replay attempt, when applicable); also raised locally when an auth operation needs a session token and none is present | — |
-| `EeroRateLimitException` | HTTP 429, or `error.rate.limit` on any status | — |
+| `EeroAuthenticationException` | Every HTTP 401 (after the refresh-and-replay attempt, when applicable); also raised locally when an auth operation needs a session token and none is present | `status_code` (`Optional[int]`; `401` from a response, `None` when raised locally) |
+| `EeroRateLimitException` | HTTP 429, or `error.rate.limit` on any status | `status_code` (`Optional[int]`), `retry_after` (`Optional[float]`, seconds, from `Retry-After`) |
 | `EeroNetworkException` | Any `aiohttp.ClientError` (DNS failure, connection reset, TLS error, etc.) | — (`envelope` is `None`) |
 | `EeroTimeoutException` | `asyncio.TimeoutError` (request exceeded the configured timeout) | — (`envelope` is `None`) |
-| `EeroAPIException` | Blocked redirect (3xx), oversized response body, invalid JSON on a 2xx, and any error status not claimed by a subclass below — including every `DOMAIN` string and every unrecognised string | `status_code` (`Optional[int]`) |
+| `EeroAPIException` | Blocked redirect (3xx), oversized response body, a 2xx body that is not valid UTF-8, not valid JSON, or not a JSON object, and any error status not claimed by a subclass below — including every `DOMAIN` string and every unrecognised string | `status_code` (`Optional[int]`) |
 | `EeroAccessDeniedException` | HTTP 403 with `error.access.denied` | `status_code` |
 | `EeroClientBlockedException` | `error.app.version.blocked` on any status | `status_code` |
 | `EeroNotFoundException` | Every HTTP 404 | `status_code`, `resource_type`, `resource_id` (both `None` when built by the transport, which has no resource context; set when constructed directly) |
@@ -127,7 +136,7 @@ classify_error_code(None)                      # None
 | `EeroFeatureUnavailableException` | A `FEATURE_UNAVAILABLE` string on any status | `status_code`, `feature` (the `error_code`), `reason` (the message) |
 | `EeroValidationException` | (a) **Locally**, before any network call: `id_from_url()` given an empty/non-string ID; `set_session_token()` given an empty/non-string token; an `accept_language` or any other header value that is not printable ASCII; a caller-supplied `X-User-Token` / `Cookie` / `Authorization` header; `allow_redirects=True`; more than one body carrier on one request; an invalid `cadence` on the data-usage methods; an empty `serial` / `version` on `get_ouicheck`; the DNS write methods given a malformed IP literal, an address of the wrong family, a zone-scoped address, more than 2 servers for one family, an unrecognised DNS mode, or `mode="custom"` without servers. (b) **From the API**: HTTP 400 with a `VALIDATION` string | `field` (the offending argument locally; `"request"` from the API) |
 
-The legacy constructors still work for direct construction — `EeroNotFoundException(resource_type, resource_id)`, `EeroPremiumRequiredException(feature)`, `EeroFeatureUnavailableException(feature, reason)`, `EeroValidationException(field, message)` — and each of those classes also has a `from_response(message, *, envelope=None, error_code=None)` classmethod (plus `status_code=` on the three `EeroAPIException` subclasses) that the transport uses when it has no resource/feature/field context.
+The legacy constructors still work for direct construction — `EeroNotFoundException(resource_type, resource_id)`, `EeroPremiumRequiredException(feature)`, `EeroFeatureUnavailableException(feature, reason)`, `EeroValidationException(field, message)` — and each of those classes also has a `from_response(message, *, envelope=None, error_code=None)` classmethod (plus `status_code=` on the three `EeroAPIException` subclasses) that the transport uses when it has no resource/feature/field context. `EeroAuthenticationException` and `EeroRateLimitException` have no `from_response`: the transport passes `status_code=` (and `retry_after=`) to their ordinary constructors.
 
 ---
 
@@ -137,15 +146,15 @@ What `BaseAPI._request()` (via `exception_for_error`) does for each response:
 
 | HTTP status | Exception raised | Notes |
 |---|---|---|
-| `200`–`299` | *(none — success)* | `204` or an empty body returns `{}`; invalid JSON on a 2xx raises `EeroAPIException` |
+| `200`–`299` | *(none — success)* | `204` or an empty body returns `{}`. A body that is not valid UTF-8, not valid JSON, or valid JSON that is not an object (a list, string, number, `true`/`false` or `null`) is an invalid response and raises `EeroAPIException` with the status and a fixed message — the body text is never included |
 | `300`–`399` | `EeroAPIException` | Redirects are never followed (`allow_redirects=False`, not overridable) and are always rejected, to stop the session token leaking to another host |
 | `400` | `EeroValidationException` if `meta.error` is a `VALIDATION` string, else `EeroAPIException` | `field == "request"`; API detail in `envelope` |
-| `401` | `EeroAuthenticationException` | Always, whatever the string. `error.session.refresh` first triggers a transparent refresh + single replay; the exception is raised only if there's no refresh hook or the refresh fails. Stored credentials are cleared whenever the **refresh endpoint** answers 401 with anything other than a `VERIFICATION` or `SESSION_REFRESH` string (a `SESSION` string, any other recognised group, or an unrecognised/absent string) |
+| `401` | `EeroAuthenticationException` (`status_code == 401`) | Always, whatever the string. `error.session.refresh` first triggers a transparent refresh + single replay; the exception is raised only if there's no refresh hook or the refresh fails. Stored credentials are cleared whenever the **refresh endpoint** answers 401 with anything other than a `VERIFICATION` or `SESSION_REFRESH` string (a `SESSION` string, any other recognised group, or an unrecognised/absent string) |
 | `403` | `EeroAccessDeniedException` with `error.access.denied`, else `EeroAPIException` | Not an auth error; credentials kept |
 | `404` | `EeroNotFoundException` | Always — with a catalogue string, a free-text sentence, or no `meta.error` at all |
-| `429` | `EeroRateLimitException` | See [Caching and Rate Limits](Caching-and-Rate-Limits) |
-| any status with a `PREMIUM` / `FEATURE_UNAVAILABLE` / `CLIENT_BLOCKED` / `RATE_LIMIT` string (except 401) | the group's class | Status-independent groups |
-| everything else | `EeroAPIException` (`status_code=<actual>`) | The generic fallback, `error_code` set when present |
+| `429` | `EeroRateLimitException` (`status_code == 429`, `retry_after` from the `Retry-After` header) | See [Caching and Rate Limits](Caching-and-Rate-Limits) |
+| any status with a `PREMIUM` / `FEATURE_UNAVAILABLE` / `CLIENT_BLOCKED` / `RATE_LIMIT` string (except 401) | the group's class | Status-independent groups; a `RATE_LIMIT` string keeps the actual `status_code` and also reads `Retry-After` |
+| everything else | `EeroAPIException` (`status_code=<actual>`) | The generic fallback, `error_code` set when present. An error body that is not valid UTF-8 is decoded with replacement characters, so the status mapping above still applies and the exception is the one the status selects (`envelope` is `None` unless the body still parses as a JSON object) |
 | response body > `MAX_RESPONSE_BYTES` | `EeroAPIException` | Raised mid-stream, before the body is fully buffered |
 | `asyncio.TimeoutError` | `EeroTimeoutException` | Request exceeded the timeout (see [Configuration](Configuration)) |
 | `aiohttp.ClientError` | `EeroNetworkException` | Connection-level failures, wrapped with `from err` |
@@ -277,6 +286,24 @@ async def get_networks_with_retry(client, max_attempts: int = 5):
                 raise
             await asyncio.sleep(2 ** attempt)
 ```
+
+### Honouring `Retry-After`
+
+```python
+import asyncio
+from eero import EeroRateLimitException
+
+async def get_networks_once_after_rate_limit(client):
+    try:
+        return await client.get_networks()
+    except EeroRateLimitException as err:
+        if err.retry_after is None:
+            raise                      # the server gave no usable hint
+        await asyncio.sleep(min(err.retry_after, 60))
+        return await client.get_networks()
+```
+
+Only reads are safe to repeat like this. The SDK never retries a write, and neither should this pattern: read the state back first.
 
 ### Handling premium / unavailable features
 

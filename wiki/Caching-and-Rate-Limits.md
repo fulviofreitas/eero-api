@@ -156,7 +156,7 @@ Practical guidance:
 - **Lean on the cache** — the default 60-second TTL alone eliminates most redundant reads in interactive use.
 - **Raise `cache_timeout` for polling workloads** — a monitoring loop checking network health every few minutes doesn't need fresh data every call.
 - **Batch reads** — call `get_networks()` / `get_devices()` once and slice the response in memory rather than issuing one request per item.
-- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`. The SDK never retries a `429` itself, and never retries a write for any reason; the only built-in retry is the opt-in `get_retries` constructor option for `GET`s that fail with a transport error or a `5xx` (see [Configuration](Configuration#-retry-policy)).
+- **Add backoff** — see the retry pattern in [Error Handling](Error-Handling#retry-with-exponential-backoff) for `EeroRateLimitException`. The exception carries the server's `Retry-After` hint as `retry_after` (seconds, or `None`) so you can honour it — see [Honouring `Retry-After`](Error-Handling#honouring-retry-after). The SDK never retries a `429` itself, and never retries a write for any reason; the only built-in retry is the opt-in `get_retries` constructor option for `GET`s that fail with a transport error or a `5xx` (see [Configuration](Configuration#-retry-policy)).
 
 ### Example: a rate-limit-respecting monitoring loop
 

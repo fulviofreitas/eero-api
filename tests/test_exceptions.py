@@ -1,4 +1,13 @@
-"""Tests for EeroException.is_auth_error predicate."""
+"""Tests for the exception hierarchy.
+
+Tests cover:
+- The ``is_auth_error`` predicate across all exception types
+- Constructor compatibility and the optional ``status_code`` / ``retry_after``
+  attributes of the authentication and rate-limit exceptions
+- The hierarchy position of ``EeroValidationException``
+"""
+
+import pytest
 
 from eero.exceptions import (
     EeroAPIException,
@@ -52,3 +61,96 @@ class TestIsAuthError:
 
     def test_not_found_exception_is_false(self):
         assert EeroNotFoundException("network", "abc").is_auth_error() is False
+
+
+class TestAuthenticationExceptionConstruction:
+    """Constructor shapes of EeroAuthenticationException."""
+
+    def test_message_only(self):
+        exc = EeroAuthenticationException("session expired")
+
+        assert str(exc) == "session expired"
+        assert exc.message == "session expired"
+        assert exc.envelope is None
+        assert exc.error_code is None
+        assert exc.status_code is None
+
+    def test_bare_class_with_no_arguments(self):
+        exc = EeroAuthenticationException()
+
+        assert exc.message == "An error occurred"
+        assert exc.status_code is None
+
+    def test_envelope_and_error_code(self):
+        envelope = {"meta": {"code": 401, "error": "error.session.expired"}}
+
+        exc = EeroAuthenticationException(
+            "error.session.expired", envelope=envelope, error_code="error.session.expired"
+        )
+
+        assert exc.envelope is envelope
+        assert exc.error_code == "error.session.expired"
+        assert exc.status_code is None
+
+    def test_status_code_is_carried(self):
+        assert EeroAuthenticationException("x", status_code=401).status_code == 401
+
+    def test_status_code_is_keyword_only(self):
+        with pytest.raises(TypeError):
+            EeroAuthenticationException("x", None, None, 401)
+
+
+class TestRateLimitExceptionConstruction:
+    """Constructor shapes of EeroRateLimitException."""
+
+    def test_message_only(self):
+        exc = EeroRateLimitException("rate limited")
+
+        assert str(exc) == "rate limited"
+        assert exc.message == "rate limited"
+        assert exc.envelope is None
+        assert exc.error_code is None
+        assert exc.status_code is None
+        assert exc.retry_after is None
+
+    def test_bare_class_with_no_arguments(self):
+        exc = EeroRateLimitException()
+
+        assert exc.message == "An error occurred"
+        assert exc.status_code is None
+        assert exc.retry_after is None
+
+    def test_envelope_and_error_code(self):
+        envelope = {"meta": {"code": 429, "error": "error.rate.limit"}}
+
+        exc = EeroRateLimitException(
+            "error.rate.limit", envelope=envelope, error_code="error.rate.limit"
+        )
+
+        assert exc.envelope is envelope
+        assert exc.error_code == "error.rate.limit"
+        assert exc.status_code is None
+        assert exc.retry_after is None
+
+    def test_status_code_and_retry_after_are_carried(self):
+        exc = EeroRateLimitException("x", status_code=429, retry_after=12.5)
+
+        assert exc.status_code == 429
+        assert exc.retry_after == 12.5
+
+    def test_new_attributes_are_keyword_only(self):
+        with pytest.raises(TypeError):
+            EeroRateLimitException("x", None, None, 429)
+
+
+class TestExceptionHierarchy:
+    """Positions in the hierarchy that downstream callers rely on."""
+
+    def test_validation_exception_is_not_an_api_exception(self):
+        """A client-side validation failure has no HTTP status, so it stays a direct child."""
+        assert EeroValidationException.__bases__ == (EeroException,)
+        assert not issubclass(EeroValidationException, EeroAPIException)
+
+    def test_authentication_and_rate_limit_stay_direct_children_of_base(self):
+        assert EeroAuthenticationException.__bases__ == (EeroException,)
+        assert EeroRateLimitException.__bases__ == (EeroException,)

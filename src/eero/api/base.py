@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -36,6 +38,15 @@ _LOGGER = get_secure_logger(__name__)
 # subset of what HTTP technically allows, chosen to keep header injection
 # impossible regardless of downstream transport quirks.
 _HEADER_VALUE_RE = re.compile(r"^[\x20-\x7E]*$")
+
+# A ``Retry-After`` delta-seconds value: a non-negative decimal integer.
+_RETRY_AFTER_DELTA_RE = re.compile(r"[0-9]+")
+
+# Upper bound, in seconds, on a parsed ``Retry-After`` value (one day). A header
+# is server-controlled input: an HTTP-date far in the future or a very long
+# digit string would otherwise make a caller that sleeps for the value stall
+# indefinitely or raise ``OverflowError``.
+RETRY_AFTER_MAX_SECONDS = 86400.0
 
 # HTTP methods that write state. These are never retried by the core for any
 # reason -- a duplicate write could trigger unintended side effects upstream
@@ -215,6 +226,36 @@ def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
         # best-effort parse so any malformed body is treated as "no envelope".
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Parse a ``Retry-After`` header into a number of seconds to wait.
+
+    Args:
+        value: The raw header value, or ``None`` when the header is absent.
+
+    Returns:
+        The delay in seconds: the value itself for delta-seconds, or the time
+        from now until the date for an HTTP-date (``0.0`` when that date is
+        already past). Either is capped at ``RETRY_AFTER_MAX_SECONDS`` (one
+        day). ``None`` when the header is absent, empty, or in neither form.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if _RETRY_AFTER_DELTA_RE.fullmatch(value):
+        # A header can carry hundreds of digits; float() maps those to inf,
+        # which the cap turns into the maximum.
+        return min(float(value), RETRY_AFTER_MAX_SECONDS)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if when.tzinfo is None:
+        # RFC 7231 HTTP-dates are always GMT; a zone-less parse means UTC.
+        when = when.replace(tzinfo=timezone.utc)
+    delay = (when - datetime.now(timezone.utc)).total_seconds()
+    return min(max(0.0, delay), RETRY_AFTER_MAX_SECONDS)
 
 
 def _error_code_from_envelope(envelope: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -509,9 +550,13 @@ class BaseAPI:
                 is unavailable, on any HTTP status.
             EeroClientBlockedException: If the API rejects this client
                 version, on any HTTP status.
-            EeroAPIException: If the API returns any other error.
+            EeroAPIException: If the API returns any other error, or a 2xx
+                response whose body is not valid UTF-8, not valid JSON, or
+                valid JSON that is not an object.
             EeroRateLimitException: If rate limited (HTTP 429, or a
-                recognised rate-limit error on another status).
+                recognised rate-limit error on another status). Carries the
+                response status and, when the server sent a parseable
+                ``Retry-After`` header, ``retry_after`` in seconds.
             EeroNetworkException: If there's a network error.
             EeroTimeoutException: If the request times out.
         """
@@ -612,31 +657,68 @@ class BaseAPI:
                     chunks.append(chunk)
                 raw_bytes = b"".join(chunks)
 
-                response_text = raw_bytes.decode("utf-8")
+                is_success = 200 <= response.status < 300
+                undecodable = False
+                try:
+                    response_text = raw_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Nothing from the decoder error is kept: its ``object``
+                    # attribute is the whole raw body and its message quotes an
+                    # offending byte, so chaining it would put body content in
+                    # any formatted traceback. Only a flag leaves this block.
+                    undecodable = True
+                if undecodable:
+                    if is_success:
+                        # A success body that cannot be decoded is an invalid
+                        # response. Only its size is logged -- never its
+                        # content. Raised outside the ``except`` above so
+                        # neither ``__cause__`` nor ``__context__`` carries the
+                        # decoder error.
+                        _LOGGER.error("Undecodable response body (%s bytes)", len(raw_bytes))
+                        raise EeroAPIException(response.status, "Response body is not valid UTF-8")
+                    # An error body only feeds the best-effort envelope parse
+                    # and the debug log, so replacement characters are
+                    # harmless and the status mapping below still applies.
+                    response_text = raw_bytes.decode("utf-8", errors="replace")
 
                 # All 2xx status codes are success responses
-                if 200 <= response.status < 300:
+                if is_success:
                     # 204 No Content has no body
                     if response.status == 204 or not response_text.strip():
                         return {}
                     try:
-                        return json.loads(response_text)
+                        payload = json.loads(response_text)
                     except (ValueError, RecursionError) as e:
                         # JSONDecodeError (a ValueError) for malformed bodies;
                         # RecursionError for pathologically nested ones.
                         _LOGGER.error(
                             "Error parsing JSON response (%s bytes): %s",
-                            len(response_text.encode("utf-8")),
+                            len(raw_bytes),
                             e,
                         )
                         raise EeroAPIException(
                             response.status,
-                            f"Invalid JSON response "
-                            f"({len(response_text.encode('utf-8'))} bytes)",
+                            f"Invalid JSON response ({len(raw_bytes)} bytes)",
                         ) from e
+                    if not isinstance(payload, dict):
+                        # Every SDK method returns the response envelope, which
+                        # is a JSON object; a list, string, number or null is
+                        # not a response this SDK can hand back as one.
+                        _LOGGER.error(
+                            "Unexpected %s in JSON response (%s bytes)",
+                            type(payload).__name__,
+                            len(raw_bytes),
+                        )
+                        raise EeroAPIException(
+                            response.status, "Unexpected JSON response: expected an object"
+                        )
+                    return payload
 
                 envelope = _parse_envelope(response_text)
                 error_code = _error_code_from_envelope(envelope)
+                # Only a rate-limit exception carries this; the value is never
+                # logged.
+                retry_after = _parse_retry_after(response.headers.get("Retry-After"))
 
                 if response.status == 401:
                     # Use debug level - callers handle auth errors appropriately
@@ -727,6 +809,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
                 elif response.status == 429:
                     _log_error_body(_LOGGER.debug, "Rate limited", response_text, envelope)
@@ -734,6 +817,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
                 else:
                     # Single classification point for every other non-2xx,
@@ -750,6 +834,7 @@ class BaseAPI:
                         response.status,
                         envelope=envelope,
                         error_code=error_code,
+                        retry_after=retry_after,
                     )
         except asyncio.TimeoutError as err:
             # The URL (which carries network, device and eero identifiers) is

@@ -14,6 +14,9 @@ Tests cover:
 import asyncio
 import json
 import logging
+import traceback
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -22,10 +25,12 @@ import yarl
 from aiohttp import DummyCookieJar
 
 from eero.api.base import (
+    RETRY_AFTER_MAX_SECONDS,
     AuthenticatedAPI,
     BaseAPI,
     RequestEncoding,
     _parse_envelope,
+    _parse_retry_after,
     build_request_headers,
 )
 from eero.const import (
@@ -49,7 +54,7 @@ from eero.exceptions import (
     EeroValidationException,
 )
 
-from .conftest import api_success_response, create_mock_response
+from .conftest import api_error_response, api_success_response, create_mock_response
 
 
 class TestBaseAPI:
@@ -453,6 +458,143 @@ class TestBaseAPIErrorHandling:
         # Either way the decoder error must be chained, never escape.
         assert isinstance(exc_info.value.__cause__, (RecursionError, json.JSONDecodeError))
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            (401, EeroAuthenticationException),
+            (404, EeroNotFoundException),
+            (429, EeroRateLimitException),
+            (500, EeroAPIException),
+            (502, EeroAPIException),
+        ],
+    )
+    async def test_undecodable_error_body_maps_to_status_exception(
+        self, api_with_session, mock_session, status, expected
+    ):
+        """A non-UTF-8 error body never escapes as UnicodeDecodeError.
+
+        The body is decoded with replacement characters, so the ordinary
+        status mapping still applies and the raised class is the one the
+        status selects.
+        """
+        mock_session.request.return_value = create_mock_response(status, body_bytes=b"\xff\xfe")
+
+        with pytest.raises(expected) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is expected
+        assert exc_info.value.envelope is None
+        if isinstance(exc_info.value, EeroAPIException):
+            assert exc_info.value.status_code == status
+
+    @pytest.mark.asyncio
+    async def test_undecodable_error_body_keeps_envelope_around_bad_bytes(
+        self, api_with_session, mock_session
+    ):
+        """An error envelope with a stray invalid byte inside a string still parses."""
+        body = b'{"meta": {"code": 502, "error": "x\xff"}}'
+        mock_session.request.return_value = create_mock_response(502, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.envelope == {"meta": {"code": 502, "error": "x\ufffd"}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [200, 201])
+    async def test_undecodable_success_body_raises_api_exception(
+        self, api_with_session, mock_session, status
+    ):
+        """A non-UTF-8 2xx body is an invalid response, not a bare UnicodeDecodeError."""
+        mock_session.request.return_value = create_mock_response(
+            status, body_bytes=b'{"data": "\xff\xfe"}'
+        )
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is EeroAPIException
+        assert exc_info.value.status_code == status
+        assert str(exc_info.value) == f"API error {status}: Response body is not valid UTF-8"
+        assert "\\xff" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_undecodable_success_body_keeps_body_out_of_error_chain(
+        self, api_with_session, mock_session
+    ):
+        """Neither the exception chain nor its traceback carries the raw body."""
+        body = b'{"data": "\xff\xfe-sentinel"}'
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        exc = exc_info.value
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+        rendered = "".join(traceback.format_exception(exc))
+        assert repr(body) not in rendered
+        assert "sentinel" not in rendered
+        assert "invalid start byte" not in rendered
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [b"[]", b"[1, 2]", b'"text"', b"42", b"1.5", b"true", b"null"],
+    )
+    @pytest.mark.parametrize("status", [200, 201])
+    async def test_non_object_success_body_raises_api_exception(
+        self, api_with_session, mock_session, status, body
+    ):
+        """A 2xx whose body is valid JSON but not an object is an invalid response."""
+        mock_session.request.return_value = create_mock_response(status, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert type(exc_info.value) is EeroAPIException
+        assert exc_info.value.status_code == status
+        assert (
+            str(exc_info.value)
+            == f"API error {status}: Unexpected JSON response: expected an object"
+        )
+        assert exc_info.value.envelope is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["post", "put", "delete"])
+    async def test_non_object_success_body_raises_on_write_methods(
+        self, api_with_session, mock_session, method
+    ):
+        """The non-object check applies to every verb, and a write is attempted once."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=b"[]")
+
+        with pytest.raises(EeroAPIException):
+            await getattr(api_with_session, method)("/endpoint")
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [b"", b"  \n"])
+    async def test_empty_success_body_still_returns_empty_dict(
+        self, api_with_session, mock_session, body
+    ):
+        """An empty or whitespace-only 2xx body is not a non-object body."""
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        assert await api_with_session.get("/endpoint") == {}
+
+    @pytest.mark.asyncio
+    async def test_object_success_body_is_returned_unmodified(self, api_with_session, mock_session):
+        """A JSON object body is handed back as the parsed envelope, untouched."""
+        envelope = {"meta": {"code": 200}, "data": [1, "two", None], "extra": {"k": []}}
+        mock_session.request.return_value = create_mock_response(
+            200, body_bytes=json.dumps(envelope).encode("utf-8")
+        )
+
+        assert await api_with_session.get("/endpoint") == envelope
+
 
 class TestParseEnvelope:
     """Tests for the module-level `_parse_envelope` helper."""
@@ -476,6 +618,197 @@ class TestParseEnvelope:
     def test_deeply_nested_body_returns_none(self):
         """Test that a pathologically nested body is treated as no envelope."""
         assert _parse_envelope("[" * 100_000) is None
+
+
+def _http_date(offset_seconds: float) -> str:
+    """Format a ``Retry-After`` HTTP-date the given number of seconds from now."""
+    moment = datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)
+    return format_datetime(moment, usegmt=True)
+
+
+class TestParseRetryAfter:
+    """Tests for the module-level `_parse_retry_after` helper."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("0", 0.0), ("120", 120.0), ("  45 ", 45.0), ("007", 7.0)],
+    )
+    def test_delta_seconds(self, value, expected):
+        assert _parse_retry_after(value) == expected
+
+    def test_http_date_in_the_future_is_seconds_from_now(self):
+        assert _parse_retry_after(_http_date(90)) == pytest.approx(90, abs=3)
+
+    def test_http_date_in_the_past_is_zero(self):
+        assert _parse_retry_after(_http_date(-3600)) == 0.0
+
+    def test_obsolete_http_date_forms_are_accepted(self):
+        moment = datetime.now(timezone.utc) + timedelta(seconds=60)
+        rfc850 = moment.strftime("%A, %d-%b-%y %H:%M:%S GMT")
+        asctime = moment.strftime("%a %b %e %H:%M:%S %Y")
+
+        assert _parse_retry_after(rfc850) == pytest.approx(60, abs=3)
+        assert _parse_retry_after(asctime) == pytest.approx(60, abs=3)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "9" * 10,
+            "9" * 400,
+            "86401",
+            _http_date(10**9),
+            "Fri, 31 Dec 9999 23:59:59 GMT",
+        ],
+    )
+    def test_large_values_are_capped_at_one_day(self, value):
+        assert _parse_retry_after(value) == RETRY_AFTER_MAX_SECONDS == 86400.0
+
+    def test_value_at_the_cap_and_a_normal_value_are_unchanged(self):
+        assert _parse_retry_after("86400") == 86400.0
+        assert _parse_retry_after("30") == 30.0
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            "",
+            "   ",
+            "soon",
+            "-5",
+            "1.5",
+            "1e3",
+            "12 seconds",
+            "\u0663",
+            "Mon, 99 Foo 2999 99:99:99 GMT",
+            "Wed, 01 Jan 99999 00:00:00 GMT",
+        ],
+    )
+    def test_missing_or_unparseable_is_none(self, value):
+        assert _parse_retry_after(value) is None
+
+
+class TestRetryAfterAndStatusOnTransportErrors:
+    """The transport hands the status and `Retry-After` to the 401 / rate-limit exceptions."""
+
+    @pytest.fixture
+    def api_with_session(self, mock_session):
+        """Create a BaseAPI with a mock session."""
+        return BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+    @pytest.mark.asyncio
+    async def test_401_carries_status_code(self, api_with_session, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            401, api_error_response(401, "error.session.invalid")
+        )
+
+        with pytest.raises(EeroAuthenticationException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_429_with_delta_seconds_carries_retry_after(self, api_with_session, mock_session):
+        mock_session.request.return_value = create_mock_response(
+            429, api_error_response(429, "error.rate.limit"), headers={"Retry-After": "120"}
+        )
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.retry_after == 120
+        assert exc_info.value.error_code == "error.rate.limit"
+        assert exc_info.value.envelope == api_error_response(429, "error.rate.limit")
+
+    @pytest.mark.asyncio
+    async def test_429_with_http_date_carries_seconds_from_now(
+        self, api_with_session, mock_session
+    ):
+        mock_session.request.return_value = create_mock_response(
+            429, None, "Too Many Requests", headers={"Retry-After": _http_date(90)}
+        )
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.retry_after == pytest.approx(90, abs=3)
+
+    @pytest.mark.asyncio
+    async def test_429_without_header_has_no_retry_after(self, api_with_session, mock_session):
+        mock_session.request.return_value = create_mock_response(429, None, "Too Many Requests")
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.retry_after is None
+
+    @pytest.mark.asyncio
+    async def test_429_with_unparseable_header_has_no_retry_after(
+        self, api_with_session, mock_session
+    ):
+        mock_session.request.return_value = create_mock_response(
+            429, None, "Too Many Requests", headers={"Retry-After": "soon"}
+        )
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.retry_after is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 404, 503])
+    async def test_rate_limit_string_on_another_status_carries_status_and_retry_after(
+        self, api_with_session, mock_session, status
+    ):
+        """`error.rate.limit` is a rate limit on any status, and keeps that status."""
+        mock_session.request.return_value = create_mock_response(
+            status, api_error_response(status, "error.rate.limit"), headers={"Retry-After": "30"}
+        )
+
+        with pytest.raises(EeroRateLimitException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert exc_info.value.status_code == status
+        assert exc_info.value.retry_after == 30
+
+    @pytest.mark.asyncio
+    async def test_retry_after_header_is_never_logged(self, api_with_session, mock_session, caplog):
+        mock_session.request.return_value = create_mock_response(
+            429, None, "Too Many Requests", headers={"Retry-After": "7654"}
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(EeroRateLimitException):
+                await api_with_session.get("/endpoint")
+
+        assert "7654" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_429_is_not_retried_and_a_write_is_attempted_once(
+        self, api_with_session, mock_session
+    ):
+        mock_session.request.return_value = create_mock_response(
+            429, None, "Too Many Requests", headers={"Retry-After": "1"}
+        )
+
+        with pytest.raises(EeroRateLimitException):
+            await api_with_session.post("/endpoint", json={})
+
+        assert mock_session.request.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_form_error_is_still_a_validation_exception_outside_api_exceptions(
+        self, api_with_session, mock_session
+    ):
+        mock_session.request.return_value = create_mock_response(
+            400, api_error_response(400, "error.form.errors")
+        )
+
+        with pytest.raises(EeroValidationException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        assert not isinstance(exc_info.value, EeroAPIException)
 
 
 class TestBaseAPIResponseSizeLimit:
