@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.0](https://github.com/fulviofreitas/eero-api/compare/v8.0.7...v8.1.0) (2026-10-10)
+
+### ✨ Features
+
+* **api:** re-enterable sessions with close(), per-call timeout on data-usage reads ([e7bec3f](https://github.com/fulviofreitas/eero-api/commit/e7bec3f8ba9e790d7a038eb33ea8eaa3621befa6))
+
 ## [8.0.7](https://github.com/fulviofreitas/eero-api/compare/v8.0.6...v8.0.7) (2026-10-10)
 
 ### 🐛 Bug Fixes
