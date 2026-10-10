@@ -215,3 +215,13 @@ All exception classes derive from `EeroException`, expose `is_auth_error()`, and
 - [Credential Storage](Credential-Storage) — Deep dive on `CredentialStorage` backends
 - [Error Handling](Error-Handling) — The `EeroException` hierarchy and the `envelope` / `error_code` attributes
 - [Troubleshooting](Troubleshooting) — Common issues & fixes, including Amazon-login accounts
+
+
+### Account reads and network discovery
+
+`get_account()` uses the authenticated resource transport: a missing session
+is refused before a request, and a server refresh signal follows the normal
+refresh-and-replay path. When `/networks` is empty, discovery may read the
+account. Authentication and rate-limit failures from that fallback propagate
+and are never cached as an empty success. A successfully empty account is
+still an empty result; other SDK errors preserve the primary empty response.
