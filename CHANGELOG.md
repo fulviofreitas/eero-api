@@ -19,15 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [8.1.8](https://github.com/fulviofreitas/eero-api/compare/v8.1.7...v8.1.8) (2026-10-10)
 
+> Note: the first release run for 8.1.8 failed after tagging, so 8.1.8 was never uploaded to PyPI; its changes ship in 8.1.9.
+
 ### 🐛 Bug Fixes
 
 * **auth:** make unpersisted credential saves visible and clean up storage ([09a2d51](https://github.com/fulviofreitas/eero-api/commit/09a2d5156dfbe148dd8dc9fb1d3cce31fa8dd7fd))
-* **client:** route get_account through AccountAPI and surface discovery errors ([593eeb2](https://github.com/fulviofreitas/eero-api/commit/593eeb27a9936250cf411d43429739117d9fe820)), closes [#170](https://github.com/fulviofreitas/eero-api/issues/170) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
-
-## [8.1.8](https://github.com/fulviofreitas/eero-api/compare/v8.1.7...v8.1.8) (2026-10-10)
-
-### 🐛 Bug Fixes
-
 * **client:** route get_account through AccountAPI and surface discovery errors ([593eeb2](https://github.com/fulviofreitas/eero-api/commit/593eeb27a9936250cf411d43429739117d9fe820)), closes [#170](https://github.com/fulviofreitas/eero-api/issues/170) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
 
 ## [8.1.7](https://github.com/fulviofreitas/eero-api/compare/v8.1.6...v8.1.7) (2026-10-10)
