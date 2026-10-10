@@ -101,6 +101,9 @@ class EeroClient:
             get_retries=get_retries,
         )
         self._cache_timeout = cache_timeout
+        # Invalidations advance this even when no entry is present: a read may
+        # already be in flight and must not restore a pre-write response.
+        self._cache_epoch = 0
         self._preferred_network_id: Optional[str] = None
         self._cache: Dict[str, Dict] = {
             "account": {"data": None, "timestamp": 0},
@@ -153,14 +156,29 @@ class EeroClient:
         current_time = time.monotonic()
         return (current_time - cache_entry["timestamp"]) < self._cache_timeout
 
-    def _update_cache(self, cache_key: str, subkey: Optional[str], data: Any) -> None:
+    def _update_cache(
+        self, cache_key: str, subkey: Optional[str], data: Any, *, epoch: Optional[int] = None
+    ) -> None:
         """Store a deep copy of ``data`` in the cache.
 
         A deep copy is stored (rather than the object itself) so that any
         later mutation of the object the caller received back from a public
         method can never reach the cached entry. See the cache isolation
         contract in the class docstring.
+
+        Args:
+            cache_key: Top-level cache section to write.
+            subkey: Entry within the section, or None for a section holding a
+                single entry.
+            data: The response to store.
+            epoch: The ``_cache_epoch`` captured before the read that produced
+                ``data``. When given and no longer current, an invalidation
+                overtook the read and nothing is stored.
         """
+        # The caller still receives its response, but a read started before an
+        # invalidation cannot populate the cache for subsequent callers.
+        if epoch is not None and epoch != self._cache_epoch:
+            return
         current_time = time.monotonic()
         stored = copy.deepcopy(data)
 
@@ -194,6 +212,7 @@ class EeroClient:
 
     def clear_cache(self) -> None:
         """Clear all cached data."""
+        self._cache_epoch += 1
         for cache_key in self._cache:
             if isinstance(self._cache[cache_key], dict) and "data" in self._cache[cache_key]:
                 self._cache[cache_key]["data"] = None
@@ -431,10 +450,11 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.auth.get(
             "/account", auth_token=await self._api.auth.get_auth_token()
         )
-        self._update_cache("account", None, response)
+        self._update_cache("account", None, response, epoch=cache_epoch)
         return response
 
     # ==================== Networks ====================
@@ -457,6 +477,7 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.networks.get_networks()
 
         # Check if response has networks
@@ -492,7 +513,7 @@ class EeroClient:
             except Exception as e:  # pylint: disable=broad-exception-caught
                 _LOGGER.debug("Failed to get networks from account endpoint: %s", e)
 
-        self._update_cache("networks", None, response)
+        self._update_cache("networks", None, response, epoch=cache_epoch)
 
         # Set preferred network ID if not already set
         if not self._preferred_network_id:
@@ -539,8 +560,9 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.networks.get_network(network_id)
-        self._update_cache("network", network_id, response)
+        self._update_cache("network", network_id, response, epoch=cache_epoch)
         return response
 
     async def get_premium_status(self, network_id: Optional[str] = None) -> Dict[str, Any]:
@@ -616,10 +638,11 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.eeros.get_eeros(
             network_id, **self._network_parent_kwargs(network_id)
         )
-        self._update_cache("eeros", cache_key, response)
+        self._update_cache("eeros", cache_key, response, epoch=cache_epoch)
         return response
 
     async def get_eero(
@@ -669,6 +692,7 @@ class EeroClient:
 
     def _invalidate_eeros_cache(self, network_id: str) -> None:
         """Drop the cached eeros list for a network after a write to one of its eeros."""
+        self._cache_epoch += 1
         cache_key = f"{network_id}_eeros"
         if cache_key in self._cache.get("eeros", {}):
             del self._cache["eeros"][cache_key]
@@ -735,6 +759,7 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.devices.get_devices(
             network_id,
             thread=thread,
@@ -742,7 +767,7 @@ class EeroClient:
             **self._network_parent_kwargs(network_id),
         )
         if not filtered:
-            self._update_cache("devices", cache_key, response)
+            self._update_cache("devices", cache_key, response, epoch=cache_epoch)
         return response
 
     async def get_device(
@@ -772,8 +797,9 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.devices.get_device(network_id, device_id)
-        self._update_cache("devices", cache_key, response)
+        self._update_cache("devices", cache_key, response, epoch=cache_epoch)
         return response
 
     async def set_device_nickname(
@@ -948,6 +974,7 @@ class EeroClient:
 
     def _invalidate_device_cache(self, network_id: str, device_id: str) -> None:
         """Invalidate device-related cache entries."""
+        self._cache_epoch += 1
         cache_key = f"{network_id}_{device_id}"
         if cache_key in self._cache.get("devices", {}):
             del self._cache["devices"][cache_key]
@@ -981,10 +1008,11 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.profiles.get_profiles(
             network_id, **self._network_parent_kwargs(network_id)
         )
-        self._update_cache("profiles", cache_key, response)
+        self._update_cache("profiles", cache_key, response, epoch=cache_epoch)
         return response
 
     async def get_profile(
@@ -1014,8 +1042,9 @@ class EeroClient:
             if cached:
                 return cached
 
+        cache_epoch = self._cache_epoch
         response = await self._api.profiles.get_profile(network_id, profile_id)
-        self._update_cache("profiles", cache_key, response)
+        self._update_cache("profiles", cache_key, response, epoch=cache_epoch)
         return response
 
     async def pause_profile(
@@ -1042,6 +1071,7 @@ class EeroClient:
 
     def _invalidate_profile_cache(self, network_id: str, profile_id: str) -> None:
         """Invalidate profile-related cache entries."""
+        self._cache_epoch += 1
         cache_key = f"{network_id}_{profile_id}"
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
@@ -1052,6 +1082,7 @@ class EeroClient:
 
     def _invalidate_profiles_list_cache(self, network_id: str) -> None:
         """Invalidate the profiles list cache for a network."""
+        self._cache_epoch += 1
         cache_key = f"{network_id}_profiles"
         if cache_key in self._cache.get("profiles", {}):
             del self._cache["profiles"][cache_key]
@@ -1063,6 +1094,7 @@ class EeroClient:
         name (a device moving between profiles leaves the previous profile
         unknown), so no single-profile entry of that network can be trusted.
         """
+        self._cache_epoch += 1
         prefix = f"{network_id}_"
         profiles = self._cache.get("profiles", {})
         for cache_key in [key for key in profiles if key.startswith(prefix)]:
@@ -2155,6 +2187,7 @@ class EeroClient:
         DNS settings live inside the network resource, so any DNS write makes a
         cached snapshot stale. Mirrors `set_network_name` / `set_guest_network`.
         """
+        self._cache_epoch += 1
         if network_id in self._cache.get("network", {}):
             del self._cache["network"][network_id]
 
@@ -2708,10 +2741,19 @@ class EeroClient:
 
     # ==================== Account Profile ====================
 
+    def _invalidate_account_cache(self) -> None:
+        """Drop the cached account after a write to it.
+
+        Also advances the cache epoch so an account read already in flight
+        cannot restore the pre-write response.
+        """
+        self._cache_epoch += 1
+        self._cache["account"] = {"data": None, "timestamp": 0}
+
     async def set_account_name(self, name: str) -> Dict[str, Any]:
         """Set the account name - returns raw Eero API response (unverified write)."""
         response = await self._api.account.set_name(name)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_email(self, email: str) -> Dict[str, Any]:
@@ -2721,7 +2763,7 @@ class EeroClient:
     async def verify_account_email(self, code: str) -> Dict[str, Any]:
         """Verify an account e-mail change - returns raw Eero API response (unverified write)."""
         response = await self._api.account.verify_email(code)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_phone(self, phone: str) -> Dict[str, Any]:
@@ -2731,13 +2773,13 @@ class EeroClient:
     async def verify_account_phone(self, code: str) -> Dict[str, Any]:
         """Verify an account phone change - returns raw Eero API response (unverified write)."""
         response = await self._api.account.verify_phone(code)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def set_account_consents(self, *, marketing_emails: bool) -> Dict[str, Any]:
         """Set account consents - returns raw Eero API response (unverified write)."""
         response = await self._api.account.set_consents(marketing_emails=marketing_emails)
-        self._cache["account"] = {"data": None, "timestamp": 0}
+        self._invalidate_account_cache()
         return response
 
     async def get_sms_countries(self) -> Dict[str, Any]:
