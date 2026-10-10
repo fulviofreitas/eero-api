@@ -26,9 +26,12 @@ from ._params import resolve_nested_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI
-from .links import resource_url, self_url
+from .links import require_family_path, resource_url, self_url
 
 _LOGGER = get_secure_logger(__name__)
+
+#: The shape of a scheduled pause's own path, after the version segment.
+_SCHEDULE_FAMILY = "networks/{id}/profiles/{id}/schedules/{id}"
 
 #: All seven days, used as the default scope for `enable_bedtime`.
 ALL_DAYS = (
@@ -49,8 +52,8 @@ def _resolve_schedule_url(schedule: Any) -> str:
     """Resolve a scheduled pause's own URL from a URL, path, or envelope.
 
     Args:
-        schedule: Either a bare path/absolute URL as previously returned by
-            the API, or the pause's own cached envelope (full or ``data``).
+        schedule: Either a path/absolute URL as previously returned by the
+            API, or the pause's own cached envelope (full or ``data``).
 
     Returns:
         The absolute URL of the pause resource.
@@ -58,7 +61,15 @@ def _resolve_schedule_url(schedule: Any) -> str:
     Raises:
         EeroValidationException: If ``schedule`` is a mapping with no
             resolvable ``url`` field, or a string that isn't a valid path,
-            or absolute URL, or neither a string nor a mapping.
+            or absolute URL, or a path/URL that is not a scheduled pause
+            (``/<version>/networks/{id}/profiles/{id}/schedules/{id}``), or
+            neither a string nor a mapping.
+
+    A path or URL a caller supplies is confined to that shape, so a write
+    cannot be redirected to another resource on the API host. A link the API
+    published in an envelope is trusted as published and not confined. A bare
+    identifier is not confined either: it cannot name the network and profile
+    a pause lives under, so it is placed under the version root unchanged.
     """
     if isinstance(schedule, Mapping):
         envelope = as_envelope(schedule)
@@ -67,7 +78,10 @@ def _resolve_schedule_url(schedule: Any) -> str:
             raise EeroValidationException("schedule", "envelope has no resolvable 'url' field")
         return url
     if isinstance(schedule, str):
-        return resource_url(schedule, "{id}")
+        url = resource_url(schedule, "{id}")
+        if schedule.startswith("/") or schedule.lower().startswith(("http://", "https://")):
+            require_family_path(url, _SCHEDULE_FAMILY, field="schedule")
+        return url
     raise EeroValidationException(
         "schedule", "must be a URL/path string or a pause envelope (mapping)"
     )
