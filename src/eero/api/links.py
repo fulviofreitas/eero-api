@@ -23,7 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from ..const import API_HOST, API_VERSION_DEFAULT, api_endpoint
 from ..exceptions import EeroValidationException
-from .base import id_from_url
+from .base import id_from_url, origin_mismatch
 
 # The hostname of the configured API host, used to validate absolute URLs.
 # Derived once from API_HOST rather than hardcoded a second time.
@@ -202,7 +202,11 @@ def join_api_path(path: str) -> str:
 
 
 def _validate_absolute_url(url: str) -> str:
-    """Validate that an absolute URL is on the configured API host.
+    """Validate that an absolute URL is on the configured API origin.
+
+    The URL is returned as given, not normalised: an explicit default port
+    (``https://host:443/...``) is accepted as equivalent to none, and the
+    HTTP client sends the same request for both.
 
     Args:
         url: The absolute URL to validate.
@@ -211,24 +215,23 @@ def _validate_absolute_url(url: str) -> str:
         ``url`` unchanged, once validated.
 
     Raises:
-        EeroValidationException: If the URL's scheme is not the API host's
-            scheme, or its hostname does not exactly match the API host
-            (case-insensitively). This rejects userinfo tricks (e.g.
-            ``https://api-user.e2ro.com@evil.example/...``, where the real
-            host is ``evil.example``) and suffix tricks (e.g.
-            ``https://api-user.e2ro.com.evil.example/...``) because both
-            resolve to a ``hostname`` that does not equal the API host. Also
-            raised if the URL fails :func:`_require_plain_path`.
+        EeroValidationException: If the URL is not on the origin of
+            :data:`~eero.const.API_HOST` as :func:`~eero.api.base.origin_mismatch`
+            defines it: a different scheme, hostname (case-insensitive) or
+            effective port, any userinfo, or an authority that cannot be
+            parsed (a bad port, a backslash, a fullwidth character, an
+            invalid IPv6 literal). This rejects userinfo tricks (e.g.
+            ``https://api-user.e2ro.com@evil.example/...``), suffix tricks
+            (e.g. ``https://api-user.e2ro.com.evil.example/...``) and a
+            service on another port of the API host. Also raised if the URL
+            fails :func:`_require_plain_path`.
     """
     _require_plain_path(url, "url")
-    parsed = urlsplit(url)
-    hostname = parsed.hostname
-    host_matches = hostname is not None and hostname.lower() == _API_HOST_NAME.lower()
-    scheme_matches = parsed.scheme.lower() == _API_SCHEME.lower()
-    if not (host_matches and scheme_matches):
+    if origin_mismatch(url, API_HOST) is not None:
         raise EeroValidationException(
             "url",
-            f"must be an absolute {_API_SCHEME} URL on {_API_HOST_NAME}",
+            f"must be an absolute {_API_SCHEME} URL on {_API_HOST_NAME} "
+            "with no userinfo and no other port",
         )
     return url
 

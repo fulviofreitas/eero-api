@@ -423,6 +423,56 @@ class TestResourceUrl:
                 "networks/{id}",
             )
 
+    def test_explicit_default_port_is_equivalent_and_kept(self):
+        """An explicit :443 is the same origin as none, and the URL is returned as given."""
+        url = f"{API_HOST}:443/2.2/networks/network-id-placeholder"
+        assert resource_url(url, "networks/{id}") == url
+        assert resource_url(url, "networks/{id}/settings") == f"{url}/settings"
+
+    def test_scheme_and_host_case_do_not_matter(self):
+        """Scheme and hostname compare case-insensitively."""
+        url = "HTTPS://API-USER.E2RO.COM/2.2/networks/network-id-placeholder"
+        assert resource_url(url, "networks/{id}") == url
+
+    @pytest.mark.parametrize(
+        "authority",
+        [
+            "user:pass@api-user.e2ro.com:8443",
+            "user:pass@api-user.e2ro.com",
+            "user@api-user.e2ro.com",
+            ":pass@api-user.e2ro.com",
+            "@api-user.e2ro.com",
+            "api-user.e2ro.com:8443",
+            "api-user.e2ro.com:80",
+            "api-user.e2ro.com:0",
+            "api-user.e2ro.com:99999",
+            "api-user.e2ro.com:abc",
+            "evil.example\\@api-user.e2ro.com",
+            "api-user.e2ro.com\\@evil.example",
+            "api-user.e2ro.com\uff1a99",
+            "api-user.e2ro.com\uff0f@evil.example",
+            "\uff41pi-user.e2ro.com",
+            "[::1",
+        ],
+    )
+    def test_off_origin_authority_rejected_with_validation_error(self, authority):
+        """Userinfo, another port or an unparseable authority is a validation error.
+
+        No bare ``ValueError`` from the URL parser may escape, and the error
+        must not echo the offending value.
+        """
+        with pytest.raises(EeroValidationException) as excinfo:
+            resource_url(
+                f"https://{authority}/2.2/networks/network-id-placeholder", "networks/{id}"
+            )
+        assert excinfo.value.field == "url"
+        assert "pass" not in str(excinfo.value)
+
+    def test_off_origin_url_rejected_for_family_less_template(self):
+        """The same origin rule guards a template that names no resource family."""
+        with pytest.raises(EeroValidationException):
+            resource_url("https://user:pass@api-user.e2ro.com:8443/2.2/networks/123", "{id}")
+
     def test_empty_id_or_url_raises(self):
         """An empty id_or_url raises EeroValidationException."""
         with pytest.raises(EeroValidationException):

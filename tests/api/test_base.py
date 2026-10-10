@@ -32,6 +32,7 @@ from eero.api.base import (
     _parse_envelope,
     _parse_retry_after,
     build_request_headers,
+    origin_mismatch,
 )
 from eero.const import (
     API_ENDPOINT,
@@ -1468,6 +1469,167 @@ class TestCredentialPlacement:
             await api.get("http://api.example.com/endpoint", auth_token="test_token")
 
         assert any("scheme" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://user:pass@api.example.com:8443/2.2/networks/123",
+            "https://user:pass@api.example.com/2.2/networks/123",
+            "https://user@api.example.com/2.2/networks/123",
+            "https://:pass@api.example.com/2.2/networks/123",
+            "https://@api.example.com/2.2/networks/123",
+            "https://api.example.com:8443/2.2/networks/123",
+            "https://api.example.com:80/2.2/networks/123",
+            "https://api.example.com:0/2.2/networks/123",
+            "https://api.example.com:99999/2.2/networks/123",
+            "https://api.example.com:abc/2.2/networks/123",
+            "https://evil.example\\@api.example.com/2.2/networks/123",
+            "https://api.example.com\\@evil.example/2.2/networks/123",
+            "https://api.example.com\uff1a99/2.2/networks/123",
+            "https://api.example.com\uff0f@evil.example/2.2/networks/123",
+            "https://\uff41pi.example.com/2.2/networks/123",
+            "https://[::1/2.2/networks/123",
+        ],
+    )
+    async def test_no_credential_off_origin(self, api, mock_session, caplog, url):
+        """A port, userinfo or unparseable-authority variant of the API host gets no credential.
+
+        Matching the hostname and scheme alone is not enough: the request must
+        be on the same origin, and no ``ValueError`` may escape the check.
+        """
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level("WARNING", logger="eero.api.base"):
+            await api.get(url, auth_token="test_token")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert "X-User-Token" not in call_kwargs["headers"]
+        assert "cookies" not in call_kwargs
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "withheld" in warnings[0]
+        for leaked in ("user:", "user@", "pass", "8443", "abc", "99999", "evil"):
+            assert leaked not in warnings[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("base_url", "url"),
+        [
+            ("https://api.example.com", "https://api.example.com:443/endpoint"),
+            ("https://api.example.com", "https://API.Example.COM/endpoint"),
+            ("https://api.example.com:443", "https://api.example.com/endpoint"),
+            ("http://api.example.com", "http://api.example.com:80/endpoint"),
+            ("https://api.example.com:8443", "https://api.example.com:8443/endpoint"),
+            ("https://api.example.com:8443", "/endpoint"),
+        ],
+    )
+    async def test_credential_sent_on_same_origin(self, mock_session, base_url, url):
+        """Origin equality, not 'port 443 only': default ports are implied on both sides."""
+        api = BaseAPI(session=mock_session, base_url=base_url)
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get(url, auth_token="test_token")
+
+        call_kwargs = mock_session.request.call_args[1]
+        assert call_kwargs["headers"]["X-User-Token"] == "test_token"
+        assert call_kwargs["cookies"] == {"s": "test_token"}
+
+    @pytest.mark.asyncio
+    async def test_credential_withheld_when_base_url_has_other_port(self, mock_session):
+        """A base URL on port 8443 does not authorise the same host on the default port."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com:8443")
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await api.get("https://api.example.com/endpoint", auth_token="test_token")
+
+        assert "X-User-Token" not in mock_session.request.call_args[1]["headers"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("base_url", ["", "https://api.example.com:abc"])
+    async def test_credential_withheld_when_base_url_unusable(self, mock_session, caplog, base_url):
+        """With no usable configured origin nothing matches, so no request gets a credential."""
+        api = BaseAPI(session=mock_session, base_url=base_url)
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level("WARNING", logger="eero.api.base"):
+            await api.get("https://api.example.com/endpoint", auth_token="test_token")
+
+        assert "X-User-Token" not in mock_session.request.call_args[1]["headers"]
+        assert any("withheld" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_port_mismatch_warning_names_reason_and_host_only(
+        self, api, mock_session, caplog
+    ):
+        """The warning for a wrong port says so and logs no more than scheme://host."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level("WARNING", logger="eero.api.base"):
+            await api.get("https://api.example.com:8443/endpoint", auth_token="test_token")
+
+        messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert messages == [
+            "Session header withheld from a request to a non-matching port: "
+            "https://api.example.com"
+        ]
+
+
+class TestOriginMismatch:
+    """Tests for ``origin_mismatch``, the one origin rule shared with the link validator."""
+
+    BASE = "https://api.example.com"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://api.example.com/x",
+            "https://api.example.com:443/x",
+            "https://api.example.com:/x",
+            "HTTPS://API.EXAMPLE.COM/x",
+        ],
+    )
+    def test_same_origin(self, url):
+        """Case and an explicit or empty default port do not change the origin."""
+        assert origin_mismatch(url, self.BASE) is None
+
+    @pytest.mark.parametrize(
+        ("url", "reason"),
+        [
+            ("https://other.example.com/x", "foreign host"),
+            ("https://api.example.com.evil.example/x", "foreign host"),
+            ("https://api.example.com@evil.example/x", "URL with userinfo"),
+            ("https://user:pass@api.example.com/x", "URL with userinfo"),
+            ("http://api.example.com/x", "non-matching scheme"),
+            ("https://api.example.com:8443/x", "non-matching port"),
+            ("https://api.example.com:0/x", "non-matching port"),
+            ("https://api.example.com:99999/x", "unparseable authority"),
+            ("https://api.example.com:abc/x", "unparseable authority"),
+            ("https://evil.example\\@api.example.com/x", "unparseable authority"),
+            ("https://api.example.com\uff1a99/x", "unparseable authority"),
+            ("https://[::1/x", "unparseable authority"),
+            ("/relative/path", "foreign host"),
+            ("", "foreign host"),
+        ],
+    )
+    def test_mismatch_reason(self, url, reason):
+        """Each way off the origin is reported with its reason, never as an exception."""
+        result = origin_mismatch(url, self.BASE)
+        assert result is not None
+        assert result.reason == reason
+
+    def test_target_carries_no_userinfo_or_port(self):
+        """The loggable target is scheme://host, and absent for userinfo and bad authorities."""
+        assert origin_mismatch("http://api.example.com:81/x", self.BASE).target == (
+            "http://api.example.com"
+        )
+        assert origin_mismatch("https://user:pass@api.example.com/x", self.BASE).target is None
+        assert origin_mismatch("https://api.example.com:abc/x", self.BASE).target is None
+
+    def test_default_port_is_per_scheme(self):
+        """Port 80 is the default for http only; 443 is not implied there."""
+        assert origin_mismatch("http://api.example.com:80/x", "http://api.example.com") is None
+        assert origin_mismatch("http://api.example.com:443/x", "http://api.example.com") is not None
 
 
 # ========================== Forbidden Caller Header Tests ==========================

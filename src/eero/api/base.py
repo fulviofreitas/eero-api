@@ -7,8 +7,9 @@ import json
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -206,6 +207,106 @@ def id_from_url(id_or_url: str) -> str:
     return stripped.rsplit("/", 1)[-1]
 
 
+# The port a scheme implies when a URL carries none. Both sides of an origin
+# comparison are reduced to an effective port with this table, so an explicit
+# ``:443`` and no port at all are the same origin.
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# Why a URL is not on the configured API origin. Short, fixed phrases: they are
+# logged, so none may carry a value taken from the URL.
+ORIGIN_FOREIGN_HOST = "foreign host"
+ORIGIN_SCHEME = "non-matching scheme"
+ORIGIN_PORT = "non-matching port"
+ORIGIN_USERINFO = "URL with userinfo"
+ORIGIN_UNPARSEABLE = "unparseable authority"
+ORIGIN_BAD_BASE = "unusable base URL"
+
+
+@dataclass(frozen=True)
+class OriginMismatch:
+    """The outcome of a failed :func:`origin_mismatch` comparison.
+
+    Attributes:
+        reason: One of the ``ORIGIN_*`` phrases.
+        target: ``scheme://host`` of the offending URL, for logging, when the
+            URL parsed and carried no userinfo; otherwise ``None``, so a
+            credential embedded in a URL is never echoed.
+    """
+
+    reason: str
+    target: Optional[str] = None
+
+
+def _parse_origin(url: str) -> Tuple[str, str, Optional[int], bool]:
+    """Split a URL into the parts that make up its origin.
+
+    Args:
+        url: An absolute URL.
+
+    Returns:
+        A tuple of the lower-cased scheme, the lower-cased hostname (``""``
+        when absent), the effective port (explicit, else the scheme's default,
+        else ``None``) and whether the authority carries userinfo.
+
+    Raises:
+        ValueError: If the authority cannot be parsed: a backslash in it, a
+            character that changes under NFKC normalisation (such as a
+            fullwidth ``/`` or ``:``), an invalid IPv6 literal, or a port that
+            is not an integer in 0-65535.
+    """
+    parts = urlsplit(url)
+    if "\\" in parts.netloc:
+        raise ValueError("backslash in authority")
+    scheme = parts.scheme.lower()
+    port = parts.port if parts.port is not None else _DEFAULT_PORTS.get(scheme)
+    has_userinfo = parts.username is not None or parts.password is not None
+    return scheme, (parts.hostname or "").lower(), port, has_userinfo
+
+
+def origin_mismatch(url: str, base_url: str) -> Optional[OriginMismatch]:
+    """Decide whether a URL is on the same origin as the configured API base.
+
+    This is the one origin rule of the SDK, shared by the link validator
+    (:func:`eero.api.links.resource_url`) and the credential builder
+    (:meth:`BaseAPI._build_credentials`). Origin means scheme, hostname and
+    effective port, each compared case-insensitively, with the default port
+    (443 for ``https``, 80 for ``http``) implied on both sides when none is
+    written. A URL carrying userinfo is never on the origin, whatever its
+    host: userinfo is how a request is made to look like one host while
+    addressing another, and aiohttp would turn it into a ``Authorization``
+    header.
+
+    Args:
+        url: The absolute URL to check.
+        base_url: The configured API base URL that defines the origin.
+
+    Returns:
+        ``None`` when ``url`` is on the origin, otherwise an
+        :class:`OriginMismatch` naming the first check that failed (parse,
+        userinfo, host, scheme, port, in that order). This function never
+        raises: anything that cannot be parsed is a mismatch.
+    """
+    try:
+        scheme, host, port, has_userinfo = _parse_origin(url)
+    except ValueError:
+        return OriginMismatch(ORIGIN_UNPARSEABLE)
+    if has_userinfo:
+        return OriginMismatch(ORIGIN_USERINFO)
+    try:
+        base_scheme, base_host, base_port, _ = _parse_origin(base_url)
+    except ValueError:
+        return OriginMismatch(ORIGIN_BAD_BASE)
+
+    target = f"{scheme or '<unknown>'}://{host or '<unknown>'}"
+    if not host or host != base_host:
+        return OriginMismatch(ORIGIN_FOREIGN_HOST, target)
+    if not scheme or scheme != base_scheme:
+        return OriginMismatch(ORIGIN_SCHEME, target)
+    if port != base_port:
+        return OriginMismatch(ORIGIN_PORT, target)
+    return None
+
+
 def _parse_envelope(text: str) -> Optional[Dict[str, Any]]:
     """Best-effort parse of a response body as a JSON object.
 
@@ -297,9 +398,10 @@ class BaseAPI:
             session: Optional aiohttp ClientSession to use for requests.
             cookie_file: Optional path to a file for storing authentication
                 cookies.
-            base_url: Base URL for API endpoints. Its hostname is the
-                "configured API host" -- credentials are only ever attached
-                to requests resolving to this exact hostname.
+            base_url: Base URL for API endpoints. Its scheme, hostname and
+                effective port are the "configured API origin" --
+                credentials are only ever attached to requests on exactly
+                this origin.
             send_legacy_cookie: When True (default), also send the session
                 token as the legacy ``s=<token>`` cookie, per request, on
                 requests to the configured API host. The cookie is never
@@ -319,9 +421,6 @@ class BaseAPI:
         self._session = session
         self._cookie_file = cookie_file
         self._base_url = base_url
-        parsed_base = urlsplit(base_url) if base_url else None
-        self._api_host = parsed_base.hostname if parsed_base else None
-        self._api_scheme = parsed_base.scheme if parsed_base else None
         self._should_close_session = False
         self._refresh_hook: Optional[Callable[[], Awaitable[bool]]] = None
         # Optional zero-argument async token provider, wired by
@@ -449,12 +548,13 @@ class BaseAPI:
 
         The session token is only ever attached -- as the ``X-User-Token``
         header, and optionally as the legacy ``s=<token>`` cookie -- to
-        requests whose resolved hostname exactly matches the configured API
-        host AND whose resolved scheme exactly matches the API host's
-        scheme (normally ``https``). A request to any other host, or to the
-        right host over the wrong scheme (e.g. a plain-http downgrade), is
-        sent with no credential at all and logs a warning. This is the only
-        place in the SDK that writes the ``X-User-Token``/``Cookie``
+        requests on the configured API origin (see :func:`origin_mismatch`):
+        the same scheme (normally ``https``), hostname and effective port,
+        and no userinfo. A request to any other origin -- another host, a
+        plain-http downgrade, another port, a URL with userinfo, or one whose
+        authority cannot be parsed -- is sent with no credential at all and
+        logs a warning that names the reason but never the full URL. This is
+        the only place in the SDK that writes the ``X-User-Token``/``Cookie``
         credential; caller-supplied headers may never set them (see
         ``_FORBIDDEN_CALLER_HEADER_NAMES``).
 
@@ -471,25 +571,16 @@ class BaseAPI:
         if not auth_token:
             return {}, None
 
-        parsed = urlsplit(url)
-        request_host = parsed.hostname
-        host_matches = (
-            bool(request_host)
-            and bool(self._api_host)
-            and ((request_host or "").lower() == (self._api_host or "").lower())
-        )
-        scheme_matches = (
-            bool(parsed.scheme)
-            and bool(self._api_scheme)
-            and (parsed.scheme.lower() == (self._api_scheme or "").lower())
-        )
-        if not (host_matches and scheme_matches):
-            _LOGGER.warning(
-                "Session header withheld from a request to a %s: %s://%s",
-                "foreign host" if not host_matches else "non-matching scheme",
-                parsed.scheme or "<unknown>",
-                request_host or "<unknown>",
-            )
+        mismatch = origin_mismatch(url, self._base_url)
+        if mismatch is not None:
+            if mismatch.target is not None:
+                _LOGGER.warning(
+                    "Session header withheld from a request to a %s: %s",
+                    mismatch.reason,
+                    mismatch.target,
+                )
+            else:
+                _LOGGER.warning("Session header withheld from a request with %s", mismatch.reason)
             return {}, None
 
         headers = {"X-User-Token": auth_token}
