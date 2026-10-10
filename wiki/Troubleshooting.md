@@ -98,7 +98,7 @@ async with EeroClient() as client:
 
 > **Note**: For a reusable shape-tolerant helper, see [Raw Response Format](Raw-Response-Format#the-networks-shape-specifically).
 
-> **Note**: If the `/networks` endpoint returns empty, `EeroClient.get_networks()` automatically falls back to extracting networks from the `/account` endpoint (see `src/eero/client.py`). If you're still seeing an empty list after that fallback, verify the account actually has networks associated with it.
+> **Note**: If the `/networks` endpoint returns empty, `EeroClient.get_networks()` automatically falls back to extracting networks from the `/account` endpoint (see `src/eero/client.py`). If you're still seeing an empty list after that fallback, verify the account actually has networks associated with it. If the `/account` read itself fails (for example `EeroAuthenticationException` or `EeroRateLimitException`), `get_networks()` raises that exception instead of returning an empty list, and the failure is not cached, so the next call retries.
 
 ### API Timeouts
 

@@ -107,7 +107,7 @@ Returns `is_authenticated` — `True` if a session token is present, `False` oth
 
 ### `get_auth_token()`
 
-Returns the current `session_id` string, or `None` when no token is present. This is what `EeroClient.get_account()` uses under the hood before each `/account` call, and what the transport uses to source the token for a post-refresh replay.
+Returns the current `session_id` string, or `None` when no token is present. This is what the authenticated domain APIs (`AccountAPI.get_account()` and the rest) use to source the token before each request, and what the transport uses to source the token for a post-refresh replay. With no session token they raise `EeroAuthenticationException("Not authenticated")` before sending anything. `EeroClient.get_account()` reads `/account` through `AccountAPI`, so a `401 error.session.refresh` on it is refreshed and replayed like any other authenticated read.
 
 > **Note**: None of `refresh_session()`, `ensure_authenticated()`, or `get_auth_token()` are exposed on `EeroClient` or `EeroAPI` — they live only on `AuthAPI`. In normal usage you never need to call any of them directly (see transparent refresh below).
 

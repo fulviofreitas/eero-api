@@ -921,6 +921,7 @@ Module export: `CHANNEL_UTILIZATION_BANDS = ("band_2_4GHz", "band_5GHz_low", "ba
 | `MembersAPI` | `promote_member` | `async def promote_member(self, network_id: str, member_id: str)` | POST JSON `{"member_id": ...}` to `.../member_promotion` | unverified write |
 | `MembersAPI` | `remove_admin` | `async def remove_admin(self, network_id: str, user_id: str)` | DELETE `.../admins/{user}` | unverified write |
 | `MembersAPI` | `query_invite` | `async def query_invite(self, invite_code: str)` | POST JSON `{"invite_code": ...}` to `inviteQuery` | unverified |
+| `AccountAPI` | `get_account` | `async def get_account(self)` | GET `account` | read |
 | `AccountAPI` | `set_name` | `async def set_name(self, name: str)` | PUT form `name=` to `account/name` | unverified write |
 | `AccountAPI` | `set_email` | `async def set_email(self, email: str)` | PUT form `email=` to `account/email` | unverified write |
 | `AccountAPI` | `verify_email` | `async def verify_email(self, code: str)` | POST form `code=` to `account/email/verify` | unverified write |

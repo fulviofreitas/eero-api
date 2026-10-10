@@ -115,6 +115,8 @@ client.preferred_network_id               # now populated with the first network
 
 This means the very first call you make against a multi-network account — even a read-only one — can silently pin every subsequent call (that omits `network_id`) to that first network.
 
+If `/networks` comes back empty, `get_networks()` consults `/account` for the network list. When that fallback read fails — `EeroAuthenticationException`, `EeroRateLimitException`, a timeout, a transport error, or an API error — the exception propagates and nothing is cached or auto-selected, because a failed read says nothing about whether the account has networks. Only a successful fallback that finds none yields an empty, cacheable result.
+
 ---
 
 ## ⚠️ Warning: `network_id` Is Never the First Positional Argument
