@@ -311,7 +311,7 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_sqm_settings` | `async def get_sqm_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | The network envelope; `data["sqm"]` |
-| `set_sqm` | `async def set_sqm(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; `sqm` query parameter, no body |
+| `set_sqm` | `async def set_sqm(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; flat JSON `{"sqm": enabled}` |
 
 > **Note**: The former bandwidth and auto SQM variants were removed in v8.0.0 — the API declares
 > no such fields. See [Deprecations](Deprecations#800--removals).
@@ -724,7 +724,7 @@ Not exposed: network/profile DNS-policy settings and ad-block settings — no en
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_sqm_settings` | `async def get_sqm_settings(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
-| `set_sqm` | `async def set_sqm(self, network_id: str, enabled: bool, *, parent=None)` | PUT to the `settings` link, no body, query `sqm=true|false` | settings-class |
+| `set_sqm` | `async def set_sqm(self, network_id: str, enabled: bool, *, parent=None)` | PUT to the `settings` link, flat JSON `{"sqm": enabled}` | settings-class |
 
 </details>
 
