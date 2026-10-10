@@ -83,7 +83,7 @@ async def test_legacy_load_keeps_token_when_migration_cannot_save(tmp_path):
     path = tmp_path / "credentials"
     path.write_text(json.dumps({"session_id": "old"}))
     storage = FileStorage(str(path))
-    with patch.object(storage, "save", AsyncMock(side_effect=OSError("full"))):
+    with patch.object(storage, "_save", side_effect=OSError("full")):
         assert (await storage.load()).session_id == "old"
 
 

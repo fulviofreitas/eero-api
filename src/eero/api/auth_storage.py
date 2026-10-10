@@ -462,8 +462,22 @@ class ChainedStorage(CredentialStorage):
         """
         self._primary = primary
         self._fallback = fallback
+        self._operation_lock = asyncio.Lock()
 
     async def load(self) -> AuthCredentials:
+        async with self._operation_lock:
+            return await self._load_chain()
+
+    async def save(self, credentials: AuthCredentials) -> None:
+        snapshot = AuthCredentials(session_id=credentials.session_id)
+        async with self._operation_lock:
+            await self._save_chain(snapshot)
+
+    async def clear(self) -> None:
+        async with self._operation_lock:
+            await self._clear_chain()
+
+    async def _load_chain(self) -> AuthCredentials:
         """Load credentials, trying primary first then fallback.
 
         A record found only in the fallback is promoted into the primary
@@ -502,7 +516,7 @@ class ChainedStorage(CredentialStorage):
 
         return credentials
 
-    async def save(self, credentials: AuthCredentials) -> None:
+    async def _save_chain(self, credentials: AuthCredentials) -> None:
         """Persist and verify the record, retiring superseded fallback copies.
 
         Raise if neither backend retains the record. A primary success must
@@ -529,7 +543,7 @@ class ChainedStorage(CredentialStorage):
         if (await self._primary.load()).session_id is not None:
             raise OSError("Primary storage retained a superseded credential record")
 
-    async def clear(self) -> None:
+    async def _clear_chain(self) -> None:
         """Attempt both removals, reporting any incomplete cleanup."""
         failures = []
         for backend in (self._primary, self._fallback):

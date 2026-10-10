@@ -201,7 +201,8 @@ in-memory session; a successful login does not guarantee durable persistence.
 
 File and keyring load/save/clear operations, including migrations and atomic
 file replacement, run in a worker thread. Each backend instance serializes
-its operations. Cancelling a caller waits for its worker to finish before
+its operations; a chained store also serializes complete operations across
+both of its backends. Cancelling a caller waits for its worker to finish before
 releasing that serialization lock: a queued clear therefore runs after an
 already-started save. Cancellation cannot stop a blocking OS/keyring call,
 so cancellation may take as long as that call. Coordination between separate

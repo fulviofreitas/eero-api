@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from eero.api.auth_storage import AuthCredentials, FileStorage, KeyringStorage
+from eero.api.auth_storage import (
+    AuthCredentials,
+    ChainedStorage,
+    FileStorage,
+    KeyringStorage,
+    MemoryStorage,
+)
 
 
 @pytest.mark.asyncio
@@ -37,8 +43,10 @@ async def test_keyring_worker_does_not_block_the_event_loop():
 
 
 @pytest.mark.asyncio
-async def test_cancelled_save_finishes_before_queued_clear(tmp_path):
-    storage = FileStorage(str(tmp_path / "credentials"))
+@pytest.mark.parametrize("chained", [False, True])
+async def test_cancelled_save_finishes_before_queued_clear(tmp_path, chained):
+    file_storage = FileStorage(str(tmp_path / "credentials"))
+    storage = ChainedStorage(file_storage, MemoryStorage()) if chained else file_storage
     loop = asyncio.get_running_loop()
     started, clear_queued = asyncio.Event(), asyncio.Event()
     release = threading.Event()
