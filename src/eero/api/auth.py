@@ -98,6 +98,10 @@ class AuthAPI(BaseAPI):
         self._storage: CredentialStorage = create_storage(use_keyring, cookie_file)
         self._credentials = AuthCredentials()
         self._login_in_progress = False
+        # Outcome of the most recent save of the session: False only
+        # when a save was read back and nothing was retained. Reset to True
+        # when the record is loaded or destroyed (see ``credentials_persisted``).
+        self._last_persist_ok = True
         # Single-flight guard for refresh_session(): the future for the
         # currently in-flight refresh, or None when no refresh is running.
         # The event loop the future was created on is tracked alongside it
@@ -119,6 +123,24 @@ class AuthAPI(BaseAPI):
         """
         return bool(self._credentials.session_id)
 
+    @property
+    def credentials_persisted(self) -> bool:
+        """Report whether the last saved session survived that save.
+
+        ``login()`` and ``verify()`` report only the API outcome. A backend
+        can accept a write and retain nothing (a failing or no-op keyring
+        with no file fallback), in which case the session works for this
+        process but is lost on exit. Each save is verified by reading it
+        back; this is False only when that read-back found nothing, and is
+        True again after the record is loaded or destroyed, or when
+        ``login()`` installs a pending token (which is never saved).
+
+        Returns:
+            False if the last saved session was not retained by any storage
+            backend, True otherwise.
+        """
+        return self._last_persist_ok
+
     async def __aenter__(self) -> "AuthAPI":
         """Enter async context manager."""
         await super().__aenter__()
@@ -132,10 +154,15 @@ class AuthAPI(BaseAPI):
     async def _load_credentials(self) -> None:
         """Load authentication credentials from storage."""
         self._credentials = await self._storage.load()
+        self._last_persist_ok = True
 
     async def _save_credentials(self) -> None:
         """Save authentication credentials to storage."""
-        await self._storage.save(self._credentials)
+        # ``None`` comes from third-party backends written against the earlier
+        # ``-> None`` contract: outcome unknown, so assume persisted rather
+        # than report a permanent false negative.
+        result = await self._storage.save(self._credentials)
+        self._last_persist_ok = result is not False
 
     async def _destroy_stored_credentials(self) -> None:
         """Clear the in-memory session token and destroy the persisted record in every backend.
@@ -153,6 +180,7 @@ class AuthAPI(BaseAPI):
         leave a valid token recoverable from a non-primary backend.
         """
         self._credentials.clear_all()
+        self._last_persist_ok = True
         await self._storage.clear()
 
     async def login(self, user_identifier: str) -> bool:
@@ -204,6 +232,9 @@ class AuthAPI(BaseAPI):
                 return False
 
             self._credentials.session_id = user_token
+            # The pending token is never saved, so an earlier failed save
+            # must not be reported as this login's outcome.
+            self._last_persist_ok = True
             started = True
             return True
         except EeroAPIException as err:
@@ -312,6 +343,9 @@ class AuthAPI(BaseAPI):
 
         Raises:
             EeroNetworkException: If there's a network error
+            Exception: Only if every storage backend failed to clear (see
+                ``ChainedStorage.clear``); one failing backend is logged and
+                does not escape.
         """
         if not self.is_authenticated:
             _LOGGER.warning("Attempted to logout when not authenticated")
