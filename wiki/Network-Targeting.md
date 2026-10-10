@@ -198,12 +198,16 @@ you may pass any of:
 | API path | `"/2.2/networks/<network-id>"` | Joins it onto the API host, preserving whatever version prefix the path carries |
 | Absolute URL | `"https://api-user.e2ro.com/2.2/networks/<network-id>"` | Uses it as-is after validation |
 
-An absolute URL is accepted only when its scheme and hostname exactly match the API host.
-Anything else — another host, `http://`, a userinfo trick like
-`https://api-user.e2ro.com@evil.example/…`, or a suffix trick like
-`https://api-user.e2ro.com.evil.example/…` — raises `EeroValidationException` before any
-request is made. The session token therefore can never be sent anywhere but the API host, even
-if a link value is attacker-controlled.
+An absolute URL is accepted only when it is on the API host's origin: the same scheme, hostname
+and port (compared case-insensitively), and no userinfo. An explicit default port is the same
+origin as none, so `https://api-user.e2ro.com:443/…` is accepted and is sent exactly as the form
+without a port. Anything else — another host, `http://`, another port such as
+`https://api-user.e2ro.com:8443/…`, any userinfo (`https://user:pass@api-user.e2ro.com/…`), a
+userinfo trick like `https://api-user.e2ro.com@evil.example/…`, a suffix trick like
+`https://api-user.e2ro.com.evil.example/…`, or an authority that cannot be parsed (a bad port, a
+backslash, a fullwidth character, an invalid IPv6 literal) — raises `EeroValidationException`
+before any request is made. The session token therefore can never be sent anywhere but the API
+host, even if a link value is attacker-controlled.
 
 The one exception is `schedule` (`update_schedule` / `delete_schedule`): a pause lives under a
 network and a profile those methods are not given, so a bare ID is rejected with

@@ -184,7 +184,7 @@ Verified in `src/eero/api/base.py` and `src/eero/const.py`:
 
 | Behavior | Detail |
 |---|---|
-| 🔑 Credential placement | The session token is sent as the `X-User-Token` header (plus the `s=` cookie while `send_legacy_cookie=True`) **only** on requests whose hostname and scheme match the configured API host. Any other host, or plain `http`, gets no credential and a `WARNING` log line. The token is never written to the shared `aiohttp` cookie jar |
+| 🔑 Credential placement | The session token is sent as the `X-User-Token` header (plus the `s=` cookie while `send_legacy_cookie=True`) **only** on requests on the configured API origin: the same scheme, hostname and effective port (an explicit `:443` equals none on `https`), and no userinfo. Any other host, port or scheme, a URL carrying userinfo, or one whose authority cannot be parsed, is sent with no credential and a `WARNING` log line that names the reason and at most `scheme://host`, never the full URL. The token is never written to the shared `aiohttp` cookie jar |
 | 🚫 Caller-supplied credential headers | A `headers=` dict containing `X-User-Token`, `Cookie`, or `Authorization` (any case) raises `EeroValidationException` before the request is sent |
 | 🧹 Header validation | Every header value must be printable ASCII with no CR/LF (`EeroValidationException` otherwise) — header injection is impossible by construction |
 | 🔁 Redirects | Never followed — `allow_redirects=False` is forced on every request and cannot be re-enabled (`allow_redirects=True` raises `EeroValidationException`); any `3xx` response is rejected as an `EeroAPIException` rather than letting the token travel to a different host |
