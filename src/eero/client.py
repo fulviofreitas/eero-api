@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Any, Dict, List, Mapping, Optional, Union
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout
 
 from .api import EeroAPI
 from .const import DEFAULT_ACCEPT_LANGUAGE
@@ -44,6 +44,12 @@ class EeroClient:
     is the value returned directly from a fresh (non-cached) domain-API
     call: that object is handed to the caller exactly as the domain API
     produced it, and only the copy stored in the cache is independent of it.
+
+    Session lifecycle: the client can be used as ``async with EeroClient() as
+    client`` or opened and released manually with ``__aenter__()`` and
+    :meth:`close`. A session the client created is closed and discarded on
+    exit, so the same instance may be entered again and gets a fresh session.
+    A session passed to the constructor is never closed by the client.
     """
 
     def __init__(
@@ -113,6 +119,16 @@ class EeroClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager."""
         await self._api.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def close(self) -> None:
+        """Release the HTTP session this client created, if any.
+
+        For callers that do not use ``async with``. Idempotent: it is a no-op
+        when no session was created (never entered, or already closed) and
+        when the session was supplied by the caller, which is never closed
+        by the SDK.
+        """
+        await self._api.close()
 
     @property
     def is_authenticated(self) -> bool:
@@ -1604,6 +1620,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get network-level data usage - returns raw Eero API response.
 
@@ -1617,10 +1634,14 @@ class EeroClient:
             cadence: Bucket size for the returned series, ``"daily"`` or
                 ``"hourly"``.
             timezone: Optional IANA timezone name.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. All nine time-windowed data-usage reads accept it;
+                ``get_data_usage_report_settings`` does not.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_data_usage(
-            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_data_usage_breakdown(
@@ -1631,6 +1652,7 @@ class EeroClient:
         end: str,
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a data usage breakdown - returns raw Eero API response.
 
@@ -1639,7 +1661,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_breakdown(
-            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_devices_data_usage(
@@ -1651,6 +1673,7 @@ class EeroClient:
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
         profile_id: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get per-device data usage - returns raw Eero API response.
 
@@ -1665,6 +1688,7 @@ class EeroClient:
             cadence=cadence,
             timezone=timezone,
             profile_id=profile_id,
+            timeout=timeout,
         )
 
     async def get_device_data_usage(
@@ -1676,6 +1700,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single device - returns raw Eero API response.
 
@@ -1684,7 +1709,13 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_device_usage(
-            network_id, device_mac, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id,
+            device_mac,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            timeout=timeout,
         )
 
     async def get_eeros_data_usage_summary(
@@ -1695,6 +1726,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage across all Eero devices - returns raw Eero API response.
 
@@ -1703,7 +1735,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_eeros_summary(
-            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_eero_data_usage(
@@ -1715,6 +1747,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single Eero device - returns raw Eero API response.
 
@@ -1723,7 +1756,13 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_eero_usage(
-            network_id, eero_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id,
+            eero_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            timeout=timeout,
         )
 
     async def get_profile_data_usage(
@@ -1735,6 +1774,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for a single profile - returns raw Eero API response.
 
@@ -1743,7 +1783,13 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_profile_usage(
-            network_id, profile_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id,
+            profile_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            timeout=timeout,
         )
 
     async def get_unprofiled_devices_data_usage(
@@ -1754,6 +1800,7 @@ class EeroClient:
         end: str,
         cadence: Optional[str] = None,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get data usage for devices not assigned to a profile - returns raw Eero API response.
 
@@ -1762,7 +1809,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_unprofiled_devices(
-            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_unprofiled_data_usage_summary(
@@ -1773,6 +1820,7 @@ class EeroClient:
         end: str,
         cadence: str,
         timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
     ) -> Dict[str, Any]:
         """Get a summary of data usage for unprofiled devices - returns raw Eero API response.
 
@@ -1781,7 +1829,7 @@ class EeroClient:
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_unprofiled_summary(
-            network_id, start=start, end=end, cadence=cadence, timezone=timezone
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_data_usage_report_settings(

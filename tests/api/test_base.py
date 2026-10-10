@@ -121,6 +121,95 @@ class TestBaseAPI:
         mock_session.close.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_exit_drops_the_owned_session_reference(self):
+        """Exiting drops the reference so a closed session can never be re-entered."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        async with api:
+            assert api._session is not None
+            assert api._should_close_session is True
+
+        assert api._session is None
+        assert api._should_close_session is False
+
+    @pytest.mark.asyncio
+    async def test_reentry_creates_a_fresh_session_that_serves_requests(self):
+        """A second ``async with`` opens a new session instead of reusing the closed one."""
+        api = BaseAPI(base_url="https://api.example.com")
+        sessions = []
+
+        def build_session(**_kwargs):
+            session = MagicMock()
+            session.close = AsyncMock()
+            session.request.return_value = create_mock_response(200, api_success_response({}))
+            sessions.append(session)
+            return session
+
+        with patch("eero.api.base.ClientSession", side_effect=build_session):
+            async with api:
+                pass
+            async with api:
+                result = await api.get("/endpoint")
+
+        assert result["meta"]["code"] == 200
+        assert len(sessions) == 2
+        assert sessions[0] is not sessions[1]
+        sessions[0].close.assert_awaited_once()
+        sessions[0].request.assert_not_called()
+        sessions[1].request.assert_called_once()
+        sessions[1].close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_exit_does_not_swallow_exceptions(self):
+        """An exception raised in the body propagates, and the session is still released."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        with pytest.raises(ValueError, match="boom"):
+            async with api:
+                raise ValueError("boom")
+
+        assert api._session is None
+
+    @pytest.mark.asyncio
+    async def test_close_is_a_noop_before_entry(self):
+        """``close()`` on an instance that never opened a session does nothing."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        await api.close()
+
+        assert api._session is None
+
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent(self):
+        """Calling ``close()`` repeatedly closes the owned session exactly once."""
+        api = BaseAPI(base_url="https://api.example.com")
+
+        with patch("eero.api.base.ClientSession") as mock_client_session:
+            mock_session_instance = MagicMock()
+            mock_session_instance.close = AsyncMock()
+            mock_client_session.return_value = mock_session_instance
+
+            await api.__aenter__()
+            await api.close()
+            await api.close()
+            await api.__aexit__(None, None, None)
+
+        mock_session_instance.close.assert_awaited_once()
+        assert api._session is None
+
+    @pytest.mark.asyncio
+    async def test_close_leaves_a_caller_supplied_session_open(self, mock_session):
+        """``close()`` neither closes nor drops a session the caller supplied."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+
+        await api.__aenter__()
+        await api.close()
+        await api.__aexit__(None, None, None)
+
+        mock_session.close.assert_not_awaited()
+        assert api._session is mock_session
+
+    @pytest.mark.asyncio
     async def test_created_session_has_a_dummy_cookie_jar(self):
         """A session the SDK creates cannot persist any cookie, including a Set-Cookie."""
         api = BaseAPI(base_url="https://api.example.com")

@@ -102,7 +102,7 @@ async with EeroClient() as client:
 
 ### API Timeouts
 
-Every request defaults to `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`). There is no `timeout` constructor argument on `EeroClient`, `EeroAPI` or `BaseAPI`; the only way to change it is a per-call `timeout=` kwarg on the `BaseAPI` transport methods, which `EeroClient` does not expose.
+Every request defaults to `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`). There is no `timeout` constructor argument on `EeroClient`, `EeroAPI` or `BaseAPI`. It can be replaced per call with a `timeout=` kwarg on the `BaseAPI` transport methods, and the nine time-windowed data-usage reads on `EeroClient` (`get_data_usage` and the other `get_*data_usage*` methods, not `get_data_usage_report_settings`) take a keyword-only `timeout`; other `EeroClient` methods do not expose it.
 
 If you're on a slow or unreliable connection, retry with backoff in your own code and catch `EeroTimeoutException`:
 
@@ -157,7 +157,7 @@ You're using attribute access (`network.name`) on a v2.0+ raw response. Use dict
 
 ### `TypeError: __init__() got an unexpected keyword argument '...'`
 
-`EeroClient.__init__` only accepts `session`, `cookie_file`, `use_keyring`, `cache_timeout`, and the keyword-only `send_legacy_cookie`, `accept_language`, and `get_retries`. There is no `timeout`, `config_path`, or `session_token` constructor argument, and no `connect()`/`close()` methods — use the async context manager (`async with EeroClient() as client:`) for lifecycle management. See [Configuration](Configuration#-constructor-reference).
+`EeroClient.__init__` only accepts `session`, `cookie_file`, `use_keyring`, `cache_timeout`, and the keyword-only `send_legacy_cookie`, `accept_language`, and `get_retries`. There is no `timeout`, `config_path`, or `session_token` constructor argument, and no `connect()` method — use the async context manager (`async with EeroClient() as client:`) for lifecycle management, or call `await client.close()` when you do not. See [Configuration](Configuration#-constructor-reference).
 
 ### `TypeError` from `get_data_usage(...)` after upgrading
 

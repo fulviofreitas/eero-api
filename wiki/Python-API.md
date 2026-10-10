@@ -41,12 +41,25 @@ asyncio.run(main())
 
 ## Client Lifecycle
 
-`EeroClient` is only usable as an async context manager. There is no `connect()` / `close()` pair.
+`EeroClient` is normally used as an async context manager. The session is opened on `__aenter__` and, if the client created it, closed and discarded on `__aexit__`. The same instance can be entered again; it gets a fresh session. Exceptions raised inside the block propagate.
 
 ```python
 async with EeroClient() as client:
     ...  # session is opened on __aenter__ and torn down on __aexit__
 ```
+
+If you cannot use `async with`, release the session yourself. `close()` is idempotent, does nothing before entry, and never closes a session you passed to the constructor:
+
+```python
+client = EeroClient()
+await client.__aenter__()
+try:
+    ...
+finally:
+    await client.close()
+```
+
+`EeroAPI` exposes the same `close()`.
 
 ### Constructor
 
@@ -804,6 +817,18 @@ await client.get_unprofiled_devices_data_usage(**window)
 await client.get_unprofiled_data_usage_summary(**window, cadence="daily")
 
 settings = await client.get_data_usage_report_settings()
+```
+
+Every data-usage read also takes a keyword-only `timeout` (an `aiohttp.ClientTimeout`) that replaces
+the transport default (`total=30`, `sock_read=10`) for that one request. It is forwarded only when
+supplied. `get_data_usage_report_settings` does not take it.
+
+```python
+import aiohttp
+
+usage = await client.get_data_usage(
+    **window, cadence="hourly", timeout=aiohttp.ClientTimeout(total=120, sock_read=60)
+)
 ```
 
 `cadence` is required by the API on `get_data_usage`, `get_device_data_usage`,

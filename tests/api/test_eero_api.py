@@ -164,6 +164,43 @@ class TestEeroAPIContextManager:
 
         api.auth.__aexit__.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_close_delegates_to_auth(self, mock_session):
+        """``close()`` is delegated to the auth layer, which owns the session."""
+        api = EeroAPI(session=mock_session, use_keyring=False)
+        api.auth.close = AsyncMock()
+
+        await api.close()
+
+        api.auth.close.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent_and_safe_before_entry(self, mock_session):
+        """``close()`` works before entry and leaves a caller-supplied session open."""
+        api = EeroAPI(session=mock_session, use_keyring=False)
+
+        await api.close()
+        await api.close()
+
+        mock_session.close.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reentry_after_close_opens_a_fresh_session(self):
+        """An owned session released by ``close()`` is replaced on the next entry."""
+        api = EeroAPI(use_keyring=False)
+
+        await api.__aenter__()
+        first = api.auth.session
+        await api.close()
+        assert first.closed
+
+        try:
+            await api.__aenter__()
+            assert api.auth.session is not first
+            assert not api.auth.session.closed
+        finally:
+            await api.close()
+
 
 class TestEeroAPIAuthentication:
     """Tests for authentication delegation."""
