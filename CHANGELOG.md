@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.2](https://github.com/fulviofreitas/eero-api/compare/v8.1.1...v8.1.2) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **api:** typed errors for bad response bodies; status and Retry-After on auth/rate-limit errors ([c876430](https://github.com/fulviofreitas/eero-api/commit/c87643080a7cd4a0af334385a0b055e053e3ab00))
+
 ## [8.1.1](https://github.com/fulviofreitas/eero-api/compare/v8.1.0...v8.1.1) (2026-10-10)
 
 ### 🐛 Bug Fixes
