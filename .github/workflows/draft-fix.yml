@@ -26,7 +26,7 @@ jobs:
       github.event.label.name == 'try-fix' &&
       github.event.issue.user.type != 'Bot' &&
       github.event.issue.state == 'open'
-    uses: fulviofreitas/workflow-arsenal/.github/workflows/agentic-draft-fix.yml@master
+    uses: fulviofreitas/workflow-arsenal/.github/workflows/agentic-draft-fix.yml@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
     with:
       stack_description: 'async Python 3.12+ SDK and CLI (aiohttp, keyring, Click). Tests: pytest + pytest-asyncio.'
     secrets:

@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   triage:
-    uses: fulviofreitas/workflow-arsenal/.github/workflows/agentic-triage.yml@master
+    uses: fulviofreitas/workflow-arsenal/.github/workflows/agentic-triage.yml@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
     with:
       allowed_labels: 'bug,documentation,enhancement,question,good first issue,help wanted,critical,security,needs-review'
       stack_description: 'async Python 3.12+ SDK for the Eero mesh Wi-Fi cloud API'
