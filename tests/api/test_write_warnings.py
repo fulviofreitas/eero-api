@@ -69,6 +69,9 @@ _WRITE_PREFIXES = (
 # the "uncharacterised write" warning. Keep this list short: a new entry
 # needs the same live-verification evidence the existing ones cite.
 _VERIFIED_WRITE_ALLOWLIST = {
+    # Issue #142, finding 10: flat POST verified 2026-09-21 with eero Plus
+    # and DNS policies enabled; flags read back and restored on an empty profile.
+    ("DnsPoliciesAPI", "set_profile_content_filters"),
     # devices.py: "the live-verified write (issue #102): it targets the 2.3
     # endpoint, where the mutation persists."
     ("DevicesAPI", "pause_device"),
