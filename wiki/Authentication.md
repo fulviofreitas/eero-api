@@ -35,7 +35,7 @@ asyncio.run(main())
 
 ### `login(user_identifier)`
 
-`EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and stores it as the (not-yet-verified) `session_id`. Any previously stored credentials are cleared first — starting a new login always discards the old session.
+`EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and holds it in memory as the (not-yet-verified) `session_id`. The pending token is never written to storage: the stored session is left untouched until `verify()` succeeds. A login that fails, is rejected, returns no token, or is cancelled restores the credentials previously held in memory, and a pending login that is abandoned without verifying is never persisted — other processes sharing the store keep loading the previous session.
 
 Returns `True` when the response carried a token, `False` when it did not. Raises `EeroAuthenticationException` if the API rejects the request — including a server-rejected identifier (HTTP 400 with an `error.form.*` code, which the transport raises as `EeroValidationException` and `login()` re-wraps); the exception carries the response `envelope` and `error_code`. Raises `EeroRateLimitException` if the login endpoint rate-limits, and `EeroNetworkException`/`EeroTimeoutException` on transport failure.
 
