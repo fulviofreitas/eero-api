@@ -1637,6 +1637,26 @@ class TestTransportLogLinesOmitUrl:
         assert len(loud) == 5
         assert all(URL_CANARY not in message for message in loud)
 
+    @pytest.mark.asyncio
+    async def test_blocked_redirect_location_is_debug_only(self, mock_session, caplog):
+        """The blocked-redirect WARNING carries the status; the Location is DEBUG-only."""
+        api = BaseAPI(session=mock_session, base_url="https://api.example.com")
+        response = MagicMock()
+        response.status = 302
+        response.headers = {"Location": CANARY_URL}
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+        mock_session.request.return_value = response
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(EeroAPIException):
+            await api.get("/endpoint")
+
+        loud = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert loud == ["Redirect response 302 blocked"]
+        assert any(
+            URL_CANARY in r.getMessage() for r in _records(caplog, logging.DEBUG)
+        ), "the Location should still be recorded at DEBUG"
+
 
 # ========================== Envelope / error_code Attachment Tests ==========================
 

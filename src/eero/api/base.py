@@ -585,11 +585,10 @@ class BaseAPI:
                 # session credential is never forwarded to an unintended host.
                 if 300 <= response.status < 400:
                     location = response.headers.get("Location", "")
-                    _LOGGER.warning(
-                        "Redirect response %s blocked (Location: %s)",
-                        response.status,
-                        location or "<none>",
-                    )
+                    # The Location is server-supplied and its path can carry
+                    # identifiers, so only the DEBUG line records it.
+                    _LOGGER.warning("Redirect response %s blocked", response.status)
+                    _LOGGER.debug("Blocked redirect Location: %s", location or "<none>")
                     raise EeroAPIException(
                         response.status,
                         f"Redirect not followed: {response.status}"
