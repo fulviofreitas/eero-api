@@ -2003,6 +2003,76 @@ class TestEeroClientNameValidation:
         assert "json" not in call_args.kwargs
 
 
+class TestEeroClientValidatesBeforeResolvingNetwork:
+    """Tests that setter inputs are validated before any network id resolution."""
+
+    # (wrapper, resource method it forwards to, invalid args, valid args)
+    _CASES = [
+        ("set_network_name", "set_network_name", ("",), ("Home",)),
+        ("set_network_password", "set_network_password", (None,), ("hunter2",)),
+        ("set_guest_password", "set_guest_password", (0,), ("guestpw",)),
+        ("set_guest_network", "set_guest_network", ("yes",), (True,)),
+    ]
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with no preferred network, discovery mocked, and writes stubbed."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": "network_123"}]}}
+        )
+        ok = {"meta": {"code": 200}, "data": {}}
+        for _, method, _, _ in self._CASES:
+            setattr(client._api.networks, method, AsyncMock(return_value=ok))
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_never_triggers_discovery(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test an invalid input raises validation without discovery or a resource call."""
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+        client._api.networks.get_networks.assert_not_awaited()
+        getattr(client._api.networks, method).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_wins_over_discovery_failure(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test a failing discovery cannot mask the validation error."""
+        client._api.networks.get_networks.side_effect = EeroException("discovery failed")
+
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_valid_input_still_resolves_and_forwards(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test valid input with an explicit network id is forwarded to the resource method."""
+        await getattr(client, wrapper)(*valid, network_id="network_123")
+
+        client._api.networks.get_networks.assert_not_awaited()
+        resource = getattr(client._api.networks, method)
+        resource.assert_awaited_once()
+        assert resource.await_args.args[0] == "network_123"
+
+    @pytest.mark.asyncio
+    async def test_valid_guest_network_still_discovers_network(self, client):
+        """Test set_guest_network with valid input and no network id still auto-discovers."""
+        await client.set_guest_network(True)
+
+        client._api.networks.get_networks.assert_awaited_once()
+        client._api.networks.set_guest_network.assert_awaited_once()
+        assert client._api.networks.set_guest_network.await_args.args[0] == "network_123"
+
+
 # ========================== Cache invalidation for new write wrappers ==========================
 
 

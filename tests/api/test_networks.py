@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from eero.api._params import require_bool, require_non_empty_string
 from eero.api.networks import NetworksAPI
 from eero.exceptions import EeroAuthenticationException, EeroValidationException
 
@@ -583,3 +584,29 @@ class TestNetworksAPINameValidation:
             "name": name,
         }
         assert "json" not in call_args.kwargs
+
+
+class TestSharedSetterValidators:
+    """Tests the shared validators the API and the facade both run before any I/O."""
+
+    @pytest.mark.parametrize("value", INVALID_NAMES)
+    def test_require_non_empty_string_rejects_without_echoing_value(self, value):
+        """Test a non-string or empty value is rejected and never echoed in the message."""
+        with pytest.raises(EeroValidationException, match="field.*must be a non-empty string"):
+            require_non_empty_string("field", value)
+
+    @pytest.mark.parametrize("value", ["x", "None", "  padded  "])
+    def test_require_non_empty_string_accepts_any_non_empty_string(self, value):
+        """Test any non-empty string is accepted, including "None" and padded text."""
+        assert require_non_empty_string("field", value) is None
+
+    @pytest.mark.parametrize("value", INVALID_ENABLED)
+    def test_require_bool_rejects_non_bool(self, value):
+        """Test a non-bool flag is rejected."""
+        with pytest.raises(EeroValidationException, match="field.*must be a boolean"):
+            require_bool("field", value)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_require_bool_accepts_bool(self, value):
+        """Test a real bool is accepted."""
+        assert require_bool("field", value) is None
