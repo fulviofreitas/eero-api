@@ -89,8 +89,9 @@ class EeroRateLimitException(EeroException):
                 limit on any status, so this is not necessarily 429.
                 ``None`` (the default) when no status is known.
             retry_after: How long, in seconds, the server asked the caller
-                to wait, taken from the ``Retry-After`` response header.
-                ``None`` when the header was absent or unparseable.
+                to wait, taken from the ``Retry-After`` response header and
+                capped at one day (86400 seconds). ``None`` when the header
+                was absent or unparseable.
         """
         self.status_code = status_code
         self.retry_after = retry_after

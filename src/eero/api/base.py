@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -42,6 +41,12 @@ _HEADER_VALUE_RE = re.compile(r"^[\x20-\x7E]*$")
 
 # A ``Retry-After`` delta-seconds value: a non-negative decimal integer.
 _RETRY_AFTER_DELTA_RE = re.compile(r"[0-9]+")
+
+# Upper bound, in seconds, on a parsed ``Retry-After`` value (one day). A header
+# is server-controlled input: an HTTP-date far in the future or a very long
+# digit string would otherwise make a caller that sleeps for the value stall
+# indefinitely or raise ``OverflowError``.
+RETRY_AFTER_MAX_SECONDS = 86400.0
 
 # HTTP methods that write state. These are never retried by the core for any
 # reason -- a duplicate write could trigger unintended side effects upstream
@@ -232,16 +237,16 @@ def _parse_retry_after(value: Optional[str]) -> Optional[float]:
     Returns:
         The delay in seconds: the value itself for delta-seconds, or the time
         from now until the date for an HTTP-date (``0.0`` when that date is
-        already past). ``None`` when the header is absent, empty, or in
-        neither form.
+        already past). Either is capped at ``RETRY_AFTER_MAX_SECONDS`` (one
+        day). ``None`` when the header is absent, empty, or in neither form.
     """
     if not value:
         return None
     value = value.strip()
     if _RETRY_AFTER_DELTA_RE.fullmatch(value):
-        seconds = float(value)
-        # A header can carry hundreds of digits; float() maps those to inf.
-        return seconds if math.isfinite(seconds) else None
+        # A header can carry hundreds of digits; float() maps those to inf,
+        # which the cap turns into the maximum.
+        return min(float(value), RETRY_AFTER_MAX_SECONDS)
     try:
         when = parsedate_to_datetime(value)
     except (TypeError, ValueError, OverflowError):
@@ -249,7 +254,8 @@ def _parse_retry_after(value: Optional[str]) -> Optional[float]:
     if when.tzinfo is None:
         # RFC 7231 HTTP-dates are always GMT; a zone-less parse means UTC.
         when = when.replace(tzinfo=timezone.utc)
-    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    delay = (when - datetime.now(timezone.utc)).total_seconds()
+    return min(max(0.0, delay), RETRY_AFTER_MAX_SECONDS)
 
 
 def _error_code_from_envelope(envelope: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -652,18 +658,24 @@ class BaseAPI:
                 raw_bytes = b"".join(chunks)
 
                 is_success = 200 <= response.status < 300
+                undecodable = False
                 try:
                     response_text = raw_bytes.decode("utf-8")
-                except UnicodeDecodeError as e:
+                except UnicodeDecodeError:
+                    # Nothing from the decoder error is kept: its ``object``
+                    # attribute is the whole raw body and its message quotes an
+                    # offending byte, so chaining it would put body content in
+                    # any formatted traceback. Only a flag leaves this block.
+                    undecodable = True
+                if undecodable:
                     if is_success:
                         # A success body that cannot be decoded is an invalid
                         # response. Only its size is logged -- never its
-                        # content, and not the decoder's message either, which
-                        # quotes an offending byte.
+                        # content. Raised outside the ``except`` above so
+                        # neither ``__cause__`` nor ``__context__`` carries the
+                        # decoder error.
                         _LOGGER.error("Undecodable response body (%s bytes)", len(raw_bytes))
-                        raise EeroAPIException(
-                            response.status, "Response body is not valid UTF-8"
-                        ) from e
+                        raise EeroAPIException(response.status, "Response body is not valid UTF-8")
                     # An error body only feeds the best-effort envelope parse
                     # and the debug log, so replacement characters are
                     # harmless and the status mapping below still applies.

@@ -14,6 +14,7 @@ Tests cover:
 import asyncio
 import json
 import logging
+import traceback
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +25,7 @@ import yarl
 from aiohttp import DummyCookieJar
 
 from eero.api.base import (
+    RETRY_AFTER_MAX_SECONDS,
     AuthenticatedAPI,
     BaseAPI,
     RequestEncoding,
@@ -517,7 +519,25 @@ class TestBaseAPIErrorHandling:
         assert exc_info.value.status_code == status
         assert str(exc_info.value) == f"API error {status}: Response body is not valid UTF-8"
         assert "\\xff" not in str(exc_info.value)
-        assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+    @pytest.mark.asyncio
+    async def test_undecodable_success_body_keeps_body_out_of_error_chain(
+        self, api_with_session, mock_session
+    ):
+        """Neither the exception chain nor its traceback carries the raw body."""
+        body = b'{"data": "\xff\xfe-sentinel"}'
+        mock_session.request.return_value = create_mock_response(200, body_bytes=body)
+
+        with pytest.raises(EeroAPIException) as exc_info:
+            await api_with_session.get("/endpoint")
+
+        exc = exc_info.value
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+        rendered = "".join(traceback.format_exception(exc))
+        assert repr(body) not in rendered
+        assert "sentinel" not in rendered
+        assert "invalid start byte" not in rendered
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -633,6 +653,23 @@ class TestParseRetryAfter:
     @pytest.mark.parametrize(
         "value",
         [
+            "9" * 10,
+            "9" * 400,
+            "86401",
+            _http_date(10**9),
+            "Fri, 31 Dec 9999 23:59:59 GMT",
+        ],
+    )
+    def test_large_values_are_capped_at_one_day(self, value):
+        assert _parse_retry_after(value) == RETRY_AFTER_MAX_SECONDS == 86400.0
+
+    def test_value_at_the_cap_and_a_normal_value_are_unchanged(self):
+        assert _parse_retry_after("86400") == 86400.0
+        assert _parse_retry_after("30") == 30.0
+
+    @pytest.mark.parametrize(
+        "value",
+        [
             None,
             "",
             "   ",
@@ -642,7 +679,6 @@ class TestParseRetryAfter:
             "1e3",
             "12 seconds",
             "\u0663",
-            "9" * 400,
             "Mon, 99 Foo 2999 99:99:99 GMT",
             "Wed, 01 Jan 99999 00:00:00 GMT",
         ],
