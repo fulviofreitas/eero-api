@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.3](https://github.com/fulviofreitas/eero-api/compare/v8.1.2...v8.1.3) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **api:** compare the full origin before resolving URLs or attaching credentials ([9218d24](https://github.com/fulviofreitas/eero-api/commit/9218d24910d20d60addf3543131ca651d089847d))
+* **api:** confine caller paths to the template family and harden version pinning ([3897c38](https://github.com/fulviofreitas/eero-api/commit/3897c381d34c0519704de5e22bb00b3cbf76f821)), closes [#102](https://github.com/fulviofreitas/eero-api/issues/102)
+
 ## [8.1.2](https://github.com/fulviofreitas/eero-api/compare/v8.1.1...v8.1.2) (2026-10-10)
 
 ### 🐛 Bug Fixes
