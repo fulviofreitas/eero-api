@@ -1686,6 +1686,14 @@ class TestInflightReadInvalidation:
         started, release = asyncio.Event(), asyncio.Event()
         stale = {"meta": {"code": 200}, "data": {"name": "old"}}
         fresh = {"meta": {"code": 200}, "data": {"name": "new"}}
+        if key == "account" and hasattr(client._api.account, "get_account"):
+            # Account reads move to the authenticated resource in the account
+            # follow-up; keep exercising the actual facade transport in either layout.
+            domain, method = "account", "get_account"
+        if key == "networks":
+            # A valid collection avoids account fallback, which is a separate behavior.
+            stale = {"meta": {"code": 200}, "data": {"networks": [{"id": "n1", "name": "old"}]}}
+            fresh = {"meta": {"code": 200}, "data": {"networks": [{"id": "n1", "name": "new"}]}}
 
         async def delayed(*args, **kwargs):
             started.set()
