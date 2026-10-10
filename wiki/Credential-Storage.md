@@ -72,9 +72,12 @@ Delegates to the third-party `keyring` package, which resolves a platform backen
 | 🐧 Linux | Secret Service (GNOME Keyring, KWallet) |
 | 🪟 Windows | Windows Credential Locker |
 
-`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()` and calls `keyring.set_password(...)`. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` silently (nothing to delete is not an error) and logging any other exception at `DEBUG`; `clear()` never raises.
+`load()` calls `keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)`, JSON-decodes the result into an `AuthCredentials`, and — if the stored record was a legacy one (no `schema_version` key) — re-saves it in the current shape before returning it. `save()` JSON-encodes `credentials.to_dict()` and calls `keyring.set_password(...)`. `clear()` calls `keyring.delete_password(...)`, swallowing `keyring.errors.PasswordDeleteError` silently (nothing to delete is not an error) and logging and re-raising any other exception.
 
-> **Note**: `load()` and `save()` wrap the underlying `keyring` calls in a bare `except Exception` and log at **`DEBUG`**, not a higher level — a locked keyring, missing Secret Service daemon on headless Linux, or any other backend failure is treated as **non-fatal**. `load()` returns an empty `AuthCredentials()` on failure; `save()` just silently no-ops (the docstring/comment on `save()` explicitly notes "using file fallback" — meaning this is safe specifically because `ChainedStorage` is expected to be layered in front of it whenever you need persistence guarantees). This holds even for a backend that reports success without actually persisting anything (e.g. `keyring.backends.null.Keyring`) — `save()` doesn't distinguish that case from a real write; it's `ChainedStorage.save()`'s read-back check, not anything in this class, that catches it (see below).
+`load()` returns an empty record when the keyring cannot be read. A failed
+migration keeps the successfully loaded legacy token in memory. `save()` raises
+on a backend failure or mismatching read-back, including a silent no-op backend.
+Authentication catches persistence failures and warns while retaining its session.
 
 ---
 
@@ -88,7 +91,7 @@ class FileStorage(CredentialStorage):
 - The path is resolved eagerly in `__init__` via `os.path.abspath(os.path.expanduser(file_path))` — `~` is expanded and the result is made absolute. There is **no default path**; you must always supply one.
 - `file_path` is a read-only `@property` returning the resolved path.
 - `load()` returns an empty `AuthCredentials()` if the file doesn't exist or fails to parse as JSON (`FileNotFoundError`, `json.JSONDecodeError` caught explicitly; any other exception is caught too and logged at `WARNING`). A legacy record found on disk is migrated and re-saved, same as `KeyringStorage`.
-- `save()` creates the parent directory (`os.makedirs(..., exist_ok=True)`), refuses to write if `file_path` is a symlink, writes `json.dumps(credentials.to_dict())` to a fresh `tempfile.mkstemp()` file in the same directory (created `0600`), `fsync`s it, re-asserts `0600` with `os.chmod`, then atomically swaps it into place with `os.replace()`. A crash mid-write leaves the previous file or nothing — never a partial record. Any failure is logged at `ERROR` and swallowed; `save()` never raises. The exact keys written are:
+- `save()` creates the parent directory (`os.makedirs(..., exist_ok=True)`), refuses to write if `file_path` is a symlink, writes `json.dumps(credentials.to_dict())` to a fresh `tempfile.mkstemp()` file in the same directory (created `0600`), `fsync`s it, re-asserts `0600` with `os.chmod`, then atomically swaps it into place with `os.replace()`. A crash mid-write leaves the previous file or nothing — never a partial record. Any failure is logged at `ERROR` and raised. The exact keys written are:
 
 ```json
 {
@@ -99,7 +102,7 @@ class FileStorage(CredentialStorage):
 
 > **Note**: If your own tooling reads this file, read `session_id` only. The extra fields 7.x wrote are no longer written, and any copy of them still sitting in an old file is dropped the first time the SDK loads it — see [Migration](Migration#the-credential-record).
 
-- `clear()` removes the file with `os.remove()` if it exists (a missing file is a silent no-op); a removal error is logged at `WARNING` and swallowed (never raises).
+- `clear()` removes the file with `os.remove()` if it exists (a missing file is a silent no-op); a removal error is logged at `WARNING` and raised.
 
 ---
 
@@ -115,20 +118,13 @@ Only ever constructed by `create_storage()` as `ChainedStorage(primary=KeyringSt
 | Operation | Order of operations | On partial failure |
 |---|---|---|
 | `load()` | Try `primary.load()` first. If it returns credentials with a `session_id`, return them immediately. Otherwise try `fallback.load()`. | If the fallback holds a `session_id`, it is promoted with `primary.save(credentials)`; the primary is then re-loaded and, if the read-back matches, `fallback.clear()` deletes the fallback copy so only one backend holds the live record. If the read-back does not match, the fallback copy is kept (DEBUG log). |
-| `save()` | Try `primary.save()`. If it does not raise, read the primary back with `primary.load()` and compare `session_id` to what was just saved. | If `primary.save()` raises, **or** the read-back doesn't match what was saved, `fallback.save()` is attempted (the raise case is logged at `DEBUG`; the read-back-mismatch case is also logged at `DEBUG`). If **both** the primary path and `fallback.save()` fail, the fallback's exception is logged at `ERROR` and swallowed — `save()` never raises to the caller. A verified primary write (read-back matches) returns without touching the fallback at all, to avoid duplicating the record across backends. |
-| `clear()` | Calls `primary.clear()` **and** `fallback.clear()` unconditionally (both always run; no early return). | Not explicitly guarded — an exception from either would propagate, since `clear()` has no try/except here (unlike `load`/`save`). |
+| `save()` | Save and verify primary; on success remove the superseded fallback. Otherwise save and verify fallback and retire stale primary credentials. | Raises if persistence or cleanup fails; authentication warns and keeps its in-memory session. |
+| `clear()` | Attempt both backend clears, even if the first fails. | Raises after both attempts if cleanup was incomplete. |
 
-> ℹ️ **Note: `save()` verifies the primary write with a read-back before skipping the file
-> fallback.** `KeyringStorage.save()` catches its own exceptions internally and returns normally
-> instead of raising (see above), and some keyring backends (e.g. `keyring.backends.null.Keyring`)
-> report success without persisting anything at all — no exception, ever. Relying on `primary.save()`
-> raising would miss both cases, so `ChainedStorage.save()` instead mirrors the read-back-then-act
-> pattern `load()`'s own promotion logic already uses: after a primary write that didn't raise, it
-> re-`load()`s the primary and compares `session_id` against what it just wrote. Only a matching
-> read-back skips the fallback; any mismatch — raised exception or silent no-op alike — falls
-> through to `fallback.save()`, so `ChainedStorage` (`use_keyring=True` with a `cookie_file` set) is
-> a viable choice for headless/CI/container persistence. `use_keyring=False, cookie_file=...` (plain
-> `FileStorage`) remains valid too, and is simpler if you have no use for the keyring at all.
+The chain verifies persistence even for custom backends that report success
+without retaining a record. A fallback write must not remain hidden behind an
+older primary record. Plain `FileStorage` (`use_keyring=False, cookie_file=...`)
+is also available when a keyring is unnecessary.
 
 ---
 
@@ -189,3 +185,13 @@ Every credential-dropping call above (`clear_session_token`, `logout`, `clear_au
 - [Migration](Migration#v7x--v800) — What changed in the credential record in v8.0.0
 - [Logging and Security](Logging-and-Security) — Sensitive-field redaction in logs
 - [Troubleshooting](Troubleshooting) — Common issues & fixes
+
+
+### Persistence failures and superseded records
+
+Storage backend saves and clears raise when they fail. Chained saves read back
+the chosen backend; a verified primary save removes superseded fallback
+credentials. A chain reports failure if neither backend retains the supplied
+record. Clearing attempts both backends before reporting incomplete cleanup.
+Authentication catches save failures and warns while retaining the usable
+in-memory session; a successful login does not guarantee durable persistence.
