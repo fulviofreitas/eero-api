@@ -1636,7 +1636,8 @@ class EeroClient:
             timezone: Optional IANA timezone name.
             timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
                 transport default (total 30 s, 10 s socket read) for this
-                request only. Every ``get_*data_usage*`` read accepts it.
+                request only. All nine time-windowed data-usage reads accept it;
+                ``get_data_usage_report_settings`` does not.
         """
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.data_usage.get_data_usage(

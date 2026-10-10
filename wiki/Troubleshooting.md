@@ -102,7 +102,7 @@ async with EeroClient() as client:
 
 ### API Timeouts
 
-Every request defaults to `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`). There is no `timeout` constructor argument on `EeroClient`, `EeroAPI` or `BaseAPI`. It can be replaced per call with a `timeout=` kwarg on the `BaseAPI` transport methods, and every data-usage read on `EeroClient` (`get_data_usage` and the other `get_*data_usage*` methods) takes a keyword-only `timeout`; other `EeroClient` methods do not expose it.
+Every request defaults to `aiohttp.ClientTimeout(total=30, sock_read=10)` (see `src/eero/api/base.py`). There is no `timeout` constructor argument on `EeroClient`, `EeroAPI` or `BaseAPI`. It can be replaced per call with a `timeout=` kwarg on the `BaseAPI` transport methods, and the nine time-windowed data-usage reads on `EeroClient` (`get_data_usage` and the other `get_*data_usage*` methods, not `get_data_usage_report_settings`) take a keyword-only `timeout`; other `EeroClient` methods do not expose it.
 
 If you're on a slow or unreliable connection, retry with backoff in your own code and catch `EeroTimeoutException`:
 

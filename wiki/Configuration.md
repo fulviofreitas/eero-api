@@ -216,7 +216,7 @@ aiohttp.ClientTimeout(total=30, sock_read=10)
 | `total` | 30s | Overall wall-clock budget for the request |
 | `sock_read` | 10s | Max time to wait for any single chunk of the response body (guards against a slow-trickle/"slowloris" upstream even if `total` hasn't elapsed) |
 
-> ⚠️ **Warning:** There is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`. The default can be replaced per call: the `BaseAPI` transport methods accept a `timeout=` kwarg, and every data-usage read (`get_data_usage` and the other `get_*data_usage*` methods on `EeroClient`, and the matching `DataUsageAPI` reads) takes a keyword-only `timeout`. Other `EeroClient` methods do not expose it. A request that exceeds either bound raises `EeroTimeoutException`.
+> ⚠️ **Warning:** There is no `timeout` constructor argument on `EeroClient`, `EeroAPI`, or `BaseAPI`. The default can be replaced per call: the `BaseAPI` transport methods accept a `timeout=` kwarg, and the nine time-windowed data-usage reads (`get_data_usage` and the other `get_*data_usage*` methods on `EeroClient`, and the matching `DataUsageAPI` reads) take a keyword-only `timeout`; `get_data_usage_report_settings` does not. Other `EeroClient` methods do not expose it. A request that exceeds either bound raises `EeroTimeoutException`.
 
 ---
 
