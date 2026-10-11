@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.2.0](https://github.com/fulviofreitas/eero-api/compare/v8.1.10...v8.2.0) (2026-10-11)
+
+### ✨ Features
+
+* add get_account, set_preferred_update_hour, and set_hide_5g ([#167](https://github.com/fulviofreitas/eero-api/issues/167)) ([cf542de](https://github.com/fulviofreitas/eero-api/commit/cf542de70e6fe895ca689b29c407f9169fddc946))
+
+### 📚 Documentation
+
+* **changelog:** remove the duplicated 8.1.8 section and note the skipped PyPI upload [skip ci] ([2324f75](https://github.com/fulviofreitas/eero-api/commit/2324f75e90f535d760c44a93270cb003f89e6a9c))
+
 ## [8.1.10](https://github.com/fulviofreitas/eero-api/compare/v8.1.9...v8.1.10) (2026-10-10)
 
 ### ⚡ Performance
