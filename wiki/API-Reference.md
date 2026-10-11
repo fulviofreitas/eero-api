@@ -112,6 +112,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `set_network_name` | `async def set_network_name(self, name: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects; form-encoded to the `settings` link |
 | `set_network_password` | `async def set_network_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects; form-encoded to the `password` link |
 | `clear_network_password` | `async def clear_network_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Disconnects; DELETE on the `password` link |
+| `set_hide_5g` | `async def set_hide_5g(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified; disconnects 5 GHz clients; PUT/DELETE on `temporary_flags/hide_5g` |
 | `get_guest_network` | `async def get_guest_network(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read |
 | `set_guest_network` | `async def set_guest_network(self, enabled: bool, name: Optional[str]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients; no `password=` — see `set_guest_password` |
 | `set_guest_password` | `async def set_guest_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients |
@@ -124,6 +125,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `get_support` | `async def get_support(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_updates` | `async def get_updates(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `apply_update` | `async def apply_update(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified; reboots every node |
+| `set_preferred_update_hour` | `async def set_preferred_update_hour(self, hour: int, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified; `hour` must be an int 0-23 |
 | `get_ac_compat` | `async def get_ac_compat(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_ouicheck` | `async def get_ouicheck(self, network_id: Optional[str]=None, *, serial: str, version: str) -> Dict[str, Any]` | `Dict[str, Any]` | `serial` and `version` are keyword-only and required — the API returns `404` without them |
 | `get_permissions` | `async def get_permissions(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified read |

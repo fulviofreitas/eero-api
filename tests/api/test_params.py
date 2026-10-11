@@ -4,6 +4,7 @@ import pytest
 
 from eero.api._params import (
     CADENCE_VALUES,
+    require_hour,
     resolve_nested_url,
     resolve_network_url,
     validate_cadence,
@@ -22,6 +23,23 @@ class TestValidateCadence:
     def test_rejects_invalid_values(self, value):
         with pytest.raises(EeroValidationException):
             validate_cadence(value)
+
+
+class TestRequireHour:
+    """Tests for require_hour."""
+
+    @pytest.mark.parametrize("value", [0, 1, 12, 23])
+    def test_accepts_hours_of_day(self, value):
+        assert require_hour("hour", value) is None
+
+    @pytest.mark.parametrize("value", [-1, 24, True, False, 1.5, 3.0, "3", None])
+    def test_rejects_everything_else(self, value):
+        with pytest.raises(EeroValidationException, match="hour.*int from 0 to 23"):
+            require_hour("hour", value)
+
+    def test_reports_the_given_field_name(self):
+        with pytest.raises(EeroValidationException, match="when"):
+            require_hour("when", 99)
 
 
 class TestResolveNetworkUrl:

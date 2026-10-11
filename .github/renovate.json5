@@ -91,6 +91,23 @@
     },
 
     // ==========================================================================
+    // 🔒 Python interpreter in workflows: hold at 3.14
+    // ==========================================================================
+    // The github-actions manager extracts `python-version:` inputs of
+    // actions/setup-python as the "python" dependency. Python 3.15 is not yet
+    // usable: aiohttp, pydantic-core and parts of the dev toolchain have no
+    // cp315 wheels, so CI fails building them from source. Releases must build
+    // on the newest version CI tests (3.14).
+    // Lift this rule once those packages publish cp315 wheels and 3.15 is
+    // added to the CI test matrix.
+    {
+      matchManagers: ["github-actions"],
+      matchDepNames: ["python"],
+      allowedVersions: "<3.15",
+      description: "Hold workflow Python at 3.14 until dependencies ship cp315 wheels",
+    },
+
+    // ==========================================================================
     // 🔵 Major updates: Never auto-merge, require review
     // ==========================================================================
     {
