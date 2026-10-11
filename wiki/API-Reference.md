@@ -597,6 +597,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `set_guest_network` | `async def set_guest_network(self, network_id: str, *, enabled: bool, name: Optional[str]=None, parent=None)` | PUT form `enabled=` (+ `name=`) to the `guestnetwork` link | verified write (2026-09-20); disconnects guests |
 | `set_guest_password` | `async def set_guest_password(self, network_id: str, password: str, *, parent=None)` | PUT form `password=` to the guest network's `password` link | verified write (2026-09-20); disconnects guests |
 | `clear_guest_password` | `async def clear_guest_password(self, network_id: str, *, parent=None)` | DELETE the guest network's `password` link | verified write (2026-09-20); disconnects guests |
+| `set_hide_5g` | `async def set_hide_5g(self, network_id: str, enabled: bool)` | `True`: PUT JSON `{"value": true}` to `networks/{id}/temporary_flags/hide_5g`; `False`: DELETE it | disconnects 5 GHz clients; unverified |
 
 </details>
 
@@ -972,6 +973,7 @@ Account deletion is deliberately not exposed. Identifier values passed to `Accou
 | `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | unverified write; no `EeroClient` wrapper |
 | `UpdatesAPI` | `get_updates` | `async def get_updates(self, network_id: str, *, parent=None)` | GET the `updates` link | read |
 | `UpdatesAPI` | `apply_update` | `async def apply_update(self, network_id: str, *, parent=None)` | POST `""` to the `updates` link | unverified write; reboots every node |
+| `UpdatesAPI` | `set_preferred_update_hour` | `async def set_preferred_update_hour(self, network_id: str, hour: int)` | POST JSON `{"preferred_update_hour": int}` to `networks/{id}/updates/preferred_update_hour` | unverified write |
 | `TransferAPI` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None, *, parent=None)` | GET the `transfer` link, or `networks/{id}/devices/{device_id}/transfer` | read |
 | `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any], *, parent=None)` | POST to the `burst_reporters` link | unverified write; no `EeroClient` wrapper |
 | `ACCompatAPI` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str, *, parent=None)` | GET the `ac_compat` link | read |
