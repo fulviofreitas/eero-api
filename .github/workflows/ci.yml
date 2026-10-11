@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 0
 
       - name: 📝 Validate commits
-        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           from-sha: ${{ github.event.pull_request.base.sha }}
           to-sha: ${{ github.event.pull_request.head.sha }}
@@ -66,13 +66,13 @@ jobs:
         uses: actions/checkout@v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🧹 Run Python lint
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-lint@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-lint@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           src-path: "src/"
           tests-path: "tests/"
@@ -91,12 +91,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 🔍 Run type check
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-typecheck@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-typecheck@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           src-path: "src/"
           fail-on-error: "true"
@@ -117,13 +117,13 @@ jobs:
           fetch-depth: 0
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🛡️ Run security scan
-        uses: fulviofreitas/workflow-arsenal/.github/actions/security-semgrep@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/security-semgrep@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           config: "p/python p/security-audit"
           target-path: "src/"
@@ -147,17 +147,15 @@ jobs:
         uses: actions/checkout@v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: 🧪 Run tests
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-test@master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-test@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
         with:
           test-path: "tests/"
           src-path: "src/eero"
-          upload-coverage: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
-          codecov-token: ${{ secrets.CODECOV_TOKEN }}
 
   # ============================================================================
   # 4️⃣ CI Success Gate (Final - depends on all parallel jobs)

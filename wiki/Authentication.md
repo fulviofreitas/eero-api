@@ -37,11 +37,13 @@ asyncio.run(main())
 
 `EeroClient.login()` → `EeroAPI.login()` → `AuthAPI.login()`. Accepts a single string: an email address or a phone number. Internally it POSTs a form-encoded body (`login=<identifier>`, `Content-Type: application/x-www-form-urlencoded`) to `/2.2/login`, pulls `user_token` out of the response, and holds it in memory as the (not-yet-verified) `session_id`. The pending token is never written to storage: the stored session is left untouched until `verify()` succeeds. A login that fails, is rejected, returns no token, or is cancelled restores the credentials previously held in memory, and a pending login that is abandoned without verifying is never persisted — other processes sharing the store keep loading the previous session.
 
+While a login is pending the not-yet-verified token is nevertheless the in-memory session: `is_authenticated` is `True` and `get_auth_token()` returns it, so `logout()`, `clear_session_token()`, or a refresh that reports the session terminated during that window clears the stored session in every backend, not only the pending token.
+
 Returns `True` when the response carried a token, `False` when it did not. Raises `EeroAuthenticationException` if the API rejects the request — including a server-rejected identifier (HTTP 400 with an `error.form.*` code, which the transport raises as `EeroValidationException` and `login()` re-wraps); the exception carries the response `envelope` and `error_code`. Raises `EeroRateLimitException` if the login endpoint rate-limits, and `EeroNetworkException`/`EeroTimeoutException` on transport failure.
 
 ### `verify(verification_code)`
 
-Confirms the code against the pending session. The request is a form-encoded POST (`code=<code>`) to `/2.2/login/verify`, authenticated with the token obtained by `login()`. The response carries the account object, not a new token — the `session_id` set during `login()` is what is now verified, and it is persisted to storage on success. `EeroClient.verify()` additionally calls `clear_cache()` so nothing stale from a previous session lingers.
+Confirms the code against the pending session. The request is a form-encoded POST (`code=<code>`) to `/2.2/login/verify`, authenticated with the token obtained by `login()`. The response carries the account object, not a new token — the `session_id` set during `login()` is what is now verified, and it is persisted to storage on success. The save is read back, and `credentials_persisted` (a read-only property on `AuthAPI`, `EeroAPI` and `EeroClient`, like `is_authenticated`) describes the last saved session and is `False` when no storage backend retained it — for example the default keyring-only setup on a host whose keyring is unavailable. `verify()` still returns `True` in that case, because the API call succeeded; the session works for this process but is lost when it exits (see [Credential Storage](Credential-Storage#-keyringstorage)). `EeroClient.verify()` additionally calls `clear_cache()` so nothing stale from a previous session lingers.
 
 ```python
 await client.login("you@example.com")
@@ -107,7 +109,7 @@ Returns `is_authenticated` — `True` if a session token is present, `False` oth
 
 ### `get_auth_token()`
 
-Returns the current `session_id` string, or `None` when no token is present. This is what `EeroClient.get_account()` uses under the hood before each `/account` call, and what the transport uses to source the token for a post-refresh replay.
+Returns the current `session_id` string, or `None` when no token is present. This is what the authenticated domain APIs (`AccountAPI.get_account()` and the rest) use to source the token before each request, and what the transport uses to source the token for a post-refresh replay. With no session token they raise `EeroAuthenticationException("Not authenticated")` before sending anything. `EeroClient.get_account()` reads `/account` through `AccountAPI`, so a `401 error.session.refresh` on it is refreshed and replayed like any other authenticated read.
 
 > **Note**: None of `refresh_session()`, `ensure_authenticated()`, or `get_auth_token()` are exposed on `EeroClient` or `EeroAPI` — they live only on `AuthAPI`. In normal usage you never need to call any of them directly (see transparent refresh below).
 

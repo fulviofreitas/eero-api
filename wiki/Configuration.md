@@ -94,7 +94,7 @@ SERVICE_NAME = "eero-api"
 ACCOUNT_NAME = "auth-tokens"
 ```
 
-If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception internally and log at `DEBUG` — the failure is non-fatal, and `ChainedStorage`'s read-back check (see note above) still detects it and falls through to the file fallback. This also covers backends that report success without persisting anything (e.g. `keyring.backends.null.Keyring`, sometimes used to "disable" keyring in containers) — no exception is raised there either, but the read-back still catches the mismatch. `use_keyring=False, cookie_file=...` remains a valid, simpler alternative if you'd rather skip the keyring entirely.
+If the keyring backend raises (headless Linux with no Secret Service daemon, locked keyring, etc.), `KeyringStorage.save()` / `.load()` catch the exception internally — the failure is non-fatal (a keyring-only `save()` logs a `WARNING` and `credentials_persisted` becomes `False`; see [Credential Storage](Credential-Storage#-keyringstorage)), and `ChainedStorage`'s read-back check (see note above) still detects it and falls through to the file fallback. This also covers backends that report success without persisting anything (e.g. `keyring.backends.null.Keyring`, sometimes used to "disable" keyring in containers) — no exception is raised there either, but the read-back still catches the mismatch. `use_keyring=False, cookie_file=...` remains a valid, simpler alternative if you'd rather skip the keyring entirely.
 
 ### File storage
 

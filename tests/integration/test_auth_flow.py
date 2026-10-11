@@ -31,13 +31,7 @@ from eero.const import (
 )
 from eero.exceptions import EeroAuthenticationException
 
-from ..api.conftest import (  # noqa: F401 -- mock_session/mock_cookie_jar are fixtures
-    api_error_response,
-    api_success_response,
-    create_mock_response,
-    mock_cookie_jar,
-    mock_session,
-)
+from ..api.conftest import api_error_response, api_success_response, create_mock_response
 
 # ========================== Auth State Integration Tests ==========================
 

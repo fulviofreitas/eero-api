@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.10](https://github.com/fulviofreitas/eero-api/compare/v8.1.9...v8.1.10) (2026-10-10)
+
+### ⚡ Performance
+
+* **auth:** run blocking credential storage I/O off the event loop ([25cddd1](https://github.com/fulviofreitas/eero-api/commit/25cddd1f3fe7139fa3640aa677240082942a4269)), closes [#183](https://github.com/fulviofreitas/eero-api/issues/183) [#183](https://github.com/fulviofreitas/eero-api/issues/183) [#171](https://github.com/fulviofreitas/eero-api/issues/171) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
+
+## [8.1.9](https://github.com/fulviofreitas/eero-api/compare/v8.1.8...v8.1.9) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **cache:** canonical device keys, profile-device invalidation, session reset ([aa288c0](https://github.com/fulviofreitas/eero-api/commit/aa288c09f9f1838e07ed15e811f5bb7479e1d7dc)), closes [#168](https://github.com/fulviofreitas/eero-api/issues/168)
+
+## [8.1.8](https://github.com/fulviofreitas/eero-api/compare/v8.1.7...v8.1.8) (2026-10-10)
+
+> Note: the first release run for 8.1.8 failed after tagging, so 8.1.8 was never uploaded to PyPI; its changes ship in 8.1.9.
+
+### 🐛 Bug Fixes
+
+* **auth:** make unpersisted credential saves visible and clean up storage ([09a2d51](https://github.com/fulviofreitas/eero-api/commit/09a2d5156dfbe148dd8dc9fb1d3cce31fa8dd7fd))
+* **client:** route get_account through AccountAPI and surface discovery errors ([593eeb2](https://github.com/fulviofreitas/eero-api/commit/593eeb27a9936250cf411d43429739117d9fe820)), closes [#170](https://github.com/fulviofreitas/eero-api/issues/170) [#142](https://github.com/fulviofreitas/eero-api/issues/142)
+
+## [8.1.7](https://github.com/fulviofreitas/eero-api/compare/v8.1.6...v8.1.7) (2026-10-10)
+
+### 🐛 Bug Fixes
+
+* **api:** reject invalid names and flags in network and guest setters ([f94127f](https://github.com/fulviofreitas/eero-api/commit/f94127fb8c9c1ae45637a3e8776fc25020207054)), closes [#166](https://github.com/fulviofreitas/eero-api/issues/166)
+
 ## [8.1.6](https://github.com/fulviofreitas/eero-api/compare/v8.1.5...v8.1.6) (2026-10-10)
 
 ### 🐛 Bug Fixes

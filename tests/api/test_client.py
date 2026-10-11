@@ -17,17 +17,26 @@ import aiohttp
 import pytest
 
 from eero.api import EeroAPI
+from eero.api.auth import AuthAPI
 from eero.client import EeroClient
 from eero.const import DEFAULT_USER_AGENT, LEGACY_USER_AGENT
 from eero.exceptions import (
+    EeroAPIException,
     EeroAuthenticationException,
     EeroException,
+    EeroNetworkException,
+    EeroRateLimitException,
+    EeroTimeoutException,
     EeroValidationException,
 )
 
 from .conftest import (
+    INVALID_ENABLED,
+    INVALID_NAMES,
+    INVALID_OPTIONAL_NAMES,
     INVALID_PASSWORDS,
     PASSWORD_WRITES,
+    VALID_NAMES,
     VALID_PASSWORDS,
     api_success_response,
     create_mock_response,
@@ -1740,7 +1749,7 @@ INFLIGHT_INVALIDATION_CASES = [
         "_invalidate_all_profile_caches",
         ("n1",),
     ),
-    ("get_account", (), "auth", "get", "account", None, "clear_cache", ()),
+    ("get_account", (), "account", "get_account", "account", None, "clear_cache", ()),
     ("get_networks", (), "networks", "get_networks", "networks", None, "clear_cache", ()),
 ]
 
@@ -1763,9 +1772,14 @@ class TestInflightReadInvalidation:
 
     @pytest.fixture
     def client(self, mock_session):
-        """A client with a preferred network."""
+        """A client with a preferred network and an account read that finds no networks.
+
+        The empty account result keeps the ``get_networks`` fallback from
+        reaching the transport when the held ``/networks`` read has no networks.
+        """
         client = EeroClient(session=mock_session)
         client._preferred_network_id = "n1"
+        client._api.account.get_account = AsyncMock(return_value={"meta": {"code": 200}})
         return client
 
     @staticmethod
@@ -1864,14 +1878,366 @@ class TestInflightReadInvalidation:
 
         await self._assert_fill_rejected(
             client,
-            "auth",
-            "get",
+            "account",
+            "get_account",
             "account",
             None,
             client.get_account,
             lambda: getattr(client, writer)(*args, **kwargs),
             cached_before=cached_before,
         )
+
+
+MAC_SPELLINGS = [
+    "aabbccddeeff",
+    "AA:BB:CC:DD:EE:FF",
+    "aa-bb-cc-dd-ee-ff",
+    "aabb.ccdd.eeff",
+    "/2.2/networks/n1/devices/aabbccddeeff",
+    "/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF/",
+    "https://api.example.test/2.2/networks/n1/devices/aabbccddeeff",
+]
+
+# (client method, arguments after the device id, domain API, domain method)
+DEVICE_WRITES = [
+    ("set_device_nickname", ("new",), "devices", "set_device_nickname"),
+    ("block_device", (), "devices", "block_device"),
+    ("unblock_device", (), "devices", "unblock_device"),
+    ("pause_device", (True,), "devices", "pause_device"),
+    ("set_device_type", ("phone",), "devices", "set_device_type"),
+    ("set_device_labels", (), "devices", "set_device_labels"),
+]
+
+
+class TestDeviceCacheKeys:
+    """Every spelling of a device identifier shares one cache entry."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and stubbed device calls."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "n1"
+        ok = {"meta": {"code": 200}, "data": {"id": "d1"}}
+        for name in (
+            "get_device",
+            "update_device_via_link",
+            *(write[3] for write in DEVICE_WRITES),
+        ):
+            setattr(client._api.devices, name, AsyncMock(return_value=ok))
+        client._api.wan.set_device_secondary_wan_access = AsyncMock(return_value=ok)
+        return client
+
+    @pytest.mark.parametrize("spelling", MAC_SPELLINGS)
+    def test_mac_spellings_share_one_key(self, spelling):
+        """Separators, case, path and URL forms of a MAC all map to the same key."""
+        assert EeroClient._device_cache_key("n1", spelling) == "n1_aabbccddeeff"
+
+    @pytest.mark.parametrize(
+        ("device_id", "expected"),
+        [
+            ("d1", "n1_d1"),
+            ("/2.2/networks/n1/devices/D1", "n1_D1"),
+            ("ABC-123", "n1_ABC-123"),
+            ("zz:bb:cc:dd:ee:ff", "n1_zz:bb:cc:dd:ee:ff"),
+            ("aa:bb:cc:dd:ee:ff:00", "n1_aa:bb:cc:dd:ee:ff:00"),
+        ],
+    )
+    def test_other_ids_are_kept_as_they_are(self, device_id, expected):
+        """An id that is not a 12-hex MAC is only reduced to its last path segment."""
+        assert EeroClient._device_cache_key("n1", device_id) == expected
+
+    @pytest.mark.parametrize("device_id", ["", None])
+    def test_invalid_id_is_rejected(self, device_id):
+        """An empty or non-string id has no key."""
+        with pytest.raises(EeroValidationException):
+            EeroClient._device_cache_key("n1", device_id)
+
+    async def test_equivalent_spellings_are_served_from_one_entry(self, client):
+        """A read under one spelling is a cache hit for every other spelling."""
+        first = await client.get_device("aabbccddeeff")
+        for spelling in MAC_SPELLINGS:
+            assert await client.get_device(spelling) == first
+
+        assert client._api.devices.get_device.await_count == 1
+        assert list(client._cache["devices"]) == ["n1_aabbccddeeff"]
+
+    async def test_requests_carry_the_callers_spelling(self, client):
+        """Only the cache key is canonicalised; the API receives the caller's value."""
+        await client.get_device("AA:BB:CC:DD:EE:FF")
+        await client.pause_device("AA:BB:CC:DD:EE:FF", True)
+
+        client._api.devices.get_device.assert_awaited_once_with("n1", "AA:BB:CC:DD:EE:FF")
+        client._api.devices.pause_device.assert_awaited_once_with("n1", "AA:BB:CC:DD:EE:FF", True)
+
+    async def test_pause_by_colon_form_invalidates_entry_read_by_bare_form(self, client):
+        """The scenario from the issue: the write must not leave the old entry behind."""
+        await client.get_device("aabbccddeeff")
+        assert client._api.devices.get_device.await_count == 1
+
+        await client.pause_device("AA:BB:CC:DD:EE:FF", True)
+        assert "n1_aabbccddeeff" not in client._cache["devices"]
+
+        await client.get_device("aabbccddeeff")
+        assert client._api.devices.get_device.await_count == 2
+
+    @pytest.mark.parametrize(
+        ("method", "args", "domain", "domain_method"),
+        DEVICE_WRITES,
+        ids=[write[0] for write in DEVICE_WRITES],
+    )
+    async def test_every_device_write_invalidates_across_spellings(
+        self, client, method, args, domain, domain_method
+    ):
+        """Each wrapper drops the entry and the device list however the id is spelled."""
+        for spelling in MAC_SPELLINGS:
+            client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+            client._update_cache("devices", "n1_devices", {"data": []})
+
+            await getattr(client, method)(spelling, *args)
+
+            assert client._cache["devices"] == {}, spelling
+
+    async def test_update_device_via_link_invalidates_across_spellings(self, client):
+        """The link-based update drops the entry read under another spelling."""
+        client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+
+        await client.update_device_via_link("AA:BB:CC:DD:EE:FF", nickname="x")
+
+        assert client._cache["devices"] == {}
+
+    async def test_secondary_wan_write_invalidates_across_spellings(self, client):
+        """The secondary-WAN access write drops the device entry too."""
+        client._update_cache("devices", "n1_aabbccddeeff", {"data": {}})
+
+        await client.set_device_secondary_wan_access("AA:BB:CC:DD:EE:FF", deny=True)
+
+        assert client._cache["devices"] == {}
+
+    async def test_cached_envelope_is_reused_as_parent_across_spellings(self, client):
+        """A cached device envelope is found as ``parent`` whichever way it was read."""
+        await client.get_device("aabbccddeeff")
+
+        assert client._device_parent_kwargs("n1", "AA:BB:CC:DD:EE:FF") == {
+            "parent": {"meta": {"code": 200}, "data": {"id": "d1"}}
+        }
+
+
+class TestSetProfileDevicesInvalidation:
+    """Assigning devices to a profile drops what reports the old assignment."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed profile write."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "n1"
+        client._api.profiles.set_profile_devices = AsyncMock(return_value={"meta": {"code": 200}})
+        return client
+
+    @staticmethod
+    def _seed(client, *keys):
+        for key in keys:
+            client._update_cache("devices", key, {"data": {}})
+
+    async def test_named_devices_and_device_list_are_invalidated(self, client):
+        """Each named device, in any spelling, and the network's device list go."""
+        self._seed(client, "n1_aabbccddeeff", "n1_d1", "n1_devices", "n1_other")
+        client._update_cache("profiles", "n1_p1", {"data": {}})
+        client._update_cache("profiles", "n1_profiles", {"data": []})
+        epoch = client._cache_epoch
+
+        await client.set_profile_devices(
+            "p1",
+            ["/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF", "/2.2/networks/n1/devices/d1"],
+        )
+
+        assert list(client._cache["devices"]) == ["n1_other"]
+        assert client._cache["profiles"] == {}
+        assert client._cache_epoch > epoch
+
+    async def test_request_carries_the_urls_as_given(self, client):
+        """The URLs sent to the API are not rewritten."""
+        urls = ["/2.2/networks/n1/devices/AA:BB:CC:DD:EE:FF"]
+
+        await client.set_profile_devices("p1", urls)
+
+        client._api.profiles.set_profile_devices.assert_awaited_once_with("n1", "p1", urls)
+
+    async def test_empty_assignment_still_drops_the_device_list(self, client):
+        """Clearing a profile cannot name devices but the list still changes."""
+        self._seed(client, "n1_devices", "n1_d1")
+
+        await client.set_profile_devices("p1", [])
+
+        assert list(client._cache["devices"]) == ["n1_d1"]
+
+    async def test_unusable_entries_do_not_fail_a_completed_write(self, client):
+        """The write has been applied by then, so odd entries are skipped, not raised."""
+        self._seed(client, "n1_devices", "n1_d1")
+
+        await client.set_profile_devices("p1", ["", "/2.2/networks/n1/devices/d1"])
+
+        assert client._cache["devices"] == {}
+
+    async def test_failed_write_leaves_the_cache_alone(self, client):
+        """Nothing is invalidated when the write raises."""
+        client._api.profiles.set_profile_devices.side_effect = EeroException("boom")
+        self._seed(client, "n1_d1", "n1_devices")
+
+        with pytest.raises(EeroException):
+            await client.set_profile_devices("p1", ["/2.2/networks/n1/devices/d1"])
+
+        assert set(client._cache["devices"]) == {"n1_d1", "n1_devices"}
+
+
+def _session_transitions(client):
+    """Return (name, coroutine factory) pairs, one per session transition.
+
+    Args:
+        client: The client whose lower layers are stubbed in place.
+
+    Returns:
+        A list of ``(name, call)`` pairs where ``call()`` runs that transition.
+    """
+    client._api.login = AsyncMock(return_value=True)
+    client._api.verify = AsyncMock(return_value=True)
+    client._api.logout = AsyncMock(return_value=True)
+    client._api.auth.set_session_token = AsyncMock()
+    client._api.auth.clear_session_token = AsyncMock()
+    return [
+        ("login", lambda: client.login("user")),
+        ("verify", lambda: client.verify("123456")),
+        ("logout", client.logout),
+        ("set_session_token", lambda: client.set_session_token("token")),
+        ("clear_session_token", client.clear_session_token),
+    ]
+
+
+SESSION_TRANSITIONS = ["login", "verify", "logout", "set_session_token", "clear_session_token"]
+
+
+class TestPreferredNetworkAcrossSessionChanges:
+    """An auto-discovered network is dropped on a session change; an explicit one is kept."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client whose auth layer is stubbed."""
+        return EeroClient(session=mock_session)
+
+    @staticmethod
+    def _transition(client, name):
+        return dict(_session_transitions(client))[name]()
+
+    @staticmethod
+    async def _discover(client, network_id):
+        """Let the client discover ``network_id`` the way a first call would."""
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": network_id}]}}
+        )
+        await client.get_networks(refresh_cache=True)
+
+    @pytest.mark.parametrize("name", SESSION_TRANSITIONS)
+    async def test_discovered_network_is_reset(self, client, name):
+        """The next call without ``network_id`` rediscovers instead of reusing the old one."""
+        await self._discover(client, "n1")
+        assert client.preferred_network_id == "n1"
+
+        await self._transition(client, name)
+
+        assert client.preferred_network_id is None
+        await self._discover(client, "n2")
+        assert await client._ensure_network_id(None) == "n2"
+
+    @pytest.mark.parametrize("name", SESSION_TRANSITIONS)
+    async def test_explicit_network_survives(self, client, name):
+        """A network chosen with ``set_preferred_network`` is kept."""
+        client.set_preferred_network("n1")
+
+        await self._transition(client, name)
+
+        assert client.preferred_network_id == "n1"
+
+    async def test_explicit_choice_wins_over_a_later_discovery(self, client):
+        """Choosing explicitly after discovery makes the value survive."""
+        await self._discover(client, "n1")
+        client.set_preferred_network(7)
+
+        await self._transition(client, "set_session_token")
+
+        assert client.preferred_network_id == "7"
+
+    @pytest.mark.parametrize("name", ["login", "verify", "logout"])
+    async def test_failed_transition_keeps_the_discovered_network(self, client, name):
+        """A login, verify or logout that reports failure changes nothing."""
+        await self._discover(client, "n1")
+        transitions = dict(_session_transitions(client))
+        getattr(client._api, name).return_value = False
+
+        await transitions[name]()
+
+        assert client.preferred_network_id == "n1"
+
+
+class TestExpiredEntryPruning:
+    """Reading an expired entry removes it."""
+
+    @pytest.fixture
+    def client(self):
+        """A client whose cache entries are all older than the timeout."""
+        return EeroClient(cache_timeout=60)
+
+    @staticmethod
+    def _expired():
+        return {"data": {"stale": True}, "timestamp": time.monotonic() - 120}
+
+    def test_expired_keyed_entry_is_deleted(self, client):
+        """The entry is gone after the check, not just reported invalid."""
+        client._cache["devices"]["n1_d1"] = self._expired()
+        client._cache["devices"]["n1_d2"] = {"data": {}, "timestamp": time.monotonic()}
+
+        assert client._is_cache_valid("devices", "n1_d1") is False
+
+        assert list(client._cache["devices"]) == ["n1_d2"]
+        assert client._get_from_cache("devices", "n1_d1") is None
+
+    def test_expired_single_entry_is_reset(self, client):
+        """A single-entry section returns to its empty shape."""
+        client._cache["networks"] = self._expired()
+
+        assert client._is_cache_valid("networks") is False
+
+        assert client._cache["networks"] == {"data": None, "timestamp": 0}
+
+    def test_fresh_entries_are_left_alone(self, client):
+        """Pruning never touches a valid entry."""
+        client._update_cache("devices", "n1_d1", {"x": 1})
+        client._update_cache("account", None, {"y": 2})
+
+        assert client._is_cache_valid("devices", "n1_d1") is True
+        assert client._is_cache_valid("account") is True
+
+        assert client._get_from_cache("devices", "n1_d1") == {"x": 1}
+        assert client._get_from_cache("account") == {"y": 2}
+
+    def test_repeated_checks_of_a_pruned_entry_are_safe(self, client):
+        """Once removed, further checks just report a miss."""
+        client._cache["profiles"]["n1_p1"] = self._expired()
+
+        assert client._is_cache_valid("profiles", "n1_p1") is False
+        assert client._is_cache_valid("profiles", "n1_p1") is False
+        assert client._cache["profiles"] == {}
+
+    async def test_expired_entry_is_replaced_by_the_next_read(self, mock_session):
+        """A read that finds a stale entry fetches and stores a fresh one."""
+        client = EeroClient(session=mock_session, cache_timeout=60)
+        client._preferred_network_id = "n1"
+        fresh = {"meta": {"code": 200}, "data": {"id": "d1"}}
+        client._api.devices.get_device = AsyncMock(return_value=fresh)
+        client._cache["devices"]["n1_d1"] = self._expired()
+
+        assert await client.get_device("d1") == fresh
+
+        assert client._get_from_cache("devices", "n1_d1") == fresh
+        assert client._is_cache_valid("devices", "n1_d1") is True
 
 
 class TestEeroClientPasswordValidation:
@@ -1915,6 +2281,158 @@ class TestEeroClientPasswordValidation:
         )
         assert call_args.kwargs["data"] == {"password": password}
         assert "json" not in call_args.kwargs
+
+
+class TestEeroClientNameValidation:
+    """Tests that the facade rejects unintended names and flags before resolving or sending."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and a stubbed auth token."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = "network_123"
+        client._api.auth.get_auth_token = AsyncMock(return_value="auth_token")
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_NAMES)
+    async def test_invalid_network_name_sends_no_request(self, client, mock_session, name):
+        """Test a non-string or empty network name is rejected before auth and transport."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    async def test_valid_network_name_is_forwarded_unchanged(self, client, mock_session, name):
+        """Test a string name, even "None" or space-padded, is sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_network_name(name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/settings",
+        )
+        assert call_args.kwargs["data"] == {"name": name}
+        assert "json" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", INVALID_OPTIONAL_NAMES)
+    async def test_invalid_guest_name_sends_no_request(self, client, mock_session, name):
+        """Test a supplied guest name that is not a non-empty string is rejected."""
+        with pytest.raises(EeroValidationException, match="name.*non-empty string"):
+            await client.set_guest_network(True, name=name)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", INVALID_ENABLED)
+    async def test_invalid_guest_enabled_sends_no_request(self, client, mock_session, enabled):
+        """Test a non-bool enabled flag is rejected, not coerced to "true" or "false"."""
+        with pytest.raises(EeroValidationException, match="enabled.*boolean"):
+            await client.set_guest_network(enabled)
+
+        client._api.auth.get_auth_token.assert_not_awaited()
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", VALID_NAMES)
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_valid_guest_network_is_forwarded_unchanged(
+        self, client, mock_session, enabled, name
+    ):
+        """Test a bool flag and a string name, even "None", are sent verbatim as form data."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await client.set_guest_network(enabled, name=name)
+
+        client._api.auth.get_auth_token.assert_awaited_once()
+        call_args = mock_session.request.call_args
+        assert call_args.args == (
+            "PUT",
+            "https://api-user.e2ro.com/2.2/networks/network_123/guestnetwork",
+        )
+        assert call_args.kwargs["data"] == {
+            "enabled": "true" if enabled else "false",
+            "name": name,
+        }
+        assert "json" not in call_args.kwargs
+
+
+class TestEeroClientValidatesBeforeResolvingNetwork:
+    """Tests that setter inputs are validated before any network id resolution."""
+
+    # (wrapper, resource method it forwards to, invalid args, valid args)
+    _CASES = [
+        ("set_network_name", "set_network_name", ("",), ("Home",)),
+        ("set_network_password", "set_network_password", (None,), ("hunter2",)),
+        ("set_guest_password", "set_guest_password", (0,), ("guestpw",)),
+        ("set_guest_network", "set_guest_network", ("yes",), (True,)),
+    ]
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with no preferred network, discovery mocked, and writes stubbed."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": "network_123"}]}}
+        )
+        ok = {"meta": {"code": 200}, "data": {}}
+        for _, method, _, _ in self._CASES:
+            setattr(client._api.networks, method, AsyncMock(return_value=ok))
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_never_triggers_discovery(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test an invalid input raises validation without discovery or a resource call."""
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+        client._api.networks.get_networks.assert_not_awaited()
+        getattr(client._api.networks, method).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_invalid_input_wins_over_discovery_failure(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test a failing discovery cannot mask the validation error."""
+        client._api.networks.get_networks.side_effect = EeroException("discovery failed")
+
+        with pytest.raises(EeroValidationException):
+            await getattr(client, wrapper)(*invalid)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "method", "invalid", "valid"), _CASES)
+    async def test_valid_input_still_resolves_and_forwards(
+        self, client, wrapper, method, invalid, valid
+    ):
+        """Test valid input with an explicit network id is forwarded to the resource method."""
+        await getattr(client, wrapper)(*valid, network_id="network_123")
+
+        client._api.networks.get_networks.assert_not_awaited()
+        resource = getattr(client._api.networks, method)
+        resource.assert_awaited_once()
+        assert resource.await_args.args[0] == "network_123"
+
+    @pytest.mark.asyncio
+    async def test_valid_guest_network_still_discovers_network(self, client):
+        """Test set_guest_network with valid input and no network id still auto-discovers."""
+        await client.set_guest_network(True)
+
+        client._api.networks.get_networks.assert_awaited_once()
+        client._api.networks.set_guest_network.assert_awaited_once()
+        assert client._api.networks.set_guest_network.await_args.args[0] == "network_123"
 
 
 # ========================== Cache invalidation for new write wrappers ==========================
@@ -2478,3 +2996,144 @@ class TestPhase4WrapperBindings:
         client._api.permissions.get_permissions.assert_awaited_once_with(
             "network_123", parent=envelope
         )
+
+
+class TestEeroClientGetAccount:
+    """Tests that get_account goes through the authenticated account API."""
+
+    SESSION_REFRESH_BODY = {"meta": {"code": 401, "error": "error.session.refresh"}}
+
+    @pytest.fixture
+    def client(self, mock_session, monkeypatch):
+        """A client whose session lookup and refresh are stubbed.
+
+        The stubs are installed on the class before the client is built, since
+        the account API binds the refresh hook and token provider at construction.
+        """
+        monkeypatch.setattr(
+            AuthAPI, "get_auth_token", AsyncMock(side_effect=["stale_token", "new_token"])
+        )
+        monkeypatch.setattr(AuthAPI, "refresh_session", AsyncMock(return_value=True))
+        return EeroClient(session=mock_session)
+
+    @pytest.mark.asyncio
+    async def test_session_refresh_signal_refreshes_replays_and_caches(self, client, mock_session):
+        """A 401 error.session.refresh on /account refreshes once, replays, and caches."""
+        envelope = api_success_response({"networks": {"data": []}})
+        mock_session.request.side_effect = [
+            create_mock_response(401, self.SESSION_REFRESH_BODY),
+            create_mock_response(200, envelope),
+        ]
+
+        assert await client.get_account() == envelope
+
+        AuthAPI.refresh_session.assert_awaited_once()
+        assert mock_session.request.call_count == 2
+        replay = mock_session.request.call_args_list[1]
+        assert replay.args[1].endswith("/account")
+        assert replay.kwargs["headers"]["X-User-Token"] == "new_token"
+        assert await client.get_account() == envelope
+        assert mock_session.request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_session_raises_before_any_request(self, client, mock_session, monkeypatch):
+        """Without a session no unauthenticated request is sent and nothing is cached."""
+        monkeypatch.setattr(AuthAPI, "get_auth_token", AsyncMock(return_value=None))
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await client.get_account()
+
+        mock_session.request.assert_not_called()
+        assert client._get_from_cache("account") is None
+
+
+class TestEeroClientNetworkDiscoveryFallback:
+    """Tests for the /account fallback taken when /networks comes back empty."""
+
+    EMPTY_NETWORKS = {"meta": {"code": 200}, "data": {"networks": []}}
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client whose /networks read is empty and has no preferred network."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+        client._api.networks.get_networks = AsyncMock(return_value=self.EMPTY_NETWORKS)
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            EeroAuthenticationException("Not authenticated"),
+            EeroRateLimitException("Rate limited"),
+            EeroTimeoutException("Timed out"),
+            EeroNetworkException("Connection reset"),
+            EeroAPIException(500, "Server error"),
+        ],
+        ids=lambda error: type(error).__name__,
+    )
+    async def test_fallback_failure_propagates_and_caches_nothing(self, client, error):
+        """A failed fallback is not an empty account: it propagates and fills no cache."""
+        client._api.account.get_account = AsyncMock(side_effect=error)
+
+        with pytest.raises(type(error)) as raised:
+            await client.get_networks()
+
+        assert raised.value is error
+        assert client._get_from_cache("networks") is None
+        assert client._get_from_cache("account") is None
+        assert client.preferred_network_id is None
+
+    @pytest.mark.asyncio
+    async def test_recovers_after_fallback_failure(self, client):
+        """A later call re-reads and auto-selects once the account read succeeds."""
+        account = api_success_response({"networks": {"data": [{"url": "/2.2/networks/77"}]}})
+        client._api.account.get_account = AsyncMock(
+            side_effect=[EeroRateLimitException("Rate limited"), account]
+        )
+
+        with pytest.raises(EeroRateLimitException):
+            await client.get_networks()
+        result = await client.get_networks()
+
+        assert result["data"] == {"networks": [{"url": "/2.2/networks/77"}]}
+        assert client.preferred_network_id == "77"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "account",
+        [
+            {"meta": {"code": 200}, "data": {"networks": {"data": []}}},
+            {"meta": {"code": 200}, "data": {"networks": []}},
+            {"meta": {"code": 200}, "data": {}},
+            {"meta": {"code": 200}, "data": None},
+            {"meta": {"code": 200}, "data": {"networks": "unexpected"}},
+            [],
+        ],
+        ids=["wrapped", "bare", "no-networks", "null-data", "bad-networks", "non-object"],
+    )
+    async def test_empty_account_result_is_cached(self, client, account):
+        """A successful fallback that finds no networks is a cacheable empty result."""
+        client._api.account.get_account = AsyncMock(return_value=account)
+
+        assert await client.get_networks() == self.EMPTY_NETWORKS
+        assert client._get_from_cache("networks") == self.EMPTY_NETWORKS
+        assert client.preferred_network_id is None
+        assert await client.get_networks() == self.EMPTY_NETWORKS
+        client._api.networks.get_networks.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wrapped", [True, False], ids=["wrapped", "bare"])
+    async def test_account_networks_replace_empty_result(self, client, wrapped):
+        """Networks found on /account are returned, cached, and auto-selected."""
+        networks = [{"url": "/2.2/networks/77"}]
+        listing = {"data": networks} if wrapped else networks
+        client._api.account.get_account = AsyncMock(
+            return_value=api_success_response({"networks": listing})
+        )
+
+        result = await client.get_networks()
+
+        assert result == {"meta": {"code": 200}, "data": {"networks": networks}}
+        assert client._get_from_cache("networks") == result
+        assert client.preferred_network_id == "77"

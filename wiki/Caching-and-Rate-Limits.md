@@ -32,7 +32,7 @@ Only these `EeroClient` read methods check and populate the cache. Every other `
 | `get_network(network_id)` | `"network"` keyed by `network_id` |
 | `get_eeros(network_id)` | `"eeros"` keyed by `f"{network_id}_eeros"` |
 | `get_devices(network_id)` | `"devices"` keyed by `f"{network_id}_devices"` |
-| `get_device(device_id, network_id)` | `"devices"` keyed by `f"{network_id}_{device_id}"` |
+| `get_device(device_id, network_id)` | `"devices"` keyed by `f"{network_id}_{device_id}"`, with the id canonicalised (see [Device cache keys](#device-cache-keys)) |
 | `get_profiles(network_id)` | `"profiles"` keyed by `f"{network_id}_profiles"` |
 | `get_profile(profile_id, network_id)` | `"profiles"` keyed by `f"{network_id}_{profile_id}"` |
 
@@ -56,6 +56,23 @@ supplies the matching eero's envelope to the eero calls, and a fresh single-devi
 passed to `update_device_via_link`. This is read-only — the cached envelope is forwarded as-is and never
 merged into a response. When the entry is stale or absent the call simply falls back to the
 template URL; nothing is fetched to populate `parent=`.
+
+### Device cache keys
+
+A device entry is keyed by the device's last path segment, so a bare id, an API path and an
+absolute URL share an entry. When that segment is a MAC address in any common spelling — twelve
+hex digits with `:`, `-` or `.` separators or none, in either case — it is reduced to lowercase hex
+without separators. Any other id is kept as written. `aabbccddeeff`, `AA:BB:CC:DD:EE:FF` and
+`/2.2/networks/<network-id>/devices/aabbccddeeff` therefore name one entry: a read under one
+spelling is a hit for the others, and a write under any spelling drops the entry read under
+another. Only the cache key is canonicalised; requests still carry the value you passed.
+
+### Expired entries are pruned on access
+
+Checking an entry whose TTL has elapsed deletes it (a keyed entry) or resets it to empty (the
+single-entry `account` and `networks` sections), so a long-lived client does not accumulate stale
+copies of devices or profiles it no longer reads. Entries that are never read again stay in memory
+until `clear_cache()` or a write removes them.
 
 ---
 
@@ -83,6 +100,11 @@ client.clear_cache()
 
 The SDK also calls `clear_cache()` for you automatically after `verify()`, `logout()`, `set_session_token()`, and `clear_session_token()` — any operation that changes which session/account you're authenticated as.
 
+The same five operations, plus `login()`, also forget a preferred network that auto-discovery chose,
+so a call without `network_id` discovers the network of the new credentials instead of reusing the
+previous account's. A network chosen with `set_preferred_network()` is kept. See
+[Network Targeting](Network-Targeting#set_preferred_network--preferred_network_id).
+
 ---
 
 ## Automatic Invalidation on Writes
@@ -91,9 +113,10 @@ Write methods invalidate the specific cache entries they affect via internal hel
 
 | Write method | Invalidates |
 |---|---|
-| `set_device_nickname`, `block_device`, `unblock_device`, `pause_device`, `set_device_type`, `set_device_labels`, `set_device_secondary_wan_access` | that device's cache entry + the network's device list |
+| `set_device_nickname`, `block_device`, `unblock_device`, `pause_device`, `set_device_type`, `set_device_labels`, `set_device_secondary_wan_access` | that device's cache entry (under any spelling of its id) + the network's device list |
 | `update_device_via_link` | that device's cache entry + the network's device list; when `profile=` is given, also every cached profile of the network and the profile list (the previous profile is unknown, so all are dropped) |
-| `pause_profile`, `set_profile_devices`, `set_profile_blocked_applications` | that profile's cache entry + the network's profile list |
+| `pause_profile`, `set_profile_blocked_applications` | that profile's cache entry + the network's profile list |
+| `set_profile_devices` | that profile's cache entry + the network's profile list, and the cache entry of every device named in `device_urls` + the network's device list. Devices that the call removes from the profile are not named, so their entries are only dropped when they are named elsewhere or expire; call `get_device(..., refresh_cache=True)` for those. |
 | `create_profile`, `allow_domain_for_profiles`, `allow_cnames_for_profiles`, `block_domain_for_profiles` | the network's profile list |
 | `rename_profile`, `delete_profile` | that profile's cache entry + the network's profile list |
 | `reboot_eero`, `set_location`, `set_led`, `set_led_brightness`, `set_nightlight`, `node_action`, `port_action`, `nightlight_override` | the network's eeros list |
