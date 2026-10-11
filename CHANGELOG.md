@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.3.0](https://github.com/fulviofreitas/eero-api/compare/v8.2.0...v8.3.0) (2026-10-11)
+
+### ✨ Features
+
+* **client:** expose set_hide_5g and set_preferred_update_hour on EeroClient ([f62e6da](https://github.com/fulviofreitas/eero-api/commit/f62e6dae31f5001f7305ce18c813a7484c1c492a))
+
 ## [8.2.0](https://github.com/fulviofreitas/eero-api/compare/v8.1.10...v8.2.0) (2026-10-11)
 
 ### ✨ Features
