@@ -6,7 +6,7 @@ Development setup, the checks CI runs, and the conventions this repository enfor
 
 ## 🧰 Setup
 
-Python **3.12+** is required (3.13, 3.14 and 3.15 are also supported and tested).
+Python **3.12+** is required (3.13 and 3.14 are also supported and tested).
 
 ```bash
 git clone https://github.com/fulviofreitas/eero-api.git
