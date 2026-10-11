@@ -7,8 +7,9 @@ All data extraction, field mapping, and transformation must be done by downstrea
 from typing import Any, Dict, Mapping, Optional
 
 from ..const import API_ENDPOINT
-from ..exceptions import EeroAuthenticationException, EeroValidationException
+from ..exceptions import EeroAuthenticationException
 from ..logging import get_secure_logger
+from ._params import require_hour
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, RequestEncoding
@@ -125,8 +126,7 @@ class UpdatesAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        if isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23:
-            raise EeroValidationException("hour", "must be an int from 0 to 23")
+        require_hour("hour", hour)
 
         auth_token = await self._auth_api.get_auth_token()
         if not auth_token:

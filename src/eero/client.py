@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 from aiohttp import ClientSession, ClientTimeout
 
 from .api import EeroAPI
-from .api._params import require_bool, require_non_empty_string
+from .api._params import require_bool, require_hour, require_non_empty_string
 from .api.base import id_from_url
 from .const import DEFAULT_ACCEPT_LANGUAGE
 from .exceptions import EeroException
@@ -695,6 +695,35 @@ class EeroClient:
         response = await self._api.networks.set_network_name(
             network_id, name, **self._network_parent_kwargs(network_id)
         )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_hide_5g(self, enabled: bool, network_id: Optional[str] = None) -> Dict[str, Any]:
+        """Temporarily hide (or un-hide) the network's 5 GHz band.
+
+        Returns the raw API response. The flag is reported in the network
+        envelope's ``temporary_flags``, so the cached network entry is
+        dropped after a successful write.
+
+        .. warning::
+            Hiding 5 GHz disconnects 5 GHz clients while it takes effect,
+            and this write has not been confirmed against a live network.
+            Read the current flag first and skip the write if it is
+            unchanged, and never retry a failed write in a loop.
+
+        Args:
+            enabled: ``True`` to hide 5 GHz, ``False`` to clear the flag.
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If enabled is not a bool
+        """
+        require_bool("enabled", enabled)
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.set_hide_5g(network_id, enabled)
         self._invalidate_network_cache(network_id)
         return response
 
@@ -2083,6 +2112,37 @@ class EeroClient:
         response = await self._api.updates.apply_update(
             network_id, **self._network_parent_kwargs(network_id)
         )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_preferred_update_hour(
+        self, hour: int, network_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set the hour of day the network applies firmware updates.
+
+        Returns the raw API response. The current value is readable from the
+        network envelope's ``updates.preferred_update_hour``, so the cached
+        network entry is dropped after a successful write.
+
+        .. warning::
+            This write has not been confirmed against a live network. Read
+            the current value first and skip the write if it is unchanged,
+            and never retry a failed write in a loop.
+
+        Args:
+            hour: Hour of day in the network's timezone, ``0`` (midnight to
+                1am) through ``23`` (11pm to midnight).
+            network_id: ID of the network (uses preferred if None)
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroValidationException: If hour is not an int from 0 to 23
+        """
+        require_hour("hour", hour)
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.updates.set_preferred_update_hour(network_id, hour)
         self._invalidate_network_cache(network_id)
         return response
 

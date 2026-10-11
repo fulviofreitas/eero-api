@@ -215,6 +215,14 @@ await client.clear_network_password(network_id=None)               # DELETE on t
 The three writes are unverified; `set_network_name`'s JSON shape was verified in the past, the
 form shape it now sends has not been re-verified.
 
+```python
+await client.set_hide_5g(True, network_id=None)    # unverified; PUT {"value": true}, or DELETE when False; disconnects 5 GHz clients
+```
+
+`set_hide_5g` temporarily hides the 5 GHz band (`temporary_flags.hide_5g` in the network envelope).
+`enabled` must be a real `bool`. Read the flag first, skip the write if it is unchanged, and never
+retry it in a loop. The network's cache entry is dropped after a successful write.
+
 ### Account profile
 
 Every account write is unverified and logs the warning. Identifier values (email, phone,
@@ -670,7 +678,12 @@ await client.nightlight_override(eero_id, brightness_percentage=80, network_id=N
 ```python
 updates = await client.get_updates(network_id=None)
 await client.apply_update(network_id=None)   # POST ""; reboots every node; read get_updates first and only apply when one is pending
+await client.set_preferred_update_hour(3, network_id=None)   # unverified; hour of day 0-23 (an int, not a bool)
 ```
+
+`set_preferred_update_hour` writes `updates.preferred_update_hour` in the network envelope. Read it
+first, skip the write if it is unchanged, and never retry it in a loop. The network's cache entry
+is dropped after a successful write.
 
 ---
 

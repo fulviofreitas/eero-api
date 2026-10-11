@@ -2435,6 +2435,113 @@ class TestEeroClientValidatesBeforeResolvingNetwork:
         assert client._api.networks.set_guest_network.await_args.args[0] == "network_123"
 
 
+class TestEeroClientHide5gAndUpdateHour:
+    """Tests for the set_hide_5g and set_preferred_update_hour facade wrappers."""
+
+    # (wrapper, domain api, resource method, valid args, invalid args)
+    _CASES = [
+        ("set_hide_5g", "networks", "set_hide_5g", (True,), [None, 0, 1, "true"]),
+        (
+            "set_preferred_update_hour",
+            "updates",
+            "set_preferred_update_hour",
+            (3,),
+            [True, -1, 24, 1.5, "3", None],
+        ),
+    ]
+    _ENVELOPE = {"meta": {"code": 200}, "data": {"sentinel": "n1"}}
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with no preferred network, discovery mocked, and writes stubbed."""
+        client = EeroClient(session=mock_session)
+        client._preferred_network_id = None
+        client._api.networks.get_networks = AsyncMock(
+            return_value={"meta": {"code": 200}, "data": {"networks": [{"id": "n1"}]}}
+        )
+        for _, api, method, _, _ in self._CASES:
+            setattr(getattr(client._api, api), method, AsyncMock(return_value=self._ENVELOPE))
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "api", "method", "valid", "invalid"), _CASES)
+    async def test_delegates_with_resolved_network_and_returns_envelope(
+        self, client, wrapper, api, method, valid, invalid
+    ):
+        """Test the wrapper forwards the network id and value, returning the raw envelope."""
+        result = await getattr(client, wrapper)(*valid, network_id="n1")
+
+        getattr(getattr(client._api, api), method).assert_awaited_once_with("n1", *valid)
+        assert result is self._ENVELOPE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "api", "method", "valid", "invalid"), _CASES)
+    async def test_uses_preferred_network(self, client, wrapper, api, method, valid, invalid):
+        """Test the preferred network is used when no id is passed, without discovery."""
+        client._preferred_network_id = "n2"
+
+        await getattr(client, wrapper)(*valid)
+
+        getattr(getattr(client._api, api), method).assert_awaited_once_with("n2", *valid)
+        client._api.networks.get_networks.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "api", "method", "valid", "invalid"), _CASES)
+    async def test_invalid_input_never_discovers_or_writes(
+        self, client, wrapper, api, method, valid, invalid
+    ):
+        """Test invalid input raises before network resolution or any resource call."""
+        for bad in invalid:
+            with pytest.raises(EeroValidationException):
+                await getattr(client, wrapper)(bad)
+
+        client._api.networks.get_networks.assert_not_awaited()
+        getattr(getattr(client._api, api), method).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "api", "method", "valid", "invalid"), _CASES)
+    async def test_success_drops_network_cache_entry(
+        self, client, wrapper, api, method, valid, invalid
+    ):
+        """Test a successful write evicts only that network's cached snapshot."""
+        client._cache["network"]["n1"] = {"data": {"stale": True}}
+        client._cache["network"]["n2"] = {"data": {"keep": True}}
+
+        await getattr(client, wrapper)(*valid, network_id="n1")
+
+        assert "n1" not in client._cache["network"]
+        assert "n2" in client._cache["network"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("wrapper", "api", "method", "valid", "invalid"), _CASES)
+    async def test_failed_write_keeps_cache_entry(
+        self, client, wrapper, api, method, valid, invalid
+    ):
+        """Test a failing write propagates and does not evict the cache."""
+        getattr(getattr(client._api, api), method).side_effect = EeroException("boom")
+        client._cache["network"]["n1"] = {"data": {"stale": True}}
+
+        with pytest.raises(EeroException):
+            await getattr(client, wrapper)(*valid, network_id="n1")
+
+        assert "n1" in client._cache["network"]
+
+    @pytest.mark.asyncio
+    async def test_hide_5g_false_is_forwarded(self, client):
+        """Test False (clear the flag) reaches the resource method as a real bool."""
+        await client.set_hide_5g(False, network_id="n1")
+
+        client._api.networks.set_hide_5g.assert_awaited_once_with("n1", False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("hour", [0, 23])
+    async def test_update_hour_boundaries_are_forwarded(self, client, hour):
+        """Test the first and last valid hours are accepted."""
+        await client.set_preferred_update_hour(hour, network_id="n1")
+
+        client._api.updates.set_preferred_update_hour.assert_awaited_once_with("n1", hour)
+
+
 # ========================== Cache invalidation for new write wrappers ==========================
 
 

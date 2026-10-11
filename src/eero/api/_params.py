@@ -83,6 +83,22 @@ def require_bool(field: str, value: object) -> None:
         raise EeroValidationException(field, "must be a boolean")
 
 
+def require_hour(field: str, value: object) -> None:
+    """Reject an hour of day that is not an int from 0 to 23.
+
+    ``bool`` is rejected explicitly because it is an ``int`` subclass.
+
+    Args:
+        field: The parameter name to report.
+        value: The value to check.
+
+    Raises:
+        EeroValidationException: If ``value`` is not an ``int`` from 0 to 23.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 23:
+        raise EeroValidationException(field, "must be an int from 0 to 23")
+
+
 def resolve_network_url(
     network: str,
     parent: Optional[Mapping[str, Any]] = None,
@@ -240,6 +256,7 @@ __all__ = [
     "validate_cadence",
     "require_non_empty_string",
     "require_bool",
+    "require_hour",
     "resolve_network_url",
     "resolve_nested_url",
 ]
