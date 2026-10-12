@@ -88,6 +88,8 @@ All API methods return the exact JSON from Eero's API:
 | **[🖥️ eeroctl](https://github.com/fulviofreitas/eeroctl)** | Terminal interface for Eero networks |
 | **[🛜 eero-ui](https://github.com/fulviofreitas/eero-ui)** | Svelte dashboard for network management |
 | **[📊 eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter)** | Prometheus metrics for monitoring |
+| **[🏠 home-assistant-eero](https://github.com/fulviofreitas/home-assistant-eero)** | Home Assistant integration (HACS) for eero networks, eeros, profiles and devices |
+| **[🦀 rusteero](https://github.com/fulviofreitas/rusteero)** | Async Rust port of this library |
 
 ## 🌱 Used By
 
@@ -99,6 +101,7 @@ Building something on top of `eero-api`? Open a PR to list your project here.
 | **[eero-cli](https://github.com/lidless-labs/eero-cli)** | Tiny CLI for non-interactive SMS auth, device listing, and bulk block |
 | **[py-bandwith-monitor](https://github.com/awongCM/py-bandwith-monitor)** | Python bandwidth monitor with an optional eero-backed data source |
 | **[assorted](https://github.com/jss367/assorted/tree/master/network_debug/check_eero_routers)** | Personal eero router debug/inspection scripts |
+| **[tripwire](https://github.com/mwhagedorn/tripwire)** | Detects new, missing, renamed or regrouped devices against a saved baseline; CLI and MCP server |
 
 ## ⚠️ Important Notes
 

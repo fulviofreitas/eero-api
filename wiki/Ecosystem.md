@@ -10,20 +10,20 @@ Projects built on top of the `eero-api` SDK, and where this library sits among t
 responses unmodified — every consumer owns its own data extraction, presentation, and storage.
 
 ```
-              ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐
-              │   eeroctl    │  │   eero-ui    │  │ eero-prometheus-exporter │
-              │     (CLI)    │  │  (dashboard) │  │        (metrics)         │
-              └──────┬───────┘  └──────┬───────┘  └────────────┬─────────────┘
-                     └─────────────────┼───────────────────────┘
-                                       │
-                              ┌────────▼─────────┐
-                              │     eero-api     │  ← this project
-                              │  (raw JSON SDK)  │
-                              └────────┬─────────┘
-                                       │ HTTPS
-                              ┌────────▼─────────┐
-                              │ api-user.e2ro.com│
-                              └──────────────────┘
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  ┌────────────────────┐
+  │   eeroctl    │  │   eero-ui    │  │ eero-prometheus-exporter │  │ home-assistant-eero│
+  │     (CLI)    │  │  (dashboard) │  │        (metrics)         │  │   (integration)    │
+  └──────┬───────┘  └──────┬───────┘  └────────────┬─────────────┘  └─────────┬──────────┘
+         └─────────────────┴──────────────┬────────┴──────────────────────────┘
+                                          │
+                                 ┌────────▼─────────┐
+                                 │     eero-api     │  ← this project
+                                 │  (raw JSON SDK)  │
+                                 └────────┬─────────┘
+                                          │ HTTPS
+                                 ┌────────▼─────────┐
+                                 │ api-user.e2ro.com│
+                                 └──────────────────┘
 ```
 
 > **Note**: If you are looking for a finished tool rather than a library, start with
@@ -36,9 +36,12 @@ responses unmodified — every consumer owns its own data extraction, presentati
 
 | Project | What it is |
 |---------|------------|
-| **[🖥️ eeroctl](https://github.com/fulviofreitas/eeroctl)** | Terminal interface for Eero networks. This is where all CLI commands (`eero auth login`, `eero network list`, …) live — they are **not** part of this SDK |
+| **[🖥️ eeroctl](https://github.com/fulviofreitas/eeroctl)** | Terminal interface for Eero networks. This is where all CLI commands (`eero auth login`, `eero network list`, …) live — they are **not** part of this SDK. Installable with Homebrew from [homebrew-eeroctl](https://github.com/fulviofreitas/homebrew-eeroctl) |
 | **[🛜 eero-ui](https://github.com/fulviofreitas/eero-ui)** | Svelte dashboard for network management |
 | **[📊 eero-prometheus-exporter](https://github.com/fulviofreitas/eero-prometheus-exporter)** | Prometheus metrics for monitoring Eero networks |
+| **[🏠 home-assistant-eero](https://github.com/fulviofreitas/home-assistant-eero)** | Home Assistant custom integration (installable through HACS): networks, eeros, profiles and connected devices as entities, plus actions such as pausing a profile, blocking a device, toggling the guest network and installing firmware. Talks to the eero cloud through `eero-api` since its 2.0.0 |
+
+**Port:** [🦀 rusteero](https://github.com/fulviofreitas/rusteero) is an async Rust client for the same cloud API, ported from this library. It is a port, not a consumer — it does not depend on `eero-api`.
 
 ---
 
@@ -52,6 +55,7 @@ Community projects that depend on `eero-api`:
 | **[eero-cli](https://github.com/lidless-labs/eero-cli)** | Tiny CLI for non-interactive SMS auth, device listing, and bulk block |
 | **[py-bandwith-monitor](https://github.com/awongCM/py-bandwith-monitor)** | Python bandwidth monitor with an optional Eero-backed data source |
 | **[assorted](https://github.com/jss367/assorted/tree/master/network_debug/check_eero_routers)** | Personal Eero router debug and inspection scripts |
+| **[tripwire](https://github.com/mwhagedorn/tripwire)** | Detects new, missing, renamed or regrouped devices against a saved baseline; ships a CLI and an MCP server |
 
 > 💡 **Tip:** Building something on top of `eero-api`? Open a PR against
 > [README.md](https://github.com/fulviofreitas/eero-api/blob/master/README.md) to get listed.
