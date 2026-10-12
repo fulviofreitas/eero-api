@@ -38,7 +38,7 @@ Welcome! Everything you need to master the Eero API Python client.
 | Page | What you'll learn |
 |------|-------------------|
 | **[🛡️ Logging and Security](Logging-and-Security)** | `SecureLoggerAdapter`, redaction, safe debug logging |
-| **[🔗 Ecosystem](Ecosystem)** | CLI, dashboard, and exporter projects built on this SDK |
+| **[🔗 Ecosystem](Ecosystem)** | CLI, dashboard, exporter and Home Assistant projects built on this SDK |
 | **[🤝 Contributing](Contributing)** | Dev setup, tests, style |
 | **[🔧 Troubleshooting](Troubleshooting)** | Common issues & fixes |
 
@@ -112,6 +112,7 @@ asyncio.run(main())
 | 🐛 Issues | [Report a bug](https://github.com/fulviofreitas/eero-api/issues) |
 | 📋 Changelog | [CHANGELOG.md](https://github.com/fulviofreitas/eero-api/blob/master/CHANGELOG.md) |
 | 🖥️ CLI | [eeroctl](https://github.com/fulviofreitas/eeroctl) |
+| 🏠 Home Assistant | [home-assistant-eero](https://github.com/fulviofreitas/home-assistant-eero) |
 
 ---
 
