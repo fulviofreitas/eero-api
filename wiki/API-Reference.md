@@ -44,8 +44,14 @@ shaped `{"meta": {...}, "data": {...}}` unless noted otherwise. See [Raw Respons
 - **`parent=`** is a keyword-only, read-only envelope on every domain method. The "Parent"
   note in each table says which envelope the method uses it for (network / eero / device /
   profile / guest network) and which link it reads. "unused" means the argument is accepted
-  for signature consistency and ignored. `EeroClient` wrappers never expose `parent=` — the
-  facade supplies its cached envelope automatically.
+  for signature consistency and ignored. `EeroClient` wrappers do not expose `parent=` — the
+  facade supplies its cached envelope automatically — except the ones added in 8.4.0
+  (`create_burst_reporter`, `reboot_network`, `request_support`, `add_to_blacklist`,
+  `remove_from_blacklist`, `set_weekday_bedtime`, `set_weekend_bedtime`, `set_ipv6_upstream`,
+  `set_network_ad_block`, `set_network_block_malware`), which accept an optional keyword-only
+  `parent=`. The network-scoped ones fall back to the cached network envelope when it is
+  omitted; the two bedtime wrappers take the profile's envelope and pass nothing when it is
+  omitted.
 - **Status** is one of: *verified read*, *read* (verification not stated), *verified write*,
   *unverified write* (logs one `WARNING` before the request), *settings-class* (unverified
   write that may reboot the whole mesh), *disconnects* (unverified write that disconnects
@@ -85,9 +91,11 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `credentials_persisted` | `def credentials_persisted(self) -> bool` | `bool` | **Property** — `False` when the last saved session was read back and no storage backend retained it; `login()`/`verify()` return values are unchanged |
 | `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | |
 | `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | |
-| `logout` | `async def logout(self) -> bool` | `bool` | |
+| `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | Requires a pending `login()`; raises `EeroAuthenticationException` when there is none; `False` on an API-level failure |
+| `logout` | `async def logout(self) -> bool` | `bool` | Invalidates the session server-side, then clears local credentials |
 | `set_session_token` | `async def set_session_token(self, token: str) -> None` | `None` | |
-| `clear_session_token` | `async def clear_session_token(self) -> None` | `None` | |
+| `clear_session_token` | `async def clear_session_token(self) -> None` | `None` | Clears the session only |
+| `clear_auth_data` | `async def clear_auth_data(self) -> None` | `None` | Removes every stored credential record from every storage backend (keyring and file) without contacting the API, resets the preferred network and empties the in-memory cache |
 | `get_account` | `async def get_account(self, refresh_cache: bool=False) -> Dict[str, Any]` | `Dict[str, Any]` | Cached |
 | `set_account_name` | `async def set_account_name(self, name: str) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write |
 | `set_account_email` | `async def set_account_email(self, email: str) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; confirm with `verify_account_email` |
@@ -118,11 +126,13 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | `set_guest_password` | `async def set_guest_password(self, password: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients |
 | `clear_guest_password` | `async def clear_guest_password(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20); disconnects guest clients |
 | `run_speed_test` | `async def run_speed_test(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (2026-09-20): POST `""` to the `speedtest` link; returns 202 with `data: null`, result appears in `get_speed_tests` about a minute later |
+| `reboot_network` | `async def reboot_network(self, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write: POST `""` to the `reboot` link. **Reboots every eero** — all clients lose connectivity for minutes; the 200 means "accepted", not "settled"; never retry in a loop. Invalidates the network, eeros and devices caches. Contrast `reboot_eero` (one node) under [Eeros](#eeros) |
 | `get_speed_tests` | `async def get_speed_tests(self, network_id: Optional[str]=None, *, limit: Optional[int]=None, start_time: Optional[str]=None, end_time: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Read; query params `limit`, `startTime`, `endTime` |
 | `get_diagnostics` | `async def get_diagnostics(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `run_diagnostics` | `async def run_diagnostics(self, network_id: Optional[str]=None, *, device: Optional[str]=None, symptom: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified body shape |
 | `get_routing` | `async def get_routing(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `get_support` | `async def get_support(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `request_support` | `async def request_support(self, request_data: Dict[str, Any], network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; POST to the `support` link, `request_data` forwarded unchanged — its fields are not documented by the observed spec, so callers own validation |
 | `get_updates` | `async def get_updates(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
 | `apply_update` | `async def apply_update(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified; reboots every node |
 | `set_preferred_update_hour` | `async def set_preferred_update_hour(self, hour: int, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified; `hour` must be an int 0-23 |
@@ -138,7 +148,7 @@ facade is the device's MAC address (the domain methods name it `mac`).
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
 | `get_thread` | `async def get_thread(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | GET the `thread` link |
-| `set_thread_enabled` | `async def set_thread_enabled(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write |
+| `set_thread_enabled` | `async def set_thread_enabled(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; alias of `update_thread(thread_enable=enabled)` — the body is `{"thread_enable": bool}` |
 | `update_thread` | `async def update_thread(self, *, thread_enable: Optional[bool]=None, enable_credential_syncing: Optional[bool]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; at least one field required |
 | `regenerate_thread_credentials` | `async def regenerate_thread_credentials(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write |
 
@@ -215,9 +225,13 @@ Every write is unverified.
 | `delete_schedule` | `async def delete_schedule(self, schedule: Any) -> Dict[str, Any]` | `Dict[str, Any]` | As above |
 | `clear_profile_schedule` | `async def clear_profile_schedule(self, profile_id: str, network_id: Optional[str]=None) -> List[Dict[str, Any]]` | `List[Dict[str, Any]]` | One read + one DELETE per pause; returns every DELETE's envelope |
 | `enable_bedtime` | `async def enable_bedtime(self, profile_id: str, start_time: str, end_time: str, days: Optional[List[str]]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Creates one pause |
+| `set_weekday_bedtime` | `async def set_weekday_bedtime(self, profile_id: str, start_time: str, end_time: str, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; **creates** one new pause on Monday–Friday (lowercase day names, as the SDK sends them) — it does not update an existing one. Invalidates that profile's cache |
+| `set_weekend_bedtime` | `async def set_weekend_bedtime(self, profile_id: str, start_time: str, end_time: str, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; **creates** one new pause on Saturday–Sunday. Invalidates that profile's cache |
 
-> **Note**: `EeroClient` has no wrapper for `ScheduleAPI.set_weekday_bedtime()` or
-> `ScheduleAPI.set_weekend_bedtime()` — call them via `client._api.schedule` directly.
+> **Note**: `set_weekday_bedtime()` and `set_weekend_bedtime()` always create a new schedule.
+> How the API handles a partial update of an existing schedule is unverified (#172), so to
+> change an existing bedtime, read `get_schedules()` and delete and recreate the pause rather
+> than relying on `update_schedule()` leaving omitted fields untouched.
 
 ### DNS
 
@@ -234,8 +248,9 @@ Every write is unverified.
 | `disable_ddns` | `async def disable_ddns(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; PUT with no body |
 
 > **Note**: `set_ipv6_dns` was removed in v8.0.0 — it wrote `ipv6_upstream`, the IPv6
-> connectivity toggle, not DNS servers. Use `set_ipv6()` for the connectivity toggle, or
-> `set_custom_dns_ipv6()` for IPv6 DNS servers.
+> connectivity toggle, not DNS servers. Use `set_ipv6()` (or `set_ipv6_upstream()`, which
+> leaves the downstream flag alone) for the connectivity toggle, or `set_custom_dns_ipv6()`
+> for IPv6 DNS servers.
 
 > ### ⚠️ A DNS change reboots the whole mesh
 >
@@ -307,10 +322,17 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 | `set_profile_blocked_applications` | `async def set_profile_blocked_applications(self, profile_id: str, applications: List[str], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; replaces the full list |
 | `get_subnet_content_filters` | `async def get_subnet_content_filters(self, subnet_id: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified read |
 | `set_subnet_content_filters` | `async def set_subnet_content_filters(self, filters: Mapping[str, Any], network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; forwarded unchanged |
+| `set_network_ad_block` | `async def set_network_ad_block(self, enabled: bool, network_id: Optional[str]=None, *, profiles: Optional[List[str]]=None, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; POST `{"enable": bool}` (plus `"profiles"` when supplied) to `dns_policies/adblock`. `profiles` entries take a bare id, path or absolute URL; the list replaces the previous one. Invalidates the network cache and, when `profiles` is given, every cached profile of that network |
+| `set_network_block_malware` | `async def set_network_block_malware(self, enabled: bool, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write; POST `{"block_malware": bool}` to `dns_policies/network`. Invalidates the network cache |
 
-> **Not exposed**: the network- and profile-level DNS-policy *settings* (content-category
-> toggles, ad-block on/off). No field on the network or profile envelope carries a URL for
-> those endpoints, so the SDK has no link to follow and does not guess one.
+> **Premium and unverified**: the two switches above raise `EeroPremiumRequiredException`
+> without Eero Secure. `capable: true` in `premium_dns` alone does not mean the subsystem is
+> enabled. `set_network_ad_block` replaces the previous profile list on every call; an empty
+> `profiles` list with `enabled=True` means network-wide.
+
+> **Not exposed**: the content-category toggles and the other network- and profile-level
+> DNS-policy settings. No field on the network or profile envelope carries a URL for those
+> endpoints, so the SDK has no link to follow and does not guess one.
 
 ### SQM / QoS
 
@@ -330,7 +352,8 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 | `set_wpa3` | `async def set_wpa3(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link |
 | `set_band_steering` | `async def set_band_steering(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link |
 | `set_upnp` | `async def set_upnp(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link |
-| `set_ipv6` | `async def set_ipv6(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link |
+| `set_ipv6` | `async def set_ipv6(self, enabled: bool, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link; writes both `ipv6_upstream` and `ipv6_downstream` |
+| `set_ipv6_upstream` | `async def set_ipv6_upstream(self, enabled: bool, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class: JSON PUT `{"ipv6_upstream": bool}` to the `settings` link, leaving `ipv6_downstream` untouched; may reboot the mesh. Invalidates the network cache. The upstream connectivity toggle, not IPv6 DNS — see `set_custom_dns_ipv6` |
 | `configure_security` | `async def configure_security(self, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `settings` link |
 | `get_wpa3_per_band` | `async def get_wpa3_per_band(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified read |
 | `set_wpa3_per_band` | `async def set_wpa3_per_band(self, network_id: Optional[str]=None, *, band_2_4_ghz: Optional[str]=None, band_5_ghz: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Settings-class; values `WPA2` / `WPA2_WPA3` / `WPA3` |
@@ -450,20 +473,26 @@ Premium feature. Removal on the list endpoints is `is_delete=True` on the same P
 | `get_device_data_usage` | `async def get_device_data_usage(self, device_mac: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_device_usage`; `device_mac` is the leading positional |
 | `get_eeros_data_usage_summary` | `async def get_eeros_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eeros_summary` |
 | `get_eero_data_usage` | `async def get_eero_data_usage(self, eero_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eero_usage` |
+| `get_eeros_data_usage` | `async def get_eeros_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_eeros_usage`; GET `networks/{id}/data_usage/eeros`, read-only. The path is not in the observed spec; a downstream integration uses it. Distinct from `get_eeros_data_usage_summary` |
 | `get_profile_data_usage` | `async def get_profile_data_usage(self, profile_id: str, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_profile_usage` |
 | `get_unprofiled_devices_data_usage` | `async def get_unprofiled_devices_data_usage(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_devices` |
 | `get_unprofiled_data_usage_summary` | `async def get_unprofiled_data_usage_summary(self, network_id: Optional[str]=None, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, timeout: Optional[aiohttp.ClientTimeout]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_unprofiled_summary` |
 | `get_data_usage_report_settings` | `async def get_data_usage_report_settings(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Wraps `DataUsageAPI.get_report_settings` |
 | `set_data_usage_report_settings` | `async def set_data_usage_report_settings(self, *, cadence: str, notification_day: str, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | **Unverified write** — read first, write only on a difference, never retry. Invalidates that network's cache entry |
+| `create_burst_reporter` | `async def create_burst_reporter(self, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Unverified write: POST `""` to the `burst_reporters` link. Requests a live-usage burst; `data.next_burst` is a timestamp. About 12 seconds later the device list's `usage.down_mbps` / `usage.up_mbps` are refreshed (before the POST they are zero or stale). Not a speed test and changes no setting. At most one burst per minute per network. Invalidates that network's devices cache |
 
 > **Note**: `get_burst_reporters` was removed in v8.0.0 — the endpoint returns 404; the resource
-> is POST-only. `client._api.burst_reporters.create_burst_reporter(...)` remains available.
+> is POST-only. `create_burst_reporter()` takes no body parameter on `EeroClient`; the domain
+> method's `reporter_data` argument is deprecated (see
+> [Deprecations](Deprecations#summary)).
 
 ### Blacklist
 
 | Method | Signature | Returns | Notes |
 |--------|-----------|---------|-------|
-| `get_blacklist` | `async def get_blacklist(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | `block_device` / `unblock_device` (under [Devices](#devices)) are the facade's add/remove |
+| `get_blacklist` | `async def get_blacklist(self, network_id: Optional[str]=None) -> Dict[str, Any]` | `Dict[str, Any]` | |
+| `add_to_blacklist` | `async def add_to_blacklist(self, mac: str, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (#140): form-encoded `mac` POST to `networks/{id}/blacklist`. `block_device` (under [Devices](#devices)) is the device-centric alias that delegates here. Invalidates that device's cache entry and the device list |
+| `remove_from_blacklist` | `async def remove_from_blacklist(self, mac_or_device_id: str, network_id: Optional[str]=None, *, parent: Optional[Mapping[str, Any]]=None) -> Dict[str, Any]` | `Dict[str, Any]` | Verified write (#109): DELETE `networks/{id}/blacklist/{mac}`; accepts a raw MAC or the colon-stripped id. `unblock_device` is the alias |
 
 ### Cache
 
@@ -542,12 +571,12 @@ Owns login/session lifecycle and credential storage.
 | `credentials_persisted` | `def credentials_persisted(self) -> bool` | `bool` | **Property** — `False` when the last save was read back and nothing retained it |
 | `login` | `async def login(self, user_identifier: str) -> bool` | `bool` | Form-encoded `login=` body |
 | `verify` | `async def verify(self, verification_code: str) -> bool` | `bool` | Form-encoded `code=` body |
-| `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | No `EeroClient` wrapper; sends `{}` |
+| `resend_verification_code` | `async def resend_verification_code(self) -> bool` | `bool` | Sends `{}`; wrapped by `EeroClient.resend_verification_code()` |
 | `logout` | `async def logout(self) -> bool` | `bool` | Form-encoded body, field `Cookie` = `s=<token>` |
 | `refresh_session` | `async def refresh_session(self) -> bool` | `bool` | No `EeroClient` wrapper; `POST /2.2/login/refresh` with body `""`, authenticated by the session token; concurrent calls coalesced; `True` on 200, `False` on any API error from the refresh endpoint; network/timeout failures still raise |
 | `ensure_authenticated` | `async def ensure_authenticated(self) -> bool` | `bool` | No `EeroClient` wrapper; returns `is_authenticated` |
 | `get_auth_token` | `async def get_auth_token(self) -> Optional[str]` | `Optional[str]` | No `EeroClient` wrapper |
-| `clear_auth_data` | `async def clear_auth_data(self) -> None` | `None` | No `EeroClient` wrapper |
+| `clear_auth_data` | `async def clear_auth_data(self) -> None` | `None` | Wrapped by `EeroClient.clear_auth_data()`, which also resets the preferred network and the cache |
 | `set_session_token` | `async def set_session_token(self, token: str) -> None` | `None` | |
 | `clear_session_token` | `async def clear_session_token(self) -> None` | `None` | |
 
@@ -589,7 +618,7 @@ completeness; see [Credential Storage](Credential-Storage) for usage guidance.
 | `get_networks` | `async def get_networks(self)` | GET `networks` | read |
 | `get_network` | `async def get_network(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
 | `get_premium_status` | `async def get_premium_status(self, network_id: str, *, parent=None)` | GET the network's own URL | read |
-| `reboot_network` | `async def reboot_network(self, network_id: str, *, parent=None)` | POST `""` to the `reboot` link | unverified write; no `EeroClient` wrapper |
+| `reboot_network` | `async def reboot_network(self, network_id: str, *, parent=None)` | POST `""` to the `reboot` link | unverified write; reboots every eero |
 | `run_speed_test` | `async def run_speed_test(self, network_id: str, *, parent=None)` | POST `""` to the `speedtest` link | verified write (2026-09-20): 202 with `data: null`, result appears in `get_speed_tests` about a minute later |
 | `get_speed_tests` | `async def get_speed_tests(self, network_id: str, *, limit: Optional[int]=None, start_time: Optional[str]=None, end_time: Optional[str]=None, parent=None)` | GET the `speedtest` link, query `limit` / `startTime` / `endTime` | read |
 | `set_network_name` | `async def set_network_name(self, network_id: str, name: str, *, parent=None)` | PUT form `name=` to the `settings` link | disconnects; unverified |
@@ -645,8 +674,8 @@ The device parameter is named `mac` on every method. `parent` = the network enve
 | `set_device_type` | `async def set_device_type(self, network: str, mac: str, device_type: str)` | PUT JSON `{"device_type": ...}` to the device URL | verified write (2026-09-20, value persists and reads back) |
 | `get_device_labels` | `async def get_device_labels(self, network: str, mac: str)` | GET `networks/{id}/devices/{mac}/labels` | read |
 | `set_device_labels` | `async def set_device_labels(self, network: str, mac: str, *, make_label: Optional[str]=None, model_label: Optional[str]=None, version_label: Optional[str]=None, type_label: Optional[str]=None)` | PUT `.../labels` with the labels as query parameters | verified NO-OP (2026-09-20): 200 with labels echoed back, but the value never shows up on a read-back |
-| `block_device` | `async def block_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.add_to_blacklist` | verified 2026-10-06 (form-encoded `mac`) |
-| `unblock_device` | `async def unblock_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.remove_from_blacklist` | verified |
+| `block_device` | `async def block_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.add_to_blacklist` (`EeroClient.add_to_blacklist` is the direct form) | verified 2026-10-06 (form-encoded `mac`) |
+| `unblock_device` | `async def unblock_device(self, network: str, mac: str)` | delegates to `BlacklistAPI.remove_from_blacklist` (`EeroClient.remove_from_blacklist` is the direct form) | verified |
 
 </details>
 
@@ -684,8 +713,8 @@ Scheduled pauses live at `networks/{id}/profiles/{profile}/schedules` (the profi
 | `delete_schedule` | `async def delete_schedule(self, schedule: Any)` | DELETE the pause's own URL | unverified write |
 | `clear_profile_schedule` | `async def clear_profile_schedule(self, network: str, profile: str, *, parent=None) -> List[Dict[str, Any]]` | one GET + one DELETE per pause | unverified write; never retried |
 | `enable_bedtime` | `async def enable_bedtime(self, network: str, profile: str, start_time: str, end_time: str, days: Optional[List[str]]=None, *, parent=None)` | one `create_schedule` | unverified write |
-| `set_weekday_bedtime` | `async def set_weekday_bedtime(self, network: str, profile: str, start_time: str, end_time: str, *, parent=None)` | one `create_schedule` (Mon–Fri) | unverified write; no `EeroClient` wrapper |
-| `set_weekend_bedtime` | `async def set_weekend_bedtime(self, network: str, profile: str, start_time: str, end_time: str, *, parent=None)` | one `create_schedule` (Sat–Sun) | unverified write; no `EeroClient` wrapper |
+| `set_weekday_bedtime` | `async def set_weekday_bedtime(self, network: str, profile: str, start_time: str, end_time: str, *, parent=None)` | one `create_schedule` (Mon–Fri) | unverified write; creates a new pause, never updates one |
+| `set_weekend_bedtime` | `async def set_weekend_bedtime(self, network: str, profile: str, start_time: str, end_time: str, *, parent=None)` | one `create_schedule` (Sat–Sun) | unverified write; creates a new pause, never updates one |
 
 </details>
 
@@ -722,8 +751,10 @@ Premium feature. `parent` = the network envelope. Removal is `is_delete=True` on
 | `block_domain_for_profiles` | `async def block_domain_for_profiles(self, network_id: str, domain: str, *, profiles: List[str], is_delete: Optional[bool]=None, override: Optional[bool]=None, parent=None)` | PUT JSON to `.../profiles/blocked` | unverified write |
 | `get_profile_applications` | `async def get_profile_applications(self, network_id: str, profile_id: str)` | GET `.../dns_policies/profiles/{profile}/applications` | verified read |
 | `set_profile_blocked_applications` | `async def set_profile_blocked_applications(self, network_id: str, profile_id: str, applications: List[str])` | PUT JSON `{"applications": [...]}` to `.../applications/blocked` | unverified write |
+| `set_network_ad_block` | `async def set_network_ad_block(self, network_id: str, enabled: bool, *, profiles: Optional[List[str]]=None, parent=None)` | POST `{network url}/dns_policies/adblock` with `{"enable": bool}`, or `{"enable": bool, "profiles": [...]}` when `profiles` is supplied; entries (bare id, path or absolute URL) are normalised to `/2.2/networks/{id}/profiles/{pid}` and the list replaces the previous one; an empty list with `enabled=True` means network-wide | unverified write; premium (`EeroPremiumRequiredException`) |
+| `set_network_block_malware` | `async def set_network_block_malware(self, network_id: str, enabled: bool, *, parent=None)` | POST `{network url}/dns_policies/network` with `{"block_malware": bool}`; the body key is validated client-side against a fixed set because the API discards unknown keys with a 200 | unverified write; premium |
 
-Not exposed: network/profile DNS-policy settings and ad-block settings — no envelope field carries their URL.
+Not exposed: the content-category toggles and the other network/profile DNS-policy settings — no envelope field carries their URL.
 
 </details>
 
@@ -748,7 +779,8 @@ Not exposed: network/profile DNS-policy settings and ad-block settings — no en
 | `set_wpa3` | `async def set_wpa3(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
 | `set_band_steering` | `async def set_band_steering(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
 | `set_upnp` | `async def set_upnp(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
-| `set_ipv6` | `async def set_ipv6(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
+| `set_ipv6` | `async def set_ipv6(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON to the `settings` link (writes both `ipv6_upstream` and `ipv6_downstream`) | unverified write; settings link |
+| `set_ipv6_upstream` | `async def set_ipv6_upstream(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON `{"ipv6_upstream": bool}` to the `settings` link; `ipv6_downstream` untouched | settings-class (may reboot the mesh); the upstream connectivity toggle, not IPv6 DNS |
 | `configure_security` | `async def configure_security(self, network_id: str, wpa3: Optional[bool]=None, band_steering: Optional[bool]=None, upnp: Optional[bool]=None, ipv6: Optional[bool]=None, *, parent=None)` | PUT JSON to the `settings` link | unverified write; settings link |
 | `set_mlo_mode` | `async def set_mlo_mode(self, network_id: str, mode: str, *, parent=None)` | PUT JSON `{"mlo_mode": ...}` to the `mlo_mode` link | settings-class |
 | `get_fast_transition` | `async def get_fast_transition(self, network_id: str, *, parent=None)` | GET the `fast_transition` link | verified read |
@@ -790,7 +822,7 @@ The read uses the `thread` link; the writes target the literal `networks/{id}/th
 | Method | Signature | Request | Status |
 |--------|-----------|---------|--------|
 | `get_thread` | `async def get_thread(self, network_id: str, *, parent=None)` | GET the `thread` link | read |
-| `set_thread_enabled` | `async def set_thread_enabled(self, network_id: str, enabled: bool, *, parent=None)` | PUT JSON `{"enabled": bool}` | unverified write |
+| `set_thread_enabled` | `async def set_thread_enabled(self, network_id: str, enabled: bool, *, parent=None)` | alias of `update_thread(thread_enable=enabled)`: PUT JSON `{"thread_enable": bool}` | unverified write |
 | `update_thread` | `async def update_thread(self, network_id: str, *, thread_enable: Optional[bool]=None, enable_credential_syncing: Optional[bool]=None, parent=None)` | PUT JSON of the supplied keys | unverified write |
 | `regenerate_thread_credentials` | `async def regenerate_thread_credentials(self, network_id: str, *, parent=None)` | POST `""` | unverified write |
 
@@ -972,12 +1004,12 @@ Account deletion is deliberately not exposed. Identifier values passed to `Accou
 | `DiagnosticsAPI` | `run_diagnostics` | `async def run_diagnostics(self, network_id: str, *, device: Optional[str]=None, symptom: Optional[str]=None, parent=None)` | POST JSON of the supplied keys (`{}` otherwise) to the `diagnostics` link | unverified body shape |
 | `RoutingAPI` | `get_routing` | `async def get_routing(self, network: str, *, parent=None)` | GET the `routing` link (served on `2.3`; template fallback `2.2`) | read |
 | `SupportAPI` | `get_support` | `async def get_support(self, network_id: str, *, parent=None)` | GET the `support` link | read |
-| `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | unverified write; no `EeroClient` wrapper |
+| `SupportAPI` | `request_support` | `async def request_support(self, network_id: str, request_data: Dict[str, Any], *, parent=None)` | POST (forwarded unchanged) to the `support` link | unverified write; fields not documented by the observed spec, callers own validation |
 | `UpdatesAPI` | `get_updates` | `async def get_updates(self, network_id: str, *, parent=None)` | GET the `updates` link | read |
 | `UpdatesAPI` | `apply_update` | `async def apply_update(self, network_id: str, *, parent=None)` | POST `""` to the `updates` link | unverified write; reboots every node |
 | `UpdatesAPI` | `set_preferred_update_hour` | `async def set_preferred_update_hour(self, network_id: str, hour: int)` | POST JSON `{"preferred_update_hour": int}` to `networks/{id}/updates/preferred_update_hour` | unverified write |
 | `TransferAPI` | `get_transfer_stats` | `async def get_transfer_stats(self, network_id: str, device_id: Optional[str]=None, *, parent=None)` | GET the `transfer` link, or `networks/{id}/devices/{device_id}/transfer` | read |
-| `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Dict[str, Any], *, parent=None)` | POST to the `burst_reporters` link | unverified write; no `EeroClient` wrapper |
+| `BurstReportersAPI` | `create_burst_reporter` | `async def create_burst_reporter(self, network_id: str, reporter_data: Optional[Dict[str, Any]]=None, *, parent=None)` | POST `""` to the `burst_reporters` link; a supplied, non-empty `reporter_data` is still forwarded as the JSON body | unverified write; `reporter_data` is **deprecated** (`DeprecationWarning`, removed in 9.0.0); wrapped by `EeroClient.create_burst_reporter()` |
 | `ACCompatAPI` | `get_ac_compat` | `async def get_ac_compat(self, network_id: str, *, parent=None)` | GET the `ac_compat` link | read |
 | `OUICheckAPI` | `get_ouicheck` | `async def get_ouicheck(self, network_id: str, *, serial: str, version: str, parent=None)` | GET `networks/{id}/ouicheck`, query `serial` / `version` (404 without them) | read |
 
@@ -1002,6 +1034,7 @@ has an `EeroClient` wrapper (listed under [Stats & Usage](#stats--usage)).
 | `get_devices_usage` | `async def get_devices_usage(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, profile_id: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | `profile_id` scopes to one profile's devices |
 | `get_device_usage` | `async def get_device_usage(self, network_id: str, device_mac: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | One device, addressed by MAC |
 | `get_eeros_summary` | `async def get_eeros_summary(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
+| `get_eeros_usage` | `async def get_eeros_usage(self, network_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | GET `networks/{id}/data_usage/eeros`; same required `start` / `end` / `cadence` as `get_eero_usage`. Read-only; the path is not in the observed spec |
 | `get_eero_usage` | `async def get_eero_usage(self, network_id: str, eero_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
 | `get_profile_usage` | `async def get_profile_usage(self, network_id: str, profile_id: str, *, start: str, end: str, cadence: str, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |
 | `get_unprofiled_devices` | `async def get_unprofiled_devices(self, network_id: str, *, start: str, end: str, cadence: Optional[str]=None, timezone: Optional[str]=None, parent=None, timeout: Optional[aiohttp.ClientTimeout]=None)` | |

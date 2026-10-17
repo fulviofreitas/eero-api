@@ -9,6 +9,7 @@ Tests cover:
 
 import asyncio
 import inspect
+import logging
 import time
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
@@ -18,6 +19,7 @@ import pytest
 
 from eero.api import EeroAPI
 from eero.api.auth import AuthAPI
+from eero.api.schedule import WEEKDAYS, WEEKEND
 from eero.client import EeroClient
 from eero.const import DEFAULT_USER_AGENT, LEGACY_USER_AGENT
 from eero.exceptions import (
@@ -25,6 +27,7 @@ from eero.exceptions import (
     EeroAuthenticationException,
     EeroException,
     EeroNetworkException,
+    EeroPremiumRequiredException,
     EeroRateLimitException,
     EeroTimeoutException,
     EeroValidationException,
@@ -1102,6 +1105,7 @@ DOMAIN_CALL_SHAPES = [
     ("networks.set_guest_password", ("net", "pwd"), {}),
     ("networks.clear_guest_password", ("net",), {}),
     ("networks.run_speed_test", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("networks.reboot_network", ("net",), {"parent": _PLACEHOLDER_PARENT}),
     (
         "networks.get_speed_tests",
         ("net",),
@@ -1219,7 +1223,12 @@ DOMAIN_CALL_SHAPES = [
     ),
     ("thread.regenerate_thread_credentials", ("net",), {}),
     ("support.get_support", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("support.request_support", ("net", {}), {"parent": _PLACEHOLDER_PARENT}),
     ("blacklist.get_blacklist", ("net",), {"parent": _PLACEHOLDER_PARENT}),
+    ("blacklist.add_to_blacklist", ("net", "mac"), {"parent": _PLACEHOLDER_PARENT}),
+    ("blacklist.remove_from_blacklist", ("net", "mac"), {"parent": _PLACEHOLDER_PARENT}),
+    # burst reporters
+    ("burst_reporters.create_burst_reporter", ("net",), {"parent": _PLACEHOLDER_PARENT}),
     # reservations / forwards
     ("reservations.get_reservations", ("net",), {"parent": _PLACEHOLDER_PARENT}),
     ("reservations.create_reservation", ("net", {}), {"parent": _PLACEHOLDER_PARENT}),
@@ -1251,6 +1260,11 @@ DOMAIN_CALL_SHAPES = [
         "data_usage.get_device_usage",
         ("net", "mac"),
         {"start": "s", "end": "e", "cadence": "daily", "timezone": None},
+    ),
+    (
+        "data_usage.get_eeros_usage",
+        ("net",),
+        {"start": "s", "end": "e", "cadence": "daily", "timezone": None, "timeout": None},
     ),
     (
         "data_usage.get_eeros_summary",
@@ -1312,6 +1326,8 @@ DOMAIN_CALL_SHAPES = [
     ("schedule.delete_schedule", ({},), {}),
     ("schedule.clear_profile_schedule", ("net", "prof"), {}),
     ("schedule.enable_bedtime", ("net", "prof", "s", "e", None), {}),
+    ("schedule.set_weekday_bedtime", ("net", "prof", "s", "e"), {"parent": _PLACEHOLDER_PARENT}),
+    ("schedule.set_weekend_bedtime", ("net", "prof", "s", "e"), {"parent": _PLACEHOLDER_PARENT}),
     # dns
     ("dns.get_dns_settings", ("net",), {}),
     ("dns.set_dns_caching", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
@@ -1329,6 +1345,7 @@ DOMAIN_CALL_SHAPES = [
     ("security.set_band_steering", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
     ("security.set_upnp", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
     ("security.set_ipv6", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
+    ("security.set_ipv6_upstream", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
     (
         "security.configure_security",
         ("net",),
@@ -1340,6 +1357,13 @@ DOMAIN_CALL_SHAPES = [
             "parent": _PLACEHOLDER_PARENT,
         },
     ),
+    # dns policies
+    (
+        "dns_policies.set_network_ad_block",
+        ("net", True),
+        {"profiles": None, "parent": _PLACEHOLDER_PARENT},
+    ),
+    ("dns_policies.set_network_block_malware", ("net", True), {"parent": _PLACEHOLDER_PARENT}),
 ]
 
 
@@ -1395,6 +1419,8 @@ class TestDomainCallSignatureBinding:
             "dns",
             "sqm",
             "security",
+            "burst_reporters",
+            "dns_policies",
         }
         assert expected <= exercised
 
@@ -3103,6 +3129,961 @@ class TestPhase4WrapperBindings:
         client._api.permissions.get_permissions.assert_awaited_once_with(
             "network_123", parent=envelope
         )
+
+
+# ========================== Missing-methods facade wrappers ==========================
+#
+# Wrappers over the domain methods added for issue #172 and its siblings. The
+# network-scoped ones share a contract (argument forwarding, ``parent``
+# precedence, network resolution, untouched return value) that is checked once
+# per wrapper by `TestNetworkScopedWrapperContract`; each family class below
+# then covers what is specific to it: cache invalidation and the
+# uncharacterised-write warning.
+
+#: A distinctive envelope each stubbed domain method returns, so a wrapper that
+#: copies or reshapes its result fails an identity check.
+_DOMAIN_ENVELOPE: Dict[str, Any] = {
+    "meta": {"code": 200},
+    "data": {"next_burst": "2026-10-17T10:00:00Z"},
+}
+#: The envelope a caller supplies explicitly as ``parent``.
+_CALLER_PARENT: Dict[str, Any] = {
+    "meta": {"code": 200},
+    "data": {"url": "/2.3/networks/caller_supplied"},
+}
+
+
+def _cached_network_envelope() -> Dict[str, Any]:
+    """A fresh copy of the envelope seeded into the facade's network cache."""
+    return {"meta": {"code": 200}, "data": {"url": "/2.2/networks/network_123"}}
+
+
+def _seed(client: EeroClient, bucket: str, key: str, data: Any = None) -> None:
+    """Put a fresh entry into one cache bucket of ``client``."""
+    client._cache[bucket][key] = {
+        "data": {} if data is None else data,
+        "timestamp": time.monotonic(),
+    }
+
+
+def _seed_cached_network(client: EeroClient) -> None:
+    """Cache a network envelope the way ``get_network`` would."""
+    _seed(client, "network", "network_123", _cached_network_envelope())
+
+
+def _stub_domain(client: EeroClient, path: str, return_value: Any = None) -> AsyncMock:
+    """Replace one domain method (``"blacklist.add_to_blacklist"``) with an AsyncMock."""
+    owner_path, method_name = path.rsplit(".", 1)
+    owner: Any = client._api
+    for attr in owner_path.split("."):
+        owner = getattr(owner, attr)
+    stub = AsyncMock(return_value=_DOMAIN_ENVELOPE if return_value is None else return_value)
+    setattr(owner, method_name, stub)
+    return stub
+
+
+@pytest.fixture
+def wrapper_client(mock_session):
+    """A client with a preferred network, and discovery stubbed to prove it is not used."""
+    client = EeroClient(session=mock_session)
+    client._preferred_network_id = "network_123"
+    client._api.networks.get_networks = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def real_domain_client(wrapper_client, mock_session):
+    """A client whose domain methods are REAL, running against the mocked transport.
+
+    Only the HTTP session (``mock_session.request``) and the auth token are
+    faked, so the domain method's own behaviour -- including the
+    uncharacterised-write warning -- runs for real.
+    """
+    wrapper_client._api.auth.get_auth_token = AsyncMock(return_value="tok")
+    return wrapper_client
+
+
+#: (facade method, facade args, facade kwargs, domain method, domain args after
+#: the network id, domain kwargs other than ``parent``)
+NETWORK_WRAPPER_CASES = [
+    pytest.param(
+        "create_burst_reporter",
+        (),
+        {},
+        "burst_reporters.create_burst_reporter",
+        (),
+        {},
+        id="create_burst_reporter",
+    ),
+    pytest.param("reboot_network", (), {}, "networks.reboot_network", (), {}, id="reboot_network"),
+    pytest.param(
+        "add_to_blacklist",
+        ("aa:bb:cc:11:22:33",),
+        {},
+        "blacklist.add_to_blacklist",
+        ("aa:bb:cc:11:22:33",),
+        {},
+        id="add_to_blacklist",
+    ),
+    pytest.param(
+        "remove_from_blacklist",
+        ("aabbcc112233",),
+        {},
+        "blacklist.remove_from_blacklist",
+        ("aabbcc112233",),
+        {},
+        id="remove_from_blacklist",
+    ),
+    pytest.param(
+        "request_support",
+        ({"subject": "slow wi-fi"},),
+        {},
+        "support.request_support",
+        ({"subject": "slow wi-fi"},),
+        {},
+        id="request_support",
+    ),
+    pytest.param(
+        "set_ipv6_upstream",
+        (True,),
+        {},
+        "security.set_ipv6_upstream",
+        (True,),
+        {},
+        id="set_ipv6_upstream",
+    ),
+    pytest.param(
+        "set_network_ad_block",
+        (True,),
+        {"profiles": ["profile_1"]},
+        "dns_policies.set_network_ad_block",
+        (True,),
+        {"profiles": ["profile_1"]},
+        id="set_network_ad_block",
+    ),
+    pytest.param(
+        "set_network_block_malware",
+        (False,),
+        {},
+        "dns_policies.set_network_block_malware",
+        (False,),
+        {},
+        id="set_network_block_malware",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name, args, kwargs, path, domain_args, domain_kwargs", NETWORK_WRAPPER_CASES
+)
+class TestNetworkScopedWrapperContract:
+    """What every network-scoped, ``parent``-aware wrapper promises."""
+
+    async def test_explicit_parent_is_forwarded_unchanged(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """A caller's ``parent`` wins over a fresh cached envelope and is passed as-is."""
+        stub = _stub_domain(wrapper_client, path)
+        _seed_cached_network(wrapper_client)
+
+        await getattr(wrapper_client, name)(*args, parent=_CALLER_PARENT, **kwargs)
+
+        stub.assert_awaited_once_with(
+            "network_123", *domain_args, **domain_kwargs, parent=_CALLER_PARENT
+        )
+        assert stub.await_args.kwargs["parent"] is _CALLER_PARENT
+
+    async def test_cached_envelope_is_the_fallback_parent(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """Without a ``parent``, the cached network envelope is forwarded."""
+        stub = _stub_domain(wrapper_client, path)
+        _seed_cached_network(wrapper_client)
+
+        await getattr(wrapper_client, name)(*args, **kwargs)
+
+        stub.assert_awaited_once_with(
+            "network_123", *domain_args, **domain_kwargs, parent=_cached_network_envelope()
+        )
+
+    async def test_no_parent_kwarg_when_nothing_is_cached(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """With no caller envelope and no cache, ``parent`` is left out entirely."""
+        stub = _stub_domain(wrapper_client, path)
+
+        await getattr(wrapper_client, name)(*args, **kwargs)
+
+        stub.assert_awaited_once_with("network_123", *domain_args, **domain_kwargs)
+        assert "parent" not in stub.await_args.kwargs
+
+    async def test_network_id_is_the_last_positional_parameter(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """A ``network_id`` after the wrapper's own arguments overrides the preferred one."""
+        stub = _stub_domain(wrapper_client, path)
+        _seed_cached_network(wrapper_client)  # cached for network_123 only
+
+        await getattr(wrapper_client, name)(*args, "network_456", **kwargs)
+
+        # network_456 has no cached envelope, so none is forwarded.
+        stub.assert_awaited_once_with("network_456", *domain_args, **domain_kwargs)
+
+    async def test_without_a_network_raises_and_does_not_discover(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """No network id and no preferred network is an error, without a ``get_networks`` call."""
+        stub = _stub_domain(wrapper_client, path)
+        wrapper_client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await getattr(wrapper_client, name)(*args, **kwargs)
+
+        wrapper_client._api.networks.get_networks.assert_not_called()
+        stub.assert_not_called()
+
+    async def test_returns_the_domain_envelope_untouched(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """The wrapper returns exactly the object the domain method returned."""
+        _stub_domain(wrapper_client, path)
+
+        result = await getattr(wrapper_client, name)(*args, **kwargs)
+
+        assert result is _DOMAIN_ENVELOPE
+
+    async def test_domain_errors_propagate(
+        self, wrapper_client, name, args, kwargs, path, domain_args, domain_kwargs
+    ):
+        """An error from the domain method is not swallowed."""
+        stub = _stub_domain(wrapper_client, path)
+        stub.side_effect = EeroAPIException(500, "boom")
+
+        with pytest.raises(EeroAPIException):
+            await getattr(wrapper_client, name)(*args, **kwargs)
+
+
+# ========================== _network_parent_kwargs_or ==========================
+
+
+class TestNetworkParentKwargsOr:
+    """The helper that prefers a caller's ``parent`` over the cached envelope."""
+
+    def test_caller_parent_is_forwarded_as_the_same_object(self):
+        """A supplied envelope is returned by identity, even with a cache entry present."""
+        client = EeroClient()
+        _seed_cached_network(client)
+
+        assert client._network_parent_kwargs_or("network_123", _CALLER_PARENT) == {
+            "parent": _CALLER_PARENT
+        }
+        assert client._network_parent_kwargs_or("network_123", _CALLER_PARENT)["parent"] is (
+            _CALLER_PARENT
+        )
+
+    def test_empty_mapping_counts_as_supplied(self):
+        """Only ``None`` means "not supplied": an empty envelope is still forwarded."""
+        client = EeroClient()
+        _seed_cached_network(client)
+        empty: Dict[str, Any] = {}
+
+        assert client._network_parent_kwargs_or("network_123", empty)["parent"] is empty
+
+    def test_falls_back_to_the_cached_envelope(self):
+        """With no caller envelope, the fresh cached network envelope is used."""
+        client = EeroClient()
+        _seed_cached_network(client)
+
+        assert client._network_parent_kwargs_or("network_123", None) == {
+            "parent": _cached_network_envelope()
+        }
+
+    def test_empty_when_nothing_is_cached(self):
+        """With no caller envelope and no cache, no kwarg is produced."""
+        assert EeroClient()._network_parent_kwargs_or("network_123", None) == {}
+
+
+# ========================== Burst reporter ==========================
+
+
+class TestBurstReporterWrapper:
+    """EeroClient.create_burst_reporter."""
+
+    def test_does_not_expose_reporter_data(self):
+        """The deprecated body parameter is not part of the facade."""
+        params = inspect.signature(EeroClient.create_burst_reporter).parameters
+
+        assert "reporter_data" not in params
+        assert params["parent"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    async def test_returns_next_burst_envelope_untouched(self, wrapper_client):
+        """The ``data.next_burst`` envelope reaches the caller as received."""
+        stub = _stub_domain(wrapper_client, "burst_reporters.create_burst_reporter")
+
+        result = await wrapper_client.create_burst_reporter()
+
+        assert result == {"meta": {"code": 200}, "data": {"next_burst": "2026-10-17T10:00:00Z"}}
+        assert result is stub.return_value
+
+    async def test_invalidates_the_device_list_only(self, wrapper_client):
+        """The network's device list is dropped; single devices and other networks stay."""
+        _stub_domain(wrapper_client, "burst_reporters.create_burst_reporter")
+        _seed(wrapper_client, "devices", "network_123_devices", [])
+        _seed(wrapper_client, "devices", "network_123_dev_1")
+        _seed(wrapper_client, "devices", "other_net_devices", [])
+
+        await wrapper_client.create_burst_reporter()
+
+        assert "network_123_devices" not in wrapper_client._cache["devices"]
+        assert "network_123_dev_1" in wrapper_client._cache["devices"]
+        assert "other_net_devices" in wrapper_client._cache["devices"]
+
+    async def test_follow_up_get_devices_is_not_served_from_the_stale_cache(self, wrapper_client):
+        """After a burst the next device read goes to the API instead of the cached list."""
+        _stub_domain(wrapper_client, "burst_reporters.create_burst_reporter")
+        fresh = {"meta": {"code": 200}, "data": [{"usage": {"down_mbps": 12.5}}]}
+        wrapper_client._api.devices.get_devices = AsyncMock(return_value=fresh)
+        _seed(wrapper_client, "devices", "network_123_devices", {"data": [], "meta": {}})
+
+        await wrapper_client.create_burst_reporter()
+        result = await wrapper_client.get_devices()
+
+        assert result == fresh
+        wrapper_client._api.devices.get_devices.assert_awaited_once()
+
+    async def test_uncharacterised_warning_propagates(
+        self, real_domain_client, mock_session, caplog
+    ):
+        """The real domain method's uncharacterised-write warning is still logged."""
+        mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
+
+        with caplog.at_level(logging.WARNING):
+            result = await real_domain_client.create_burst_reporter()
+
+        assert result == _DOMAIN_ENVELOPE
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.args[1].endswith(
+            "/2.2/networks/network_123/burst_reporters"
+        )
+
+
+# ========================== Reboot network ==========================
+
+
+class TestRebootNetworkWrapper:
+    """EeroClient.reboot_network."""
+
+    async def test_invalidates_network_eeros_and_device_list(self, wrapper_client):
+        """The network, its eeros and its device list are dropped; other networks stay."""
+        _stub_domain(wrapper_client, "networks.reboot_network")
+        _seed(wrapper_client, "network", "network_123")
+        _seed(wrapper_client, "eeros", "network_123_eeros", [])
+        _seed(wrapper_client, "devices", "network_123_devices", [])
+        _seed(wrapper_client, "network", "other_net")
+        _seed(wrapper_client, "eeros", "other_net_eeros", [])
+        _seed(wrapper_client, "devices", "other_net_devices", [])
+
+        await wrapper_client.reboot_network()
+
+        assert "network_123" not in wrapper_client._cache["network"]
+        assert "network_123_eeros" not in wrapper_client._cache["eeros"]
+        assert "network_123_devices" not in wrapper_client._cache["devices"]
+        assert "other_net" in wrapper_client._cache["network"]
+        assert "other_net_eeros" in wrapper_client._cache["eeros"]
+        assert "other_net_devices" in wrapper_client._cache["devices"]
+
+    async def test_is_sent_exactly_once(self, wrapper_client):
+        """The facade does not repeat the request on its own."""
+        stub = _stub_domain(wrapper_client, "networks.reboot_network")
+
+        await wrapper_client.reboot_network()
+
+        assert stub.await_count == 1
+
+    async def test_uncharacterised_warning_propagates(
+        self, real_domain_client, mock_session, caplog
+    ):
+        """The real domain method's uncharacterised-write warning is still logged."""
+        mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
+
+        with caplog.at_level(logging.WARNING):
+            result = await real_domain_client.reboot_network()
+
+        assert result == _DOMAIN_ENVELOPE
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.args[1].endswith("/2.2/networks/network_123/reboot")
+
+
+# ========================== Auth helpers ==========================
+
+
+class TestAuthHelperWrappers:
+    """EeroClient.resend_verification_code and EeroClient.clear_auth_data."""
+
+    @pytest.fixture
+    def client(self, mock_session):
+        """A client with a preferred network and an empty session."""
+        client = EeroClient(session=mock_session)
+        client.set_preferred_network("network_123")
+        return client
+
+    @pytest.mark.parametrize("outcome", [True, False])
+    async def test_resend_returns_the_domain_result(self, client, outcome):
+        """``True``/``False`` from the auth layer reach the caller."""
+        client._api.auth.resend_verification_code = AsyncMock(return_value=outcome)
+
+        result = await client.resend_verification_code()
+
+        assert result is outcome
+        client._api.auth.resend_verification_code.assert_awaited_once_with()
+
+    async def test_resend_does_not_swallow_authentication_errors(self, client):
+        """An error raised by the auth layer is re-raised, not turned into ``False``."""
+        client._api.auth.resend_verification_code = AsyncMock(
+            side_effect=EeroAuthenticationException("No session token available. Login first.")
+        )
+
+        with pytest.raises(EeroAuthenticationException, match="Login first"):
+            await client.resend_verification_code()
+
+    async def test_resend_without_a_pending_login_raises_before_any_request(
+        self, client, mock_session
+    ):
+        """With the real auth method and no session token, nothing is sent."""
+        assert client.is_authenticated is False
+
+        with pytest.raises(EeroAuthenticationException):
+            await client.resend_verification_code()
+
+        mock_session.request.assert_not_called()
+
+    async def test_resend_leaves_cache_and_preferred_network_alone(self, client):
+        """Resending a code is not a session change."""
+        client._api.auth.resend_verification_code = AsyncMock(return_value=True)
+        _seed(client, "network", "network_123")
+
+        await client.resend_verification_code()
+
+        assert "network_123" in client._cache["network"]
+        assert client.preferred_network_id == "network_123"
+
+    async def test_clear_auth_data_calls_the_auth_layer_once(self, client):
+        """The facade delegates the credential removal to the auth layer."""
+        client._api.auth.clear_auth_data = AsyncMock()
+
+        result = await client.clear_auth_data()
+
+        assert result is None
+        client._api.auth.clear_auth_data.assert_awaited_once_with()
+
+    @pytest.mark.parametrize("explicit", [True, False], ids=["explicit", "discovered"])
+    async def test_clear_auth_data_resets_preferred_network_and_cache(self, client, explicit):
+        """Both an explicit and a discovered preferred network are forgotten, and the cache is emptied."""
+        client._api.auth.clear_auth_data = AsyncMock()
+        client._preferred_network_explicit = explicit
+        _seed(client, "network", "network_123")
+        _seed(client, "eeros", "network_123_eeros", [])
+        _seed(client, "devices", "network_123_devices", [])
+        _seed(client, "profiles", "network_123_profiles", [])
+        client._update_cache("account", None, {"data": {"name": "acct"}})
+        client._update_cache("networks", None, {"data": []})
+        epoch = client._cache_epoch
+
+        await client.clear_auth_data()
+
+        assert client.preferred_network_id is None
+        assert client._preferred_network_explicit is False
+        assert client._cache["account"]["data"] is None
+        assert client._cache["networks"]["data"] is None
+        for bucket in ("network", "eeros", "devices", "profiles"):
+            assert client._cache[bucket] == {}
+        assert client._cache_epoch > epoch
+
+    async def test_clear_auth_data_is_reflected_in_client_auth_state(self, client, mock_session):
+        """With the real auth method, only the storage backend faked, the facade reports cleared auth.
+
+        ``is_authenticated`` and ``credentials_persisted`` come from the real
+        in-memory credentials; the stored record's removal is the one thing
+        mocked (``storage.clear``), and no HTTP request is made.
+        """
+        auth = client._api.auth
+        auth._credentials.session_id = "tok"
+        auth._last_persist_ok = False
+        auth._storage.clear = AsyncMock()
+        assert client.is_authenticated is True
+        assert client.credentials_persisted is False
+
+        await client.clear_auth_data()
+
+        auth._storage.clear.assert_awaited_once_with()
+        assert client.is_authenticated is False
+        assert client.credentials_persisted is True
+        assert client.preferred_network_id is None
+        mock_session.request.assert_not_called()
+
+    async def test_clear_auth_data_state_follows_a_mocked_auth_layer(self, client):
+        """With the auth layer replaced by a stub that clears the token, the facade still resets itself."""
+
+        async def clear() -> None:
+            client._api.auth._credentials.session_id = None
+
+        client._api.auth._credentials.session_id = "tok"
+        client._api.auth.clear_auth_data = AsyncMock(side_effect=clear)
+
+        await client.clear_auth_data()
+
+        assert client.is_authenticated is False
+        assert client.preferred_network_id is None
+
+
+# ========================== Blacklist ==========================
+
+
+class TestBlacklistWrappers:
+    """EeroClient.add_to_blacklist and EeroClient.remove_from_blacklist."""
+
+    @pytest.mark.parametrize(
+        "wrapper, device",
+        [
+            ("add_to_blacklist", "aa:bb:cc:11:22:33"),
+            ("remove_from_blacklist", "aa:bb:cc:11:22:33"),
+            ("remove_from_blacklist", "aabbcc112233"),
+        ],
+    )
+    async def test_invalidates_the_device_entry_and_list(self, wrapper_client, wrapper, device):
+        """The device's cache entry (any MAC spelling) and the device list are dropped."""
+        _stub_domain(wrapper_client, f"blacklist.{wrapper}")
+        _seed(wrapper_client, "devices", "network_123_aabbcc112233")
+        _seed(wrapper_client, "devices", "network_123_devices", [])
+        _seed(wrapper_client, "devices", "network_123_ffeeddccbbaa")
+        _seed(wrapper_client, "devices", "other_net_aabbcc112233")
+
+        await getattr(wrapper_client, wrapper)(device)
+
+        assert "network_123_aabbcc112233" not in wrapper_client._cache["devices"]
+        assert "network_123_devices" not in wrapper_client._cache["devices"]
+        assert "network_123_ffeeddccbbaa" in wrapper_client._cache["devices"]
+        assert "other_net_aabbcc112233" in wrapper_client._cache["devices"]
+
+    @pytest.mark.parametrize("wrapper", ["add_to_blacklist", "remove_from_blacklist"])
+    async def test_does_not_touch_the_network_cache(self, wrapper_client, wrapper):
+        """There is no blacklist cache and the network resource is unchanged."""
+        _stub_domain(wrapper_client, f"blacklist.{wrapper}")
+        _seed(wrapper_client, "network", "network_123")
+
+        await getattr(wrapper_client, wrapper)("aa:bb:cc:11:22:33")
+
+        assert "network_123" in wrapper_client._cache["network"]
+
+    @pytest.mark.parametrize("wrapper", ["add_to_blacklist", "remove_from_blacklist"])
+    async def test_does_not_go_through_the_device_alias(self, wrapper_client, wrapper):
+        """The direct form calls the blacklist API, not ``devices.block_device``/``unblock_device``."""
+        _stub_domain(wrapper_client, f"blacklist.{wrapper}")
+        wrapper_client._api.devices.block_device = AsyncMock()
+        wrapper_client._api.devices.unblock_device = AsyncMock()
+
+        await getattr(wrapper_client, wrapper)("aa:bb:cc:11:22:33")
+
+        wrapper_client._api.devices.block_device.assert_not_called()
+        wrapper_client._api.devices.unblock_device.assert_not_called()
+
+
+# ========================== Bedtime ==========================
+
+
+class TestBedtimeWrappers:
+    """EeroClient.set_weekday_bedtime and EeroClient.set_weekend_bedtime.
+
+    ``parent`` is the PROFILE's envelope here, and the facade has no cached
+    profile envelope to fall back to, so it never invents one.
+    """
+
+    WRAPPERS = pytest.mark.parametrize(
+        "wrapper, days",
+        [("set_weekday_bedtime", WEEKDAYS), ("set_weekend_bedtime", WEEKEND)],
+    )
+
+    @WRAPPERS
+    async def test_forwards_arguments_positionally(self, wrapper_client, wrapper, days):
+        """Profile, start and end follow the network id, in ``enable_bedtime``'s order."""
+        stub = _stub_domain(wrapper_client, f"schedule.{wrapper}")
+
+        result = await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00")
+
+        stub.assert_awaited_once_with("network_123", "profile_1", "21:00", "07:00")
+        assert result is _DOMAIN_ENVELOPE
+
+    @WRAPPERS
+    async def test_explicit_profile_parent_is_forwarded_unchanged(
+        self, wrapper_client, wrapper, days
+    ):
+        """A caller's profile envelope is passed as-is."""
+        stub = _stub_domain(wrapper_client, f"schedule.{wrapper}")
+
+        await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00", parent=_CALLER_PARENT)
+
+        stub.assert_awaited_once_with(
+            "network_123", "profile_1", "21:00", "07:00", parent=_CALLER_PARENT
+        )
+        assert stub.await_args.kwargs["parent"] is _CALLER_PARENT
+
+    @WRAPPERS
+    async def test_never_substitutes_the_network_envelope_or_fetches_a_profile(
+        self, wrapper_client, wrapper, days
+    ):
+        """A cached NETWORK envelope is not a profile envelope, and nothing is fetched."""
+        stub = _stub_domain(wrapper_client, f"schedule.{wrapper}")
+        wrapper_client._api.profiles.get_profile = AsyncMock()
+        wrapper_client._api.profiles.get_profiles = AsyncMock()
+        _seed_cached_network(wrapper_client)
+        _seed(wrapper_client, "profiles", "network_123_profile_1", _CALLER_PARENT)
+
+        await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00")
+
+        assert "parent" not in stub.await_args.kwargs
+        wrapper_client._api.profiles.get_profile.assert_not_called()
+        wrapper_client._api.profiles.get_profiles.assert_not_called()
+
+    @WRAPPERS
+    async def test_network_id_is_the_last_positional_parameter(self, wrapper_client, wrapper, days):
+        """An explicit ``network_id`` after the times overrides the preferred one."""
+        stub = _stub_domain(wrapper_client, f"schedule.{wrapper}")
+
+        await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00", "network_456")
+
+        stub.assert_awaited_once_with("network_456", "profile_1", "21:00", "07:00")
+
+    @WRAPPERS
+    async def test_without_a_network_raises_and_does_not_discover(
+        self, wrapper_client, wrapper, days
+    ):
+        """No network id and no preferred network is an error, without a ``get_networks`` call."""
+        stub = _stub_domain(wrapper_client, f"schedule.{wrapper}")
+        wrapper_client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00")
+
+        wrapper_client._api.networks.get_networks.assert_not_called()
+        stub.assert_not_called()
+
+    @WRAPPERS
+    async def test_invalidates_the_profile_and_the_profile_list(
+        self, wrapper_client, wrapper, days
+    ):
+        """The profile's entry and the profiles list are dropped; other profiles stay."""
+        _stub_domain(wrapper_client, f"schedule.{wrapper}")
+        _seed(wrapper_client, "profiles", "network_123_profile_1")
+        _seed(wrapper_client, "profiles", "network_123_profiles", [])
+        _seed(wrapper_client, "profiles", "network_123_profile_2")
+        _seed(wrapper_client, "profiles", "other_net_profile_1")
+
+        await getattr(wrapper_client, wrapper)("profile_1", "21:00", "07:00")
+
+        assert "network_123_profile_1" not in wrapper_client._cache["profiles"]
+        assert "network_123_profiles" not in wrapper_client._cache["profiles"]
+        assert "network_123_profile_2" in wrapper_client._cache["profiles"]
+        assert "other_net_profile_1" in wrapper_client._cache["profiles"]
+
+    @WRAPPERS
+    async def test_real_domain_creates_one_schedule_with_the_day_set_and_warns(
+        self, real_domain_client, mock_session, caplog, wrapper, days
+    ):
+        """The real domain method posts one schedule over the constant day set and warns."""
+        mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
+
+        with caplog.at_level(logging.WARNING):
+            result = await getattr(real_domain_client, wrapper)("profile_1", "21:00", "07:00")
+
+        assert result == _DOMAIN_ENVELOPE
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.args[0] == "POST"
+        payload = mock_session.request.call_args.kwargs["json"]
+        assert payload["days"] == list(days)
+        assert (payload["start"], payload["end"]) == ("21:00", "07:00")
+
+
+# ========================== Request support ==========================
+
+
+class TestRequestSupportWrapper:
+    """EeroClient.request_support."""
+
+    async def test_body_is_forwarded_as_the_same_object(self, wrapper_client):
+        """The request body reaches the domain method unchanged and unvalidated."""
+        stub = _stub_domain(wrapper_client, "support.request_support")
+        body = {"free_form": object(), "nested": {"anything": [1, 2, 3]}}
+
+        await wrapper_client.request_support(body)
+
+        assert stub.await_args.args[1] is body
+
+    async def test_leaves_every_cache_bucket_alone(self, wrapper_client):
+        """Asking for support changes nothing that is cached."""
+        _stub_domain(wrapper_client, "support.request_support")
+        _seed(wrapper_client, "network", "network_123")
+        _seed(wrapper_client, "eeros", "network_123_eeros", [])
+        _seed(wrapper_client, "devices", "network_123_devices", [])
+        _seed(wrapper_client, "profiles", "network_123_profiles", [])
+
+        await wrapper_client.request_support({})
+
+        assert "network_123" in wrapper_client._cache["network"]
+        assert "network_123_eeros" in wrapper_client._cache["eeros"]
+        assert "network_123_devices" in wrapper_client._cache["devices"]
+        assert "network_123_profiles" in wrapper_client._cache["profiles"]
+
+    async def test_uncharacterised_warning_propagates(
+        self, real_domain_client, mock_session, caplog
+    ):
+        """The real domain method's uncharacterised-write warning is still logged."""
+        mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
+
+        with caplog.at_level(logging.WARNING):
+            result = await real_domain_client.request_support({"subject": "slow wi-fi"})
+
+        assert result == _DOMAIN_ENVELOPE
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.kwargs["json"] == {"subject": "slow wi-fi"}
+
+
+# ========================== IPv6 upstream ==========================
+
+
+class TestIpv6UpstreamWrapper:
+    """EeroClient.set_ipv6_upstream."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_forwards_the_flag_without_touching_set_ipv6(self, wrapper_client, enabled):
+        """Only the upstream write is issued; the both-flags ``set_ipv6`` is not called."""
+        stub = _stub_domain(wrapper_client, "security.set_ipv6_upstream")
+        wrapper_client._api.security.set_ipv6 = AsyncMock()
+
+        await wrapper_client.set_ipv6_upstream(enabled)
+
+        stub.assert_awaited_once_with("network_123", enabled)
+        wrapper_client._api.security.set_ipv6.assert_not_called()
+
+    async def test_invalidates_only_the_network_cache(self, wrapper_client):
+        """The network entry is dropped; eeros and devices are untouched."""
+        _stub_domain(wrapper_client, "security.set_ipv6_upstream")
+        _seed(wrapper_client, "network", "network_123")
+        _seed(wrapper_client, "eeros", "network_123_eeros", [])
+        _seed(wrapper_client, "devices", "network_123_devices", [])
+
+        await wrapper_client.set_ipv6_upstream(True)
+
+        assert "network_123" not in wrapper_client._cache["network"]
+        assert "network_123_eeros" in wrapper_client._cache["eeros"]
+        assert "network_123_devices" in wrapper_client._cache["devices"]
+
+    async def test_uncharacterised_warning_propagates(
+        self, real_domain_client, mock_session, caplog
+    ):
+        """The real domain method's uncharacterised-write warning is still logged."""
+        mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
+
+        with caplog.at_level(logging.WARNING):
+            result = await real_domain_client.set_ipv6_upstream(True)
+
+        assert result == _DOMAIN_ENVELOPE
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.kwargs["json"] == {"ipv6_upstream": True}
+
+
+# ========================== Eeros data usage ==========================
+
+
+class TestEerosDataUsageWrapper:
+    """EeroClient.get_eeros_data_usage."""
+
+    async def test_forwards_window_and_options_by_keyword(self, wrapper_client):
+        """start, end, cadence, timezone and timeout all reach the domain method."""
+        stub = _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+        timeout = aiohttp.ClientTimeout(total=5)
+
+        result = await wrapper_client.get_eeros_data_usage(
+            start="2026-10-01T00:00:00Z",
+            end="2026-10-02T00:00:00Z",
+            cadence="hourly",
+            timezone="Europe/London",
+            timeout=timeout,
+        )
+
+        stub.assert_awaited_once_with(
+            "network_123",
+            start="2026-10-01T00:00:00Z",
+            end="2026-10-02T00:00:00Z",
+            cadence="hourly",
+            timezone="Europe/London",
+            timeout=timeout,
+        )
+        assert stub.await_args.kwargs["timeout"] is timeout
+        assert result is _DOMAIN_ENVELOPE
+
+    async def test_timezone_and_timeout_default_to_none(self, wrapper_client):
+        """Omitted options are forwarded as ``None``, and no ``parent`` is passed."""
+        stub = _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+        _seed_cached_network(wrapper_client)
+
+        await wrapper_client.get_eeros_data_usage(start="s", end="e", cadence="daily")
+
+        stub.assert_awaited_once_with(
+            "network_123", start="s", end="e", cadence="daily", timezone=None, timeout=None
+        )
+
+    async def test_explicit_network_id_wins(self, wrapper_client):
+        """A positional ``network_id`` overrides the preferred network."""
+        stub = _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+
+        await wrapper_client.get_eeros_data_usage(
+            "network_456", start="s", end="e", cadence="daily"
+        )
+
+        assert stub.await_args.args == ("network_456",)
+
+    async def test_without_a_network_raises_and_does_not_discover(self, wrapper_client):
+        """No network id and no preferred network is an error, without a ``get_networks`` call."""
+        stub = _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+        wrapper_client._preferred_network_id = None
+
+        with pytest.raises(EeroException, match="No network ID"):
+            await wrapper_client.get_eeros_data_usage(start="s", end="e", cadence="daily")
+
+        wrapper_client._api.networks.get_networks.assert_not_called()
+        stub.assert_not_called()
+
+    async def test_is_not_cached_and_does_not_invalidate(self, wrapper_client):
+        """Every call hits the domain method, and existing cache entries stay."""
+        stub = _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+        _seed(wrapper_client, "network", "network_123")
+        _seed(wrapper_client, "eeros", "network_123_eeros", [])
+
+        await wrapper_client.get_eeros_data_usage(start="s", end="e", cadence="daily")
+        await wrapper_client.get_eeros_data_usage(start="s", end="e", cadence="daily")
+
+        assert stub.await_count == 2
+        assert "network_123" in wrapper_client._cache["network"]
+        assert "network_123_eeros" in wrapper_client._cache["eeros"]
+
+    async def test_is_distinct_from_the_summary_wrapper(self, wrapper_client):
+        """It calls ``get_eeros_usage``, not ``get_eeros_summary``."""
+        _stub_domain(wrapper_client, "data_usage.get_eeros_usage")
+        summary = _stub_domain(wrapper_client, "data_usage.get_eeros_summary")
+
+        await wrapper_client.get_eeros_data_usage(start="s", end="e", cadence="daily")
+
+        summary.assert_not_called()
+
+
+# ========================== Network DNS policy switches ==========================
+
+
+class TestNetworkDnsPolicyWrappers:
+    """EeroClient.set_network_ad_block and EeroClient.set_network_block_malware."""
+
+    @pytest.fixture
+    def seeded(self, wrapper_client):
+        """A client with a network, two profiles of it, a profiles list and another network's profile."""
+        _seed_cached_network(wrapper_client)
+        _seed(wrapper_client, "profiles", "network_123_profile_1")
+        _seed(wrapper_client, "profiles", "network_123_profile_2")
+        _seed(wrapper_client, "profiles", "network_123_profiles", [])
+        _seed(wrapper_client, "profiles", "other_net_profile_1")
+        return wrapper_client
+
+    async def test_ad_block_without_profiles_sends_none_and_keeps_profile_caches(self, seeded):
+        """The network-wide switch evicts the network entry only."""
+        stub = _stub_domain(seeded, "dns_policies.set_network_ad_block")
+
+        await seeded.set_network_ad_block(True)
+
+        stub.assert_awaited_once_with(
+            "network_123", True, profiles=None, parent=_cached_network_envelope()
+        )
+        assert "network_123" not in seeded._cache["network"]
+        assert set(seeded._cache["profiles"]) == {
+            "network_123_profile_1",
+            "network_123_profile_2",
+            "network_123_profiles",
+            "other_net_profile_1",
+        }
+
+    @pytest.mark.parametrize("profiles", [["profile_1"], []], ids=["named", "empty-list"])
+    async def test_ad_block_with_profiles_evicts_every_profile_of_the_network(
+        self, seeded, profiles
+    ):
+        """A given ``profiles`` list (even empty) drops the network and all its cached profiles."""
+        stub = _stub_domain(seeded, "dns_policies.set_network_ad_block")
+
+        await seeded.set_network_ad_block(True, profiles=profiles)
+
+        stub.assert_awaited_once_with(
+            "network_123", True, profiles=profiles, parent=_cached_network_envelope()
+        )
+        assert stub.await_args.kwargs["profiles"] is profiles
+        assert "network_123" not in seeded._cache["network"]
+        assert set(seeded._cache["profiles"]) == {"other_net_profile_1"}
+
+    async def test_block_malware_evicts_the_network_but_not_profiles(self, seeded):
+        """Malware blocking is a network setting: profile caches stay."""
+        stub = _stub_domain(seeded, "dns_policies.set_network_block_malware")
+
+        await seeded.set_network_block_malware(True)
+
+        stub.assert_awaited_once_with("network_123", True, parent=_cached_network_envelope())
+        assert "network_123" not in seeded._cache["network"]
+        assert len(seeded._cache["profiles"]) == 4
+
+    @pytest.mark.parametrize(
+        "wrapper, args",
+        [("set_network_ad_block", (True,)), ("set_network_block_malware", (True,))],
+    )
+    async def test_premium_error_propagates_and_keeps_the_cache(self, seeded, wrapper, args):
+        """A non-premium network surfaces its error and nothing is invalidated."""
+        stub = _stub_domain(seeded, f"dns_policies.{wrapper}")
+        stub.side_effect = EeroPremiumRequiredException("DNS policies")
+
+        with pytest.raises(EeroPremiumRequiredException):
+            await getattr(seeded, wrapper)(*args)
+
+        assert "network_123" in seeded._cache["network"]
+
+    async def test_ad_block_uncharacterised_warning_propagates(
+        self, real_domain_client, mock_session, caplog
+    ):
+        """The real domain method's uncharacterised-write warning is still logged."""
+        envelope = {"meta": {"code": 200}}
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        with caplog.at_level(logging.WARNING):
+            result = await real_domain_client.set_network_ad_block(True)
+
+        assert result == envelope
+        assert any("not been fully characterised" in m for m in caplog.messages)
+        mock_session.request.assert_called_once()
+        assert mock_session.request.call_args.args[1].endswith(
+            "/networks/network_123/dns_policies/adblock"
+        )
+        assert mock_session.request.call_args.kwargs["json"] == {"enable": True}
+
+    async def test_block_malware_sends_the_validated_body_key(
+        self, real_domain_client, mock_session
+    ):
+        """The real domain method posts ``block_malware`` to ``dns_policies/network``."""
+        mock_session.request.return_value = create_mock_response(200, {"meta": {"code": 200}})
+
+        await real_domain_client.set_network_block_malware(False)
+
+        assert mock_session.request.call_args.args[1].endswith(
+            "/networks/network_123/dns_policies/network"
+        )
+        assert mock_session.request.call_args.kwargs["json"] == {"block_malware": False}
 
 
 class TestEeroClientGetAccount:

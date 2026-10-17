@@ -56,7 +56,7 @@ A wrong code surfaces as `EeroAuthenticationException` raised by the transport f
 
 ### `resend_verification_code()`
 
-Available on `AuthAPI` (not exposed on `EeroClient`/`EeroAPI` — call it via `client._api.auth.resend_verification_code()` if you need it, though this reaches into a private attribute that is not covered by semver). POSTs an empty JSON object (`{}`) to `/2.2/login/resend`, authenticated with the pending `session_id` from `login()`. Returns `False` on an `EeroAPIException` (any status other than 401/429/400-validation); raises `EeroAuthenticationException` if the pending token is rejected with a 401 or if no login is in progress, `EeroRateLimitException` on 429, `EeroNetworkException` on transport error.
+Available as `client.resend_verification_code()` since v8.4.0 (and on `AuthAPI`). POSTs an empty JSON object (`{}`) to `/2.2/login/resend`, authenticated with the pending `session_id` from `login()`. Returns `False` on an `EeroAPIException` (any status other than 401/429/400-validation); raises `EeroAuthenticationException` if the pending token is rejected with a 401 or if no login is in progress, `EeroRateLimitException` on 429, `EeroNetworkException` on transport error.
 
 ---
 
@@ -147,7 +147,7 @@ await client.clear_session_token() # wipes local state only, no network call
 
 `EeroClient.set_session_token()` / `clear_session_token()` additionally call `clear_cache()`, and `EeroClient.logout()` clears the cache when it returns `True` (i.e. whenever credentials were actually present), so the in-memory response cache never serves data from a different session.
 
-There is also `AuthAPI.clear_auth_data()` (not exposed on `EeroClient`/`EeroAPI`); it does the same as `clear_session_token()` (clears memory and deletes the stored record in every backend) and additionally resets the internal login-in-progress flag.
+There is also `client.clear_auth_data()` (since v8.4.0; wraps `AuthAPI.clear_auth_data()`). It does the same as `clear_session_token()` (clears memory and deletes the stored record in every backend, with no API call) and additionally resets the internal login-in-progress flag; the `EeroClient` wrapper also resets the preferred network and empties the in-memory cache.
 
 ---
 

@@ -1,5 +1,7 @@
 """Tests for BurstReportersAPI module."""
 
+import logging
+import warnings
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -32,47 +34,112 @@ class TestBurstReportersAPICreateReporter:
         auth_api.get_auth_token = AsyncMock(return_value="auth_token")
         return BurstReportersAPI(auth_api)
 
-    @pytest.mark.asyncio
-    async def test_create_burst_reporter_returns_raw_response(self, burst_api, mock_session):
-        """Test create_burst_reporter returns raw response."""
-        mock_response = create_mock_response(200, {"meta": {"code": 200}, "data": {}})
-        mock_session.request.return_value = mock_response
-
-        reporter_data = {"type": "burst"}
-        result = await burst_api.create_burst_reporter("network_123", reporter_data)
-
-        assert "meta" in result
-
-    @pytest.mark.asyncio
-    async def test_create_burst_reporter_not_authenticated(self, burst_api):
-        """Test create_burst_reporter raises when not authenticated."""
-        burst_api._auth_api.get_auth_token = AsyncMock(return_value=None)
-
-        with pytest.raises(EeroAuthenticationException):
-            await burst_api.create_burst_reporter("network_123", {})
-
-    @pytest.mark.asyncio
-    async def test_create_burst_reporter_uses_default_template(self, burst_api, mock_session):
-        """Test create_burst_reporter builds the URL from the template with no parent."""
+    @pytest.fixture
+    def ok_response(self, mock_session):
+        """Queue a generic success response on the mocked session."""
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
 
-        await burst_api.create_burst_reporter("network_123", {"type": "burst"})
+    @pytest.mark.asyncio
+    async def test_no_data_sends_empty_json_string_body(self, burst_api, mock_session, ok_response):
+        """Test the request body is the two-character string "" with a JSON content type."""
+        await burst_api.create_burst_reporter("network_123")
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "POST"
+        assert call_args.kwargs["data"] == '""'
+        assert "json" not in call_args.kwargs
+        assert call_args.kwargs["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_no_data_does_not_emit_deprecation_warning(
+        self, burst_api, mock_session, ok_response
+    ):
+        """Test omitting reporter_data emits no DeprecationWarning."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            await burst_api.create_burst_reporter("network_123")
+
+    @pytest.mark.asyncio
+    async def test_data_is_forwarded_as_json_and_deprecated(
+        self, burst_api, mock_session, ok_response
+    ):
+        """Test a non-empty reporter_data is forwarded as json= with a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="9.0.0"):
+            await burst_api.create_burst_reporter("network_123", {"type": "burst"})
+
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"] == {"type": "burst"}
+        assert "data" not in call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_empty_data_sends_empty_json_string_and_deprecated(
+        self, burst_api, mock_session, ok_response
+    ):
+        """Test an empty reporter_data sends the "" body and still warns."""
+        with pytest.warns(DeprecationWarning, match="9.0.0"):
+            await burst_api.create_burst_reporter("network_123", {})
+
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["data"] == '""'
+        assert "json" not in call_args.kwargs
+        assert call_args.kwargs["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_deprecation_warning_points_at_caller(self, burst_api, ok_response):
+        """Test the DeprecationWarning is attributed to the calling module."""
+        with pytest.warns(DeprecationWarning) as record:
+            await burst_api.create_burst_reporter("network_123", {"type": "burst"})
+
+        assert record[0].filename == __file__
+
+    @pytest.mark.asyncio
+    async def test_uses_default_template(self, burst_api, mock_session, ok_response):
+        """Test the URL is built from the template with no parent."""
+        await burst_api.create_burst_reporter("network_123")
 
         call_args = mock_session.request.call_args
         assert call_args.args[1].endswith("/2.2/networks/network_123/burst_reporters")
-        assert call_args.kwargs["json"] == {"type": "burst"}
 
     @pytest.mark.asyncio
-    async def test_create_burst_reporter_prefers_parent_link(self, burst_api, mock_session):
-        """Test create_burst_reporter uses the network's published burst_reporters link."""
-        mock_session.request.return_value = create_mock_response(
-            200, {"meta": {"code": 200}, "data": {}}
-        )
+    async def test_prefers_parent_link(self, burst_api, mock_session, ok_response):
+        """Test the network's published burst_reporters link wins over the template."""
         parent = {"resources": {"burst_reporters": "/2.3/networks/network_123/burst_reporters"}}
 
-        await burst_api.create_burst_reporter("network_123", {"type": "burst"}, parent=parent)
+        await burst_api.create_burst_reporter("network_123", parent=parent)
 
         call_args = mock_session.request.call_args
         assert call_args.args[1].endswith("/2.3/networks/network_123/burst_reporters")
+
+    @pytest.mark.asyncio
+    async def test_next_burst_envelope_passes_through(self, burst_api, mock_session):
+        """Test the next_burst response envelope is returned unchanged."""
+        envelope = {"meta": {"code": 200}, "data": {"next_burst": "2026-10-17T10:00:00Z"}}
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await burst_api.create_burst_reporter("network_123")
+
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_warns_uncharacterised_write(self, burst_api, mock_session, ok_response, caplog):
+        """Test the uncharacterised-write warning fires with the live-usage wording."""
+        with caplog.at_level(logging.WARNING):
+            await burst_api.create_burst_reporter("network_123")
+
+        assert any(
+            "request live-usage burst for network" in m and "not been fully characterised" in m
+            for m in caplog.messages
+        )
+        assert not any("network_123" in m for m in caplog.messages if "characterised" in m)
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, burst_api, mock_session):
+        """Test create_burst_reporter raises before any request when not authenticated."""
+        burst_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException):
+            await burst_api.create_burst_reporter("network_123")
+
+        mock_session.request.assert_not_called()

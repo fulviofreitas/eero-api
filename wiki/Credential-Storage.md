@@ -190,9 +190,9 @@ There is no monkey-patch-free extension point beyond that — don't assume one e
 | Rotate to a new externally-issued token | `await client.set_session_token(new_token)` |
 | Drop the active session locally, no server round-trip | `await client.clear_session_token()` |
 | Log out and tell the server too | `await client.logout()` |
-| Same as `clear_session_token()` plus resets the login-in-progress flag | `await client._api.auth.clear_auth_data()` (reaches into the private `AuthAPI`; not exposed on `EeroClient`/`EeroAPI`; not covered by semver) |
+| Same as `clear_session_token()` plus resets the login-in-progress flag, the preferred network and the in-memory cache | `await client.clear_auth_data()` (since v8.4.0) |
 
-Every credential-dropping call above (`clear_session_token`, `logout`, `clear_auth_data`) deletes the stored record from every backend — there is no "re-save an empty record" variant. The operations exposed on `EeroClient` also invalidate its in-memory response cache as a side effect (`set_session_token` and `clear_session_token` always; `logout` when it returns `True`, i.e. whenever credentials were actually present), so a rotated or cleared session never serves stale cached data.
+Every credential-dropping call above (`clear_session_token`, `logout`, `clear_auth_data`) deletes the stored record from every backend — there is no "re-save an empty record" variant. The operations exposed on `EeroClient` also invalidate its in-memory response cache as a side effect (`set_session_token`, `clear_session_token` and `clear_auth_data` always; `logout` when it returns `True`, i.e. whenever credentials were actually present), so a rotated or cleared session never serves stale cached data.
 
 ---
 

@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from eero.api.dns_policies import DnsPoliciesAPI
-from eero.exceptions import EeroAuthenticationException
+from eero.exceptions import (
+    EeroAuthenticationException,
+    EeroPremiumRequiredException,
+    EeroValidationException,
+)
 
 from .conftest import api_success_response, create_mock_response
 
@@ -391,3 +395,205 @@ class TestSetProfileBlockedApplications:
             await dns_policies_api.set_profile_blocked_applications(
                 "network_123", "profile_1", ["app_1"]
             )
+
+
+_PREMIUM_REFUSAL = {"meta": {"code": 402, "error": "error.premium.user_not_subscribed"}}
+
+
+class TestSetNetworkAdBlock:
+    """Tests for set_network_ad_block."""
+
+    P1 = "/2.2/networks/network_123/profiles/p1"
+    P2 = "/2.2/networks/network_123/profiles/p2"
+
+    @pytest.mark.asyncio
+    async def test_network_wide_body_omits_profiles(self, dns_policies_api, mock_session):
+        """Test the body is exactly {'enable': True} and the request is a POST."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await dns_policies_api.set_network_ad_block("network_123", True)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "POST"
+        assert call_args.args[1].endswith("/2.2/networks/network_123/dns_policies/adblock")
+        assert call_args.kwargs["json"] == {"enable": True}
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_envelope(self, dns_policies_api, mock_session):
+        """Test the raw envelope is returned unchanged."""
+        envelope = api_success_response({})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await dns_policies_api.set_network_ad_block("network_123", False)
+
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_bare_ids_normalised_to_paths(self, dns_policies_api, mock_session):
+        """Test bare profile ids are sent as host-relative profile paths."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await dns_policies_api.set_network_ad_block("network_123", True, profiles=["p1", "p2"])
+
+        assert mock_session.request.call_args.kwargs["json"] == {
+            "enable": True,
+            "profiles": [self.P1, self.P2],
+        }
+
+    @pytest.mark.asyncio
+    async def test_paths_and_absolute_urls_normalised(self, dns_policies_api, mock_session):
+        """Test an API path and an absolute URL normalise to the same path form."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await dns_policies_api.set_network_ad_block(
+            "network_123",
+            True,
+            profiles=[self.P1, "https://api-user.e2ro.com/2.2/networks/network_123/profiles/p2"],
+        )
+
+        assert mock_session.request.call_args.kwargs["json"] == {
+            "enable": True,
+            "profiles": [self.P1, self.P2],
+        }
+
+    @pytest.mark.asyncio
+    async def test_empty_profiles_list_sent_as_empty_list(self, dns_policies_api, mock_session):
+        """Test an empty list is sent as [] rather than omitted."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await dns_policies_api.set_network_ad_block("network_123", True, profiles=[])
+
+        assert mock_session.request.call_args.kwargs["json"] == {"enable": True, "profiles": []}
+
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            "/2.2/networks/other_network/profiles/p1",
+            "/2.2/account",
+            "/2.2/networks/network_123/devices/d1",
+            "",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_foreign_profile_reference_rejected_before_request(
+        self, dns_policies_api, mock_session, profile
+    ):
+        """Test a reference to another network or resource family never reaches the wire."""
+        with pytest.raises(EeroValidationException):
+            await dns_policies_api.set_network_ad_block("network_123", True, profiles=[profile])
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prefers_parent_url(self, dns_policies_api, mock_session):
+        """Test the parent's own url is used as the base instead of the template."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        parent = {"url": "/2.3/networks/network_123"}
+
+        await dns_policies_api.set_network_ad_block("network_123", True, parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/dns_policies/adblock")
+        assert call_args.kwargs["json"] == {"enable": True}
+
+    @pytest.mark.asyncio
+    async def test_warns_uncharacterised_write(self, dns_policies_api, mock_session, caplog):
+        """Test the write logs the unconfirmed-write warning exactly once."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level(logging.WARNING):
+            await dns_policies_api.set_network_ad_block("network_123", True)
+
+        matches = [m for m in caplog.messages if "set network ad block for network" in m]
+        assert len(matches) == 1
+
+    @pytest.mark.asyncio
+    async def test_premium_refusal_raises(self, dns_policies_api, mock_session):
+        """Test the transport's premium refusal propagates unchanged."""
+        mock_session.request.return_value = create_mock_response(402, _PREMIUM_REFUSAL)
+
+        with pytest.raises(EeroPremiumRequiredException):
+            await dns_policies_api.set_network_ad_block("network_123", True)
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, dns_policies_api, mock_session):
+        """Test raises before any request when not authenticated."""
+        dns_policies_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await dns_policies_api.set_network_ad_block("network_123", True)
+        mock_session.request.assert_not_called()
+
+
+class TestSetNetworkBlockMalware:
+    """Tests for set_network_block_malware and its keyed helper."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.asyncio
+    async def test_body_and_url(self, dns_policies_api, mock_session, enabled):
+        """Test the body is exactly {'block_malware': enabled} sent by POST."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await dns_policies_api.set_network_block_malware("network_123", enabled)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "POST"
+        assert call_args.args[1].endswith("/2.2/networks/network_123/dns_policies/network")
+        assert call_args.kwargs["json"] == {"block_malware": enabled}
+
+    @pytest.mark.asyncio
+    async def test_returns_raw_envelope(self, dns_policies_api, mock_session):
+        """Test the raw envelope is returned unchanged."""
+        envelope = api_success_response({})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await dns_policies_api.set_network_block_malware("network_123", True)
+
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_prefers_parent_url(self, dns_policies_api, mock_session):
+        """Test the parent's own url is used as the base instead of the template."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        parent = {"url": "/2.3/networks/network_123"}
+
+        await dns_policies_api.set_network_block_malware("network_123", True, parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/dns_policies/network")
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_rejected_before_request(self, dns_policies_api, mock_session):
+        """Test an unknown key raises before any request, since the API would discard it."""
+        with pytest.raises(EeroValidationException, match="block_malware"):
+            await dns_policies_api._set_network_dns_policy("network_123", "block_malwre", True)
+        mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warns_uncharacterised_write(self, dns_policies_api, mock_session, caplog):
+        """Test the write logs the unconfirmed-write warning exactly once."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        with caplog.at_level(logging.WARNING):
+            await dns_policies_api.set_network_block_malware("network_123", True)
+
+        matches = [
+            m for m in caplog.messages if "set network DNS policy block_malware for network" in m
+        ]
+        assert len(matches) == 1
+
+    @pytest.mark.asyncio
+    async def test_premium_refusal_raises(self, dns_policies_api, mock_session):
+        """Test the transport's premium refusal propagates unchanged."""
+        mock_session.request.return_value = create_mock_response(402, _PREMIUM_REFUSAL)
+
+        with pytest.raises(EeroPremiumRequiredException):
+            await dns_policies_api.set_network_block_malware("network_123", True)
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, dns_policies_api, mock_session):
+        """Test raises before any request when not authenticated."""
+        dns_policies_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await dns_policies_api.set_network_block_malware("network_123", True)
+        mock_session.request.assert_not_called()
