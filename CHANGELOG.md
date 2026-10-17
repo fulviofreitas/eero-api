@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.4.0](https://github.com/fulviofreitas/eero-api/compare/v8.3.0...v8.4.0) (2026-10-17)
+
+### ✨ Features
+
+* **client:** expose burst, reboot, blacklist, bedtime, support, auth and DNS-policy helpers ([#190](https://github.com/fulviofreitas/eero-api/issues/190)) ([38e40d5](https://github.com/fulviofreitas/eero-api/commit/38e40d5717a53194bf2319fd42b2c24025906f1f))
+
+### 📚 Documentation
+
+* list the Home Assistant integration and new projects using eero-api ([a975198](https://github.com/fulviofreitas/eero-api/commit/a97519870069de188ed7a18410d3b01d6a06d2cf))
+
 ## [8.3.0](https://github.com/fulviofreitas/eero-api/compare/v8.2.0...v8.3.0) (2026-10-11)
 
 ### ✨ Features
