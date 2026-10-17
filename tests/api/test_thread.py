@@ -80,32 +80,53 @@ class TestThreadAPIGetThread:
 
 
 class TestThreadAPISetThreadEnabled:
-    """Tests for set_thread_enabled method."""
+    """Tests for set_thread_enabled method (alias of update_thread(thread_enable=...))."""
 
     @pytest.mark.asyncio
-    async def test_set_thread_enabled_sends_json_payload(self, thread_api, mock_session, caplog):
-        """Test set_thread_enabled PUTs {"enabled": bool} to the literal thread path."""
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_set_thread_enabled_sends_thread_enable_payload(
+        self, thread_api, mock_session, caplog, enabled
+    ):
+        """Test set_thread_enabled PUTs exactly {"thread_enable": bool} to the literal path."""
         mock_session.request.return_value = create_mock_response(
             200, {"meta": {"code": 200}, "data": {}}
         )
 
         with caplog.at_level(logging.WARNING):
-            result = await thread_api.set_thread_enabled("network_123", True)
+            result = await thread_api.set_thread_enabled("network_123", enabled)
 
         assert "meta" in result
         call_args = mock_session.request.call_args
         assert call_args.args[0] == "PUT"
         assert call_args.args[1].endswith("/2.2/networks/network_123/thread")
-        assert call_args.kwargs["json"] == {"enabled": True}
-        assert any("set thread enabled for network" in m for m in caplog.messages)
+        assert call_args.kwargs["json"] == {"thread_enable": enabled}
+        assert any("update thread config for network" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
-    async def test_set_thread_enabled_not_authenticated(self, thread_api):
+    async def test_set_thread_enabled_matches_update_thread(self, thread_api, mock_session):
+        """Test set_thread_enabled and update_thread(thread_enable=...) send identical requests."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await thread_api.set_thread_enabled("network_123", True)
+        alias_call = mock_session.request.call_args
+
+        await thread_api.update_thread("network_123", thread_enable=True)
+        direct_call = mock_session.request.call_args
+
+        assert alias_call.args == direct_call.args
+        assert alias_call.kwargs == direct_call.kwargs
+
+    @pytest.mark.asyncio
+    async def test_set_thread_enabled_not_authenticated(self, thread_api, mock_session):
         """Test set_thread_enabled raises when not authenticated."""
         thread_api._auth_api.get_auth_token = AsyncMock(return_value=None)
 
         with pytest.raises(EeroAuthenticationException):
             await thread_api.set_thread_enabled("network_123", True)
+
+        mock_session.request.assert_not_called()
 
 
 class TestThreadAPIUpdateThread:

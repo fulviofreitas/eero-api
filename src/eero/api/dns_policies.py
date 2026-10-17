@@ -17,34 +17,39 @@ has been confirmed against a live network. Each write logs one warning via
 `warn_uncharacterised_write` before it is issued; follow the read-compare-
 skip discipline and never retry a failed write in a loop.
 
-Not exposed by this module: network-level and profile-level DNS-policy
-*settings* (the twelve boolean content-category toggles such as
-``ad_block``, ``block_malware``, ``safe_search_enabled``, and the matching
-ad-block on/off switches). The network envelope's ``premium_dns`` field and
-its ``resources`` object carry no link to these settings endpoints, and a
-profile's own ``premium_dns``/``resources`` fields are equally silent --
-there is no field anywhere in either envelope this SDK can read to build
-the request URL, so hardcoding a guessed literal path would be unverifiable
-and is deliberately avoided. The operations left unexposed for this reason
-are: reading or writing a network's DNS-policy settings, updating a
-network's ad-block settings, and the profile equivalents of all three.
+The network-level switches `set_network_ad_block` (``dns_policies/adblock``)
+and `set_network_block_malware` (``dns_policies/network``) are literal
+sub-paths of the network URL that no envelope publishes as a link; they are
+exposed because a downstream integration has sent them for years, and they
+remain uncharacterised writes.
+
+Still not exposed: the profile-level content-filter settings
+(``dns_policies/profiles/{id}``, the ten boolean category toggles such as
+``safe_search_enabled``), pending a live read-back.
+
 Removal on the list-mutation endpoints below is expressed through the
 API's own ``is_delete`` field on a PUT -- there is no DELETE verb for these
 resources.
 """
 
 from typing import Any, Dict, List, Mapping, Optional
+from urllib.parse import urlsplit
 
 from ..const import API_ENDPOINT, API_VERSION_DEFAULT
-from ..exceptions import EeroAuthenticationException
+from ..exceptions import EeroAuthenticationException, EeroValidationException
 from ..logging import get_secure_logger
-from ._params import resolve_nested_url
+from ._params import resolve_nested_url, resolve_network_url
 from ._writes import as_envelope, warn_uncharacterised_write
 from .auth import AuthAPI
 from .base import AuthenticatedAPI, id_from_url
 from .links import sub_resource_url
 
 _LOGGER = get_secure_logger(__name__)
+
+#: Body keys the network-level ``dns_policies/network`` switch accepts. The
+#: API silently discards unknown keys with a 200, so this is checked
+#: client-side before any request.
+_NETWORK_DNS_POLICY_KEYS = frozenset({"block_malware"})
 
 
 def _payload(required: Dict[str, Any], **optional: Any) -> Dict[str, Any]:
@@ -69,7 +74,8 @@ class DnsPoliciesAPI(AuthenticatedAPI):
     """DNS Policies API for Eero.
 
     Manages the advanced content filter, network- and profile-level domain
-    allow/block lists, and per-profile blocked applications. All methods
+    allow/block lists, per-profile blocked applications, and the
+    network-level ad-block and malware switches. All methods
     return raw, unmodified JSON responses from the Eero Cloud API.
     Response format: {"meta": {...}, "data": {...}}
     """
@@ -546,3 +552,188 @@ class DnsPoliciesAPI(AuthenticatedAPI):
         url = self._profile_applications_blocked_url(network_id, profile_id)
         warn_uncharacterised_write(_LOGGER, "set blocked applications for profile on network")
         return await self.put(url, auth_token=auth_token, json={"applications": applications})
+
+    def _profile_paths(self, network_id: str, profiles: List[str]) -> List[str]:
+        """Normalise profile references to host-relative profile paths.
+
+        The ad-block endpoint takes profile references as host-relative
+        paths (``/2.2/networks/{network}/profiles/{profile}``), not ids.
+        Each entry may be a bare id, an API-returned path, or an absolute
+        URL on the API host. `resolve_nested_url` validates each entry
+        (rejecting a path that belongs to another network or another
+        resource family) and returns an absolute URL, whose path is taken.
+
+        Args:
+            network_id: ID of the network the profiles belong to.
+            profiles: The profile references to normalise.
+
+        Returns:
+            The host-relative profile paths, in the order given.
+
+        Raises:
+            EeroValidationException: If an entry is not a valid profile
+                reference for this network.
+        """
+        return [
+            urlsplit(
+                resolve_nested_url(
+                    network_id, profile, prefix="profiles", version=API_VERSION_DEFAULT
+                )
+            ).path
+            for profile in profiles
+        ]
+
+    async def set_network_ad_block(
+        self,
+        network_id: str,
+        enabled: bool,
+        *,
+        profiles: Optional[List[str]] = None,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Switch ad blocking on or off, network-wide or per profile - returns raw Eero API response.
+
+        POSTs a JSON body to the network's ``dns_policies/adblock``
+        resource: ``{"enable": enabled}``, plus ``"profiles"`` when
+        ``profiles`` is supplied. The ``profiles`` list REPLACES the
+        previous list; an empty list with ``enabled=True`` means
+        network-wide. Omit ``profiles`` for the network-wide switch.
+
+        This path is a literal sub-path of the network URL that no envelope
+        publishes as a link; it is not in the observed spec and is exposed
+        because a downstream integration has sent it for years.
+
+        .. warning::
+            This write has not been confirmed against a live network, and it
+            is a premium (Eero Plus / Eero Secure) feature. ``capable: true``
+            in the network's ``premium_dns`` block alone does not mean the
+            DNS-policy subsystem is enabled. Follow the read-compare-skip
+            discipline: read `get_network` (``premium_dns``) first, and only
+            issue this write when the stored state differs from the desired
+            one. Never retry a failed write in a loop.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            enabled: True to switch ad blocking on, False to switch it off.
+            profiles: Optional profile references the switch applies to, each
+                a bare id, an API-returned path, or an absolute URL; they
+                are sent as ``/2.2/networks/{network}/profiles/{profile}``
+                paths. Replaces the previous list. Omitted from the request
+                when ``None``; an empty list is sent as ``[]``.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its own ``url`` is used as the base
+                instead of the default template. Read only; never mutated.
+
+        Returns:
+            Raw API response: {"meta": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroValidationException: If a profile reference is not valid for
+                this network
+            EeroPremiumRequiredException: If the network is not on Eero
+                Plus/Secure
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        payload: Dict[str, Any] = {"enable": enabled}
+        if profiles is not None:
+            payload["profiles"] = self._profile_paths(network_id, profiles)
+
+        base_url = resolve_network_url(network_id, parent, version=API_VERSION_DEFAULT)
+        url = f"{base_url}/dns_policies/adblock"
+        warn_uncharacterised_write(_LOGGER, "set network ad block for network")
+        return await self.post(url, auth_token=auth_token, json=payload)
+
+    async def _set_network_dns_policy(
+        self,
+        network_id: str,
+        key: str,
+        value: bool,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """POST one boolean switch to the network's ``dns_policies/network`` resource.
+
+        The API silently discards unknown body keys with a 200, so ``key``
+        is checked against `_NETWORK_DNS_POLICY_KEYS` before any request.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            key: The switch to set; one of `_NETWORK_DNS_POLICY_KEYS`.
+            value: The desired state of the switch.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its own ``url`` is used as the base
+                instead of the default template. Read only; never mutated.
+
+        Returns:
+            Raw API response: {"meta": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroValidationException: If ``key`` is not a known switch
+            EeroPremiumRequiredException: If the network is not on Eero
+                Plus/Secure
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        if key not in _NETWORK_DNS_POLICY_KEYS:
+            raise EeroValidationException(
+                "key", f"must be one of {sorted(_NETWORK_DNS_POLICY_KEYS)}, got {key!r}"
+            )
+
+        base_url = resolve_network_url(network_id, parent, version=API_VERSION_DEFAULT)
+        url = f"{base_url}/dns_policies/network"
+        warn_uncharacterised_write(_LOGGER, f"set network DNS policy {key} for network")
+        return await self.post(url, auth_token=auth_token, json={key: value})
+
+    async def set_network_block_malware(
+        self,
+        network_id: str,
+        enabled: bool,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Switch malware blocking on or off for the network - returns raw Eero API response.
+
+        POSTs ``{"block_malware": enabled}`` to the network's
+        ``dns_policies/network`` resource.
+
+        This path is a literal sub-path of the network URL that no envelope
+        publishes as a link; it is not in the observed spec and is exposed
+        because a downstream integration has sent it for years.
+
+        .. warning::
+            This write has not been confirmed against a live network, and it
+            is a premium (Eero Plus / Eero Secure) feature. ``capable: true``
+            in the network's ``premium_dns`` block alone does not mean the
+            DNS-policy subsystem is enabled. Follow the read-compare-skip
+            discipline: read `get_network` (``premium_dns``) first, and only
+            issue this write when the stored state differs from the desired
+            one. Never retry a failed write in a loop.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            enabled: True to block malware, False to stop blocking it.
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its own ``url`` is used as the base
+                instead of the default template. Read only; never mutated.
+
+        Returns:
+            Raw API response: {"meta": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroPremiumRequiredException: If the network is not on Eero
+                Plus/Secure
+            EeroAPIException: If the API returns an error
+        """
+        return await self._set_network_dns_policy(
+            network_id, "block_malware", enabled, parent=parent
+        )

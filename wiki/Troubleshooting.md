@@ -67,7 +67,7 @@ async with EeroClient() as client:
 
 > **Note**: A token that the server rejects during a refresh is already cleared from storage by the SDK — credentials are kept only for the verification group (`error.verification.*`, `error.login.*`, `error.too.many.resends`, `error.email.unverified`, meaning the OTP flow was never completed — call `verify()`) or `error.session.refresh`. The `clear_session_token()` above is harmless in that case.
 
-> 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`logout()` directly — use these public methods instead of reaching into `client._api` for auth. `client._api.<domain>` is private (not covered by semver) but it IS the documented escape hatch for domain methods that have no `EeroClient` wrapper — see [API Reference](API-Reference).
+> 💡 **Tip:** `EeroClient` also exposes `login()`/`verify()`/`resend_verification_code()`/`logout()`/`clear_auth_data()` directly (`resend_verification_code()` and `clear_auth_data()` since 8.4.0) — use these public methods instead of reaching into `client._api` for auth. `client._api.<domain>` is private (not covered by semver) but it IS the documented escape hatch for domain methods that have no `EeroClient` wrapper — see [API Reference](API-Reference).
 
 ### Check Authentication Status
 

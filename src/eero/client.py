@@ -342,6 +342,25 @@ class EeroClient:
         parent = self._network_parent(network_id)
         return {"parent": parent} if parent is not None else {}
 
+    def _network_parent_kwargs_or(
+        self, network_id: str, parent: Optional[Mapping[str, Any]]
+    ) -> Dict[str, Any]:
+        """Build a ``parent=`` kwarg dict, preferring an envelope the caller supplied.
+
+        Args:
+            network_id: The resolved network ID to look up when the caller
+                supplied no ``parent``.
+            parent: The caller's own ``parent`` envelope, or ``None``.
+
+        Returns:
+            ``{"parent": parent}`` (the caller's object, forwarded unchanged)
+            when ``parent`` is not ``None``; otherwise the result of
+            :meth:`_network_parent_kwargs`, which may be ``{}``.
+        """
+        if parent is not None:
+            return {"parent": parent}
+        return self._network_parent_kwargs(network_id)
+
     @staticmethod
     def _find_by_id_or_url(envelopes: Any, resource_id: str) -> Optional[Dict[str, Any]]:
         """Find an envelope in a list matching a bare ID by ``id`` or trailing ``url`` segment.
@@ -524,6 +543,38 @@ class EeroClient:
         """
         await self._api.auth.clear_session_token()
         self._reset_session_state()
+
+    async def resend_verification_code(self) -> bool:
+        """Resend the verification code for a pending login.
+
+        A :meth:`login` call must be pending. Without one there is no session
+        token to resend against, and this raises, exactly as :meth:`verify`
+        does.
+
+        Returns:
+            True if the code was resent, False on an API-level failure
+
+        Raises:
+            EeroAuthenticationException: If no login is pending
+            EeroNetworkException: If there is a network error
+        """
+        return await self._api.auth.resend_verification_code()
+
+    async def clear_auth_data(self) -> None:
+        """Remove every stored credential record without contacting the API.
+
+        Unlike :meth:`clear_session_token`, which clears the session only, and
+        :meth:`logout`, which invalidates the session on the server and then
+        clears it, this removes every stored credential record from every
+        storage backend (keyring and file) and makes no API call. The
+        preferred network, including one chosen with
+        :meth:`set_preferred_network`, is reset and the cache is emptied,
+        since nothing cached is attributable to a session any more.
+        """
+        await self._api.auth.clear_auth_data()
+        self._preferred_network_id = None
+        self._preferred_network_explicit = False
+        self.clear_cache()
 
     # ==================== Account ====================
 
@@ -1426,6 +1477,42 @@ class EeroClient:
 
         return response
 
+    async def reboot_network(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Reboot the entire network - returns raw Eero API response.
+
+        .. warning::
+            Every eero on the network restarts and all clients lose
+            connectivity for minutes. A 200 means the request was accepted,
+            not that the network has settled: the reboot lands later. Check
+            before calling, and never wrap this in a retry loop.
+
+        Invalidates the cached network, eeros and devices.
+
+        Args:
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.networks.reboot_network(
+            network_id, **self._network_parent_kwargs_or(network_id, parent)
+        )
+        self._invalidate_network_cache(network_id)
+        self._invalidate_eeros_cache(network_id)
+        self._invalidate_device_cache(network_id)
+        return response
+
     async def get_speed_tests(
         self,
         network_id: Optional[str] = None,
@@ -1443,6 +1530,52 @@ class EeroClient:
             end_time=end_time,
             **self._network_parent_kwargs(network_id),
         )
+
+    async def create_burst_reporter(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Request a live-usage burst for the network - returns raw Eero API response.
+
+        POSTs the ``""`` body to the network's ``burst_reporters`` link. The
+        response carries ``data.next_burst`` (a timestamp string). About 12
+        seconds later the device list's ``usage.down_mbps`` and
+        ``usage.up_mbps`` carry fresh values; before the POST they are zero or
+        stale. This does not run a speed test and changes no setting. At most
+        one burst may be requested per minute per network.
+
+        To read a network-wide throughput figure: request a burst, wait roughly
+        12 seconds, read the devices with ``get_devices(refresh_cache=True)``
+        and sum ``usage.down_mbps`` / ``usage.up_mbps`` across the devices
+        where ``connected`` is true.
+
+        Invalidates the cached device list, so a caller that polls faster than
+        the 60 s cache TTL should still pass ``refresh_cache=True`` on the
+        follow-up :meth:`get_devices`.
+
+        .. warning::
+            This write has not been confirmed against a live network: its
+            side effects are unverified. Never retry it in a loop.
+
+        Args:
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {"next_burst": "..."}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.burst_reporters.create_burst_reporter(
+            network_id, **self._network_parent_kwargs_or(network_id, parent)
+        )
+        self._invalidate_device_cache(network_id)
+        return response
 
     # ==================== Network Settings ====================
 
@@ -1720,12 +1853,110 @@ class EeroClient:
             network_id, **self._network_parent_kwargs(network_id)
         )
 
+    async def request_support(
+        self,
+        request_data: Dict[str, Any],
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Request support for the network - returns raw Eero API response.
+
+        ``request_data`` is forwarded unchanged. Its fields are not documented
+        by the observed spec, so the caller owns validation.
+
+        .. warning::
+            This write has not been confirmed against a live network. Never
+            retry it in a loop.
+
+        Args:
+            request_data: The support request body, sent as given.
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.support.request_support(
+            network_id, request_data, **self._network_parent_kwargs_or(network_id, parent)
+        )
+
     async def get_blacklist(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get device blacklist - returns raw Eero API response."""
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         return await self._api.blacklist.get_blacklist(
             network_id, **self._network_parent_kwargs(network_id)
         )
+
+    async def add_to_blacklist(
+        self,
+        mac: str,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Add a MAC address to the network's block list - returns raw Eero API response.
+
+        :meth:`block_device` is the device-centric alias that delegates to the
+        same operation; this is the direct form for a caller that holds a MAC
+        but no device record. Live-verified (#140). Both remain.
+
+        Args:
+            mac: MAC address to block, colon-separated (``"aa:bb:cc:11:22:33"``).
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.blacklist.add_to_blacklist(
+            network_id, mac, **self._network_parent_kwargs_or(network_id, parent)
+        )
+        # There is no blacklist cache; the device's own entry and the device
+        # list are what carry the blocked state.
+        self._invalidate_device_cache(network_id, mac)
+        return response
+
+    async def remove_from_blacklist(
+        self,
+        mac_or_device_id: str,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Remove a device from the network's block list - returns raw Eero API response.
+
+        Live-verified (#109). Accepts a raw MAC or the colon-stripped id the
+        block list reports. :meth:`unblock_device` is the device-centric alias.
+
+        Args:
+            mac_or_device_id: MAC address, or the block list's device id.
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.blacklist.remove_from_blacklist(
+            network_id, mac_or_device_id, **self._network_parent_kwargs_or(network_id, parent)
+        )
+        self._invalidate_device_cache(network_id, mac_or_device_id)
+        return response
 
     async def get_reservations(self, network_id: Optional[str] = None) -> Dict[str, Any]:
         """Get DHCP reservations - returns raw Eero API response."""
@@ -1915,6 +2146,26 @@ class EeroClient:
             cadence=cadence,
             timezone=timezone,
             timeout=timeout,
+        )
+
+    async def get_eeros_data_usage(
+        self,
+        network_id: Optional[str] = None,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+        timeout: Optional[ClientTimeout] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for every Eero device - returns raw Eero API response.
+
+        Thin wrapper over :meth:`DataUsageAPI.get_eeros_usage`. Not cached;
+        the read is time-windowed.
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        return await self._api.data_usage.get_eeros_usage(
+            network_id, start=start, end=end, cadence=cadence, timezone=timezone, timeout=timeout
         )
 
     async def get_eeros_data_usage_summary(
@@ -2372,6 +2623,101 @@ class EeroClient:
             network_id, profile_id, start_time, end_time, days
         )
 
+    async def set_weekday_bedtime(
+        self,
+        profile_id: str,
+        start_time: str,
+        end_time: str,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a weekday (Monday-Friday) bedtime for a profile - returns raw Eero API response.
+
+        This CREATES a new schedule on every call; it does not update an
+        existing one. The day set is ``eero.api.schedule.WEEKDAYS``. The SDK
+        sends lowercase day names, which a read-only probe of existing
+        schedules has seen accepted.
+
+        .. warning::
+            This write has not been confirmed against a live network. How the
+            API handles a partial update of an existing schedule is
+            unverified (#172), so to change an existing bedtime read
+            :meth:`get_schedules` and delete and recreate it rather than rely
+            on :meth:`update_schedule` omitting fields. Never retry a failed
+            write in a loop.
+
+        Args:
+            profile_id: ID of the profile
+            start_time: Time to start blocking (``HH:MM``)
+            end_time: Time to end blocking (``HH:MM``)
+            network_id: ID of the network (uses preferred if None)
+            parent: The PROFILE's own envelope, if the caller has one. When
+                omitted, no envelope is passed and the profile URL is built
+                from the id. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        # No cached profile envelope is looked up here: only the caller's own.
+        parent_kwargs: Dict[str, Any] = {} if parent is None else {"parent": parent}
+        response = await self._api.schedule.set_weekday_bedtime(
+            network_id, profile_id, start_time, end_time, **parent_kwargs
+        )
+        self._invalidate_profile_cache(network_id, profile_id)
+        return response
+
+    async def set_weekend_bedtime(
+        self,
+        profile_id: str,
+        start_time: str,
+        end_time: str,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a weekend (Saturday-Sunday) bedtime for a profile - returns raw Eero API response.
+
+        This CREATES a new schedule on every call; it does not update an
+        existing one. The day set is ``eero.api.schedule.WEEKEND``. The SDK
+        sends lowercase day names, which a read-only probe of existing
+        schedules has seen accepted.
+
+        .. warning::
+            This write has not been confirmed against a live network. How the
+            API handles a partial update of an existing schedule is
+            unverified (#172), so to change an existing bedtime read
+            :meth:`get_schedules` and delete and recreate it rather than rely
+            on :meth:`update_schedule` omitting fields. Never retry a failed
+            write in a loop.
+
+        Args:
+            profile_id: ID of the profile
+            start_time: Time to start blocking (``HH:MM``)
+            end_time: Time to end blocking (``HH:MM``)
+            network_id: ID of the network (uses preferred if None)
+            parent: The PROFILE's own envelope, if the caller has one. When
+                omitted, no envelope is passed and the profile URL is built
+                from the id. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        parent_kwargs: Dict[str, Any] = {} if parent is None else {"parent": parent}
+        response = await self._api.schedule.set_weekend_bedtime(
+            network_id, profile_id, start_time, end_time, **parent_kwargs
+        )
+        self._invalidate_profile_cache(network_id, profile_id)
+        return response
+
     # ==================== DNS ====================
 
     async def get_dns_settings(self, network_id: Optional[str] = None) -> Dict[str, Any]:
@@ -2541,6 +2887,48 @@ class EeroClient:
         network_id = await self._ensure_network_id(network_id, auto_discover=False)
         response = await self._api.security.set_ipv6(
             network_id, enabled, **self._network_parent_kwargs(network_id)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
+
+    async def set_ipv6_upstream(
+        self,
+        enabled: bool,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Set upstream (WAN-side) IPv6 only - returns raw Eero API response.
+
+        Writes only ``ipv6_upstream``, the upstream connectivity toggle; it is
+        not IPv6 DNS (see :meth:`set_custom_dns_ipv6`). :meth:`set_ipv6` and
+        :meth:`configure_security` with ``ipv6=`` write both the upstream and
+        downstream flags.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
+
+        Args:
+            enabled: True to enable upstream IPv6, False to disable
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.security.set_ipv6_upstream(
+            network_id, enabled, **self._network_parent_kwargs_or(network_id, parent)
         )
         self._invalidate_network_cache(network_id)
         return response
@@ -2747,6 +3135,98 @@ class EeroClient:
         return await self._api.dns_policies.get_advanced_content_filter(
             network_id, **self._network_parent_kwargs(network_id)
         )
+
+    async def set_network_ad_block(
+        self,
+        enabled: bool,
+        network_id: Optional[str] = None,
+        *,
+        profiles: Optional[List[str]] = None,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Switch ad blocking on or off for the network or profiles - returns raw Eero API response.
+
+        ``profiles`` REPLACES the previous profile list; an empty list with
+        ``enabled=True`` means network-wide. Entries may be ids, paths or
+        URLs. Omit ``profiles`` for the network-wide switch.
+
+        .. warning::
+            This write has not been confirmed against a live network, and it
+            is a premium (Eero Plus / Eero Secure) feature
+            (``EeroPremiumRequiredException`` otherwise). ``capable: true`` in
+            the network's ``premium_dns`` block alone does not mean the
+            DNS-policy subsystem is enabled. Read :meth:`get_network` first
+            and only write when the stored state differs; never retry a
+            failed write in a loop.
+
+        Invalidates the cached network, and every cached profile of the
+        network when ``profiles`` is given.
+
+        Args:
+            enabled: True to switch ad blocking on, False to switch it off
+            network_id: ID of the network (uses preferred if None)
+            profiles: Profiles the switch applies to, or ``None`` to omit
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+            EeroPremiumRequiredException: If the network is not on Eero
+                Plus/Secure
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns_policies.set_network_ad_block(
+            network_id,
+            enabled,
+            profiles=profiles,
+            **self._network_parent_kwargs_or(network_id, parent),
+        )
+        self._invalidate_network_cache(network_id)
+        if profiles is not None:
+            self._invalidate_all_profile_caches(network_id)
+        return response
+
+    async def set_network_block_malware(
+        self,
+        enabled: bool,
+        network_id: Optional[str] = None,
+        *,
+        parent: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Switch malware blocking on or off for the network - returns raw Eero API response.
+
+        .. warning::
+            This write has not been confirmed against a live network, and it
+            is a premium (Eero Plus / Eero Secure) feature
+            (``EeroPremiumRequiredException`` otherwise). ``capable: true`` in
+            the network's ``premium_dns`` block alone does not mean the
+            DNS-policy subsystem is enabled. Read :meth:`get_network` first
+            and only write when the stored state differs; never retry a
+            failed write in a loop. The body key is validated client-side.
+
+        Args:
+            enabled: True to block malware, False to stop blocking it
+            network_id: ID of the network (uses preferred if None)
+            parent: The network's own envelope. When omitted, the cached
+                network envelope is used if one is fresh. Read only.
+
+        Returns:
+            Raw API response: {"meta": {...}}
+
+        Raises:
+            EeroException: If no network ID is available
+            EeroPremiumRequiredException: If the network is not on Eero
+                Plus/Secure
+        """
+        network_id = await self._ensure_network_id(network_id, auto_discover=False)
+        response = await self._api.dns_policies.set_network_block_malware(
+            network_id, enabled, **self._network_parent_kwargs_or(network_id, parent)
+        )
+        self._invalidate_network_cache(network_id)
+        return response
 
     async def allow_domain(
         self,

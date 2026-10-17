@@ -250,6 +250,74 @@ asyncio.run(main())
 
 ---
 
+## Live WAN Throughput
+
+There is no network-level throughput field. Each device carries `usage.down_mbps` / `usage.up_mbps`,
+but those are zero or stale until a burst is requested. The sequence is: request a burst, wait
+roughly 12 seconds, re-read the device list, and sum the values across the connected devices.
+
+```python
+"""Request a usage burst and print the summed live throughput of the connected devices."""
+
+import asyncio
+import math
+from typing import Any, Optional
+
+from eero import EeroClient, EeroException
+
+
+def _mbps(device: dict[str, Any], key: str) -> Optional[float]:
+    """Return a finite, non-negative number, or None when the value is missing or unusable."""
+    value = (device.get("usage") or {}).get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
+
+
+def _total(devices: list[dict[str, Any]], key: str) -> Optional[float]:
+    """Sum one usage field over the connected devices; None if any of them is unknown."""
+    values = [_mbps(d, key) for d in devices if d.get("connected") is True]
+    if any(v is None for v in values):
+        return None                          # unknown is not zero
+    return sum(v for v in values if v is not None)
+
+
+async def main() -> None:
+    async with EeroClient() as client:
+        try:
+            burst = await client.create_burst_reporter()   # POST ""; unverified write, logs a warning
+        except EeroException as err:
+            print(f"Burst request failed: {err}")
+            return
+        print(f"Next burst: {(burst.get('data') or {}).get('next_burst')}")
+
+        await asyncio.sleep(12)               # the per-device refresh lands about 12 s later
+        response = await client.get_devices(refresh_cache=True)
+        data = response.get("data")
+        devices = data if isinstance(data, list) else []
+
+        down, up = _total(devices, "down_mbps"), _total(devices, "up_mbps")
+        print(f"Down: {'unknown' if down is None else f'{down:.1f} Mbps'}")
+        print(f"Up:   {'unknown' if up is None else f'{up:.1f} Mbps'}")
+
+
+asyncio.run(main())
+```
+
+A few things to keep in mind:
+
+- **One burst per minute per network.** Do not call `create_burst_reporter` in a tight loop; poll
+  no faster than once a minute.
+- **The write is unverified.** It does not run a speed test and changes no setting, but it is an
+  uncharacterised write that logs the usual warning. Never retry it in a loop.
+- **Unknown is not zero.** A connected device with a missing, non-numeric, negative or non-finite
+  `usage` value makes the total "unknown" rather than being counted as 0; disconnected devices are
+  skipped.
+- The call invalidates the network's devices cache, so `get_devices(refresh_cache=True)` always
+  re-reads the list.
+
+---
+
 ## Reserve a DHCP Address and Open a Port Forward
 
 Created, then listed, then cleaned up. Reservations and forwards never auto-discover a network, so `network_id` must be explicit. A reservation body has exactly `description`, `ip`, `mac`, `public_static_ip`; a forward body has exactly `client_port`, `description`, `enabled`, `gateway_port`, `ip`, `protocol` — the SDK passes both through unchanged.

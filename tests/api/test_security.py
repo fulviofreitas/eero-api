@@ -1,6 +1,7 @@
 """Tests for SecurityAPI module.
 
-Tests cover security settings like WPA3, band steering, UPnP, IPv6, MLO
+Tests cover security settings like WPA3, band steering, UPnP, IPv6 (both
+sides and upstream only), MLO
 mode, fast transition, Passpoint, and proxied nodes.
 """
 
@@ -257,6 +258,99 @@ class TestSecurityAPISetIPv6:
             await security_api.set_ipv6("network_123", True)
 
 
+class TestSecurityAPISetIPv6Upstream:
+    """Tests for set_ipv6_upstream method."""
+
+    @pytest.fixture
+    def security_api(self, mock_session):
+        """Create a SecurityAPI with mocked auth."""
+        auth_api = MagicMock()
+        auth_api.session = mock_session
+        auth_api.get_auth_token = AsyncMock(return_value="auth_token")
+        return SecurityAPI(auth_api)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_set_ipv6_upstream_sends_only_upstream_flag(
+        self, security_api, mock_session, enabled
+    ):
+        """Test the PUT body is exactly the upstream flag, never ipv6_downstream."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await security_api.set_ipv6_upstream("network_123", enabled)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[0] == "PUT"
+        assert call_args.kwargs["json"] == {"ipv6_upstream": enabled}
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_upstream_targets_settings_endpoint(self, security_api, mock_session):
+        """Test set_ipv6_upstream builds the settings URL from the default template."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        await security_api.set_ipv6_upstream("network_123", True)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.2/networks/network_123/settings")
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_upstream_prefers_parent_link(self, security_api, mock_session):
+        """Test set_ipv6_upstream uses the published settings link over the template."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+        parent = {"resources": {"settings": "/2.3/networks/network_123/settings"}}
+        parent_copy = copy.deepcopy(parent)
+
+        await security_api.set_ipv6_upstream("network_123", True, parent=parent)
+
+        call_args = mock_session.request.call_args
+        assert call_args.args[1].endswith("/2.3/networks/network_123/settings")
+        assert call_args.kwargs["json"] == {"ipv6_upstream": True}
+        assert parent == parent_copy
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_upstream_returns_raw_envelope(self, security_api, mock_session):
+        """Test the raw envelope is returned unchanged."""
+        envelope = api_success_response({"ipv6_upstream": True})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await security_api.set_ipv6_upstream("network_123", True)
+
+        assert result == envelope
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_upstream_warns_about_reboot(self, security_api, mock_session, caplog):
+        """Test the write logs the uncharacterised-write reboot warning once."""
+        mock_session.request.return_value = create_mock_response(
+            200, {"meta": {"code": 200}, "data": {}}
+        )
+
+        with caplog.at_level(logging.WARNING, logger="eero.api.security"):
+            await security_api.set_ipv6_upstream("network_123", True)
+
+        matches = [
+            m
+            for m in caplog.messages
+            if "set IPv6 upstream for network" in m
+            and "may reboot every eero, like the confirmed DNS write path" in m
+        ]
+        assert len(matches) == 1
+
+    @pytest.mark.asyncio
+    async def test_set_ipv6_upstream_not_authenticated(self, security_api, mock_session):
+        """Test set_ipv6_upstream raises before any request when not authenticated."""
+        security_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await security_api.set_ipv6_upstream("network_123", True)
+        mock_session.request.assert_not_called()
+
+
 class TestSecurityAPIConfigure:
     """Tests for configure_security method."""
 
@@ -501,6 +595,7 @@ class TestSettingsWriteRebootWarning:
             lambda api: api.set_band_steering("network_123", True),
             lambda api: api.set_upnp("network_123", True),
             lambda api: api.set_ipv6("network_123", True),
+            lambda api: api.set_ipv6_upstream("network_123", True),
             lambda api: api.configure_security("network_123", wpa3=True),
         ],
     )

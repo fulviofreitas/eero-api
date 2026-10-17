@@ -93,6 +93,22 @@ async with aiohttp.ClientSession() as session:
 
 The session token is sent as the `X-User-Token` header on every request to the API host over `https`, and to no other host; there is no client-side expiry — the server decides when a session is no longer valid, and asks the SDK to refresh it when needed. See [Authentication](Authentication) and [Configuration](Configuration#-request-headers-and-transport).
 
+### Resending the code and clearing credentials
+
+```python
+await client.login("you@example.com")
+sent = await client.resend_verification_code()   # True on success, False on an API-level failure
+await client.verify("<code>")
+
+await client.clear_auth_data()                   # local only: no API call
+```
+
+`resend_verification_code()` needs a pending `login()`; with none it raises
+`EeroAuthenticationException`. `clear_auth_data()` removes every stored credential record from every
+storage backend (keyring and file) without contacting the API, resets the preferred network and
+empties the in-memory cache. Compare `clear_session_token()`, which clears the session only, and
+`logout()`, which invalidates the session server-side and then clears it.
+
 ---
 
 ## Raw Response Envelope
@@ -131,7 +147,7 @@ must be a single path segment (letters, digits, `.`, `_`, `:`, `-`). A `schedule
 path, URL or envelope only, since a bare ID cannot name the network and profile it lives under.
 Domain methods
 additionally take a keyword-only `parent=` envelope so the link the API published is used instead of a template;
-`EeroClient` passes its cached envelopes as `parent=` for you. Full description:
+`EeroClient` passes its cached envelopes as `parent=` for you; the wrappers added in 8.4.0 that write to a network link also accept an optional keyword-only `parent=` and use the cached envelope when it is omitted. Full description:
 [Network Targeting — Resource links](Network-Targeting#resource-links-ids-paths-and-urls-are-interchangeable).
 
 ```python
@@ -163,14 +179,15 @@ Read this before automating any write.
 
    The only writes that do *not* log this line are the live-verified ones in the SDK's
    allowlist (`tests/api/test_write_warnings.py`): `set_device_nickname`, `pause_device`,
-   `set_device_type`, `unblock_device` (via `BlacklistAPI.remove_from_blacklist`),
-   `reboot_eero`, `set_led`, `set_led_brightness`, `run_speed_test`, `set_guest_network`,
-   `set_guest_password`, `clear_guest_password`. **Every other write logs it**, including the
-   DNS writes (their field paths are confirmed, but each one reboots the mesh, so the warning
-   stays), the security toggles, `NetworksAPI.reboot_network`, the profile writes,
-   `block_device`, the reservation and forward CRUD, `create_burst_reporter`, and
-   `request_support`. Absence of the warning is not a claim that the write has been verified —
-   the per-method status column in the [API Reference](API-Reference) is.
+   `set_device_type`, `block_device` / `add_to_blacklist` and `unblock_device` /
+   `remove_from_blacklist` (both via `BlacklistAPI`), `reboot_eero`, `set_led`,
+   `set_led_brightness`, `run_speed_test`, `set_guest_network`, `set_guest_password`,
+   `clear_guest_password`. **Every other write logs it**, including the DNS writes (their
+   field paths are confirmed, but each one reboots the mesh, so the warning stays), the
+   security toggles, `reboot_network`, the profile writes, the reservation and forward CRUD,
+   `create_burst_reporter`, and `request_support`. Absence of the warning is not a claim that
+   the write has been verified — the per-method status column in the
+   [API Reference](API-Reference) is.
 3. **Settings-class writes may reboot the whole mesh.** A DNS write is confirmed to restart
    every eero and drop every client a few minutes after the 200. The SDK treats every other
    write to the network's `settings` link, and its settings-class siblings, as capable of the
@@ -222,6 +239,17 @@ await client.set_hide_5g(True, network_id=None)    # unverified; PUT {"value": t
 `set_hide_5g` temporarily hides the 5 GHz band (`temporary_flags.hide_5g` in the network envelope).
 `enabled` must be a real `bool`. Read the flag first, skip the write if it is unchanged, and never
 retry it in a loop. The network's cache entry is dropped after a successful write.
+
+### Rebooting the whole network
+
+```python
+await client.reboot_network(network_id=None)    # POST "" to the network's reboot link; unverified
+```
+
+> ⚠️ **Warning:** `reboot_network` restarts **every** eero and every client loses connectivity for
+> minutes. The 200 means "accepted", not "settled". Never call it in a loop and never retry it.
+> The network, eeros and devices cache entries are dropped after the call. To restart a single
+> node use `reboot_eero` (see [Eeros](#eeros-mesh-nodes)).
 
 ### Account profile
 
@@ -342,9 +370,15 @@ responses = await client.clear_profile_schedule(profile_id, network_id=None)  # 
 
 # Convenience: one pause each, built on create_schedule
 await client.enable_bedtime(profile_id, "21:00", "07:00", days=["monday"], network_id=None)
-await client._api.schedule.set_weekday_bedtime("<network-id>", profile_id, "21:00", "07:00")
-await client._api.schedule.set_weekend_bedtime("<network-id>", profile_id, "22:00", "08:00")
+await client.set_weekday_bedtime(profile_id, "21:00", "07:00", network_id=None)   # Monday-Friday
+await client.set_weekend_bedtime(profile_id, "22:00", "08:00", network_id=None)   # Saturday-Sunday
 ```
+
+`set_weekday_bedtime` and `set_weekend_bedtime` each **create** a new schedule; they never update
+an existing one, so calling them twice leaves two pauses. How the API treats a partial update of
+an existing schedule is unverified (#172). To change an existing bedtime, read `get_schedules`
+and delete and recreate the pause rather than relying on `update_schedule` leaving omitted
+fields alone.
 
 ---
 
@@ -514,11 +548,35 @@ apps = await client.get_dns_policy_applications("<profile-id>", network_id=None)
 await client.set_profile_blocked_applications("<profile-id>", ["<app-id>"], network_id=None)  # replaces the full list
 ```
 
-**Not exposed:** the network- and profile-level DNS-policy *settings* (the boolean content
-category toggles such as `ad_block`, `block_malware`, `safe_search_enabled`) and the ad-block
-on/off switches. Neither the network envelope's `premium_dns` field nor its `resources` object,
-nor a profile's own `premium_dns` / `resources`, carries a URL for those endpoints, so the SDK
-has no link to follow and deliberately does not guess one.
+### Ad blocking and malware blocking
+
+Two network-level switches. Both are premium (`EeroPremiumRequiredException` without Eero Secure)
+and unverified, so they log the warning; read the current state first and skip the write when it
+already matches. `capable: true` in the network's `premium_dns` alone does not mean the subsystem
+is enabled.
+
+```python
+# POST {"enable": bool} to dns_policies/adblock
+await client.set_network_ad_block(True, network_id=None)                          # network-wide
+await client.set_network_ad_block(True, profiles=["<profile-id>"], network_id=None)  # only these profiles
+
+# POST {"block_malware": bool} to dns_policies/network
+await client.set_network_block_malware(True, network_id=None)
+```
+
+`profiles` entries accept a bare id, a path or an absolute URL and are normalised to
+`/2.2/networks/<network-id>/profiles/<profile-id>`. The list **replaces** the previous one on every
+call; an empty list with `enabled=True` means network-wide. The body key of
+`set_network_block_malware` is validated client-side against a fixed set, because the API discards
+unknown keys with a 200. `set_network_ad_block` drops the network's cache entry and, when
+`profiles` is given, every cached profile of that network; `set_network_block_malware` drops the
+network's cache entry.
+
+**Not exposed:** the other network- and profile-level DNS-policy *settings* (the remaining boolean
+content category toggles such as `safe_search_enabled`). Neither the network envelope's
+`premium_dns` field nor its `resources` object, nor a profile's own `premium_dns` / `resources`,
+carries a URL for those endpoints, so the SDK has no link to follow and deliberately does not
+guess one.
 
 ### Subnet content filters
 
@@ -548,11 +606,17 @@ security = await client.get_security_settings(network_id=None)
 await client.set_wpa3(enabled=True, network_id=None)
 await client.set_band_steering(enabled=True, network_id=None)
 await client.set_upnp(enabled=False, network_id=None)
-await client.set_ipv6(enabled=True, network_id=None)
+await client.set_ipv6(enabled=True, network_id=None)             # writes ipv6_upstream and ipv6_downstream
+await client.set_ipv6_upstream(enabled=True, network_id=None)    # writes ipv6_upstream only; ipv6_downstream untouched
 await client.configure_security(wpa3=True, band_steering=True, upnp=False, ipv6=True, network_id=None)
 ```
 
 These write the same `settings` link as DNS; treat them as settings-class.
+
+`set_ipv6_upstream` sends the JSON PUT `{"ipv6_upstream": bool}` and invalidates the network's
+cache entry. It is the upstream IPv6 connectivity toggle, not IPv6 DNS — for IPv6 DNS servers use
+`set_custom_dns_ipv6` (see [DNS](#dns)). It may reboot the mesh and is unverified, so follow the
+read-compare-skip pattern above.
 
 ### Per-band WPA3, MLO, fast transition, Passpoint, proxied nodes
 
@@ -578,12 +642,14 @@ their negotiated mode is no longer offered.
 
 ```python
 thread = await client.get_thread(network_id=None)
-await client.set_thread_enabled(True, network_id=None)                  # JSON {"enabled": bool} PUT to networks/{id}/thread
+await client.set_thread_enabled(True, network_id=None)                  # alias of update_thread(thread_enable=True)
 await client.update_thread(thread_enable=True, enable_credential_syncing=False, network_id=None)
 await client.regenerate_thread_credentials(network_id=None)            # POST ""
 ```
 
-All three writes are unverified.
+All three writes are unverified. `set_thread_enabled` is an alias of
+`update_thread(thread_enable=enabled)`: the JSON body is `{"thread_enable": bool}` (earlier
+releases sent an `enabled` key, which the observed spec does not declare).
 
 ---
 
@@ -826,6 +892,7 @@ await client.get_data_usage_breakdown(**window)
 await client.get_devices_data_usage(**window, profile_id="<profile-id>")
 await client.get_device_data_usage("<mac>", **window, cadence="hourly")
 await client.get_eeros_data_usage_summary(**window, cadence="daily")
+await client.get_eeros_data_usage(**window, cadence="daily")          # GET networks/{id}/data_usage/eeros
 await client.get_eero_data_usage("<eero-id>", **window, cadence="daily")
 await client.get_profile_data_usage("<profile-id>", **window, cadence="daily")
 await client.get_unprofiled_devices_data_usage(**window)
@@ -847,7 +914,7 @@ usage = await client.get_data_usage(
 ```
 
 `cadence` is required by the API on `get_data_usage`, `get_device_data_usage`,
-`get_eeros_data_usage_summary`, `get_eero_data_usage`, `get_profile_data_usage`, and
+`get_eeros_data_usage_summary`, `get_eeros_data_usage`, `get_eero_data_usage`, `get_profile_data_usage`, and
 `get_unprofiled_data_usage_summary`; it is optional on the others and omitted from the request
 when not given. A value other than `"daily"` / `"hourly"` raises `EeroValidationException`
 before any request.
@@ -856,9 +923,41 @@ before any request.
 > is an **unverified write** — read `get_data_usage_report_settings` first, write only when the
 > stored values differ, and never retry it. It invalidates that network's cache entry.
 
+`get_eeros_data_usage` is a read-only call with the same required `start` / `end` / `cadence` as
+`get_eero_data_usage`. Its path is not in the observed spec; it is used by a downstream
+integration.
+
+### Live usage burst
+
+Per-device `usage.down_mbps` / `usage.up_mbps` are zero or stale until a burst is requested. A burst
+POSTs `""` to the network's `burst_reporters` link; about 12 seconds later the device list carries
+fresh values. It does not run a speed test and changes no setting, but it is an unverified write
+and logs the warning. Request at most **one burst per minute per network**.
+
+```python
+import asyncio
+
+burst = await client.create_burst_reporter(network_id=None)
+print(burst["data"]["next_burst"])                   # timestamp of the next burst
+
+await asyncio.sleep(12)                              # the refresh lands about 12 s later
+devices = await client.get_devices(network_id=None, refresh_cache=True)
+
+connected = [d for d in devices["data"] if d.get("connected") is True]
+# Assumes every connected device reports usage; the Live WAN Throughput recipe is the guarded version.
+down = sum(d["usage"]["down_mbps"] for d in connected)
+up = sum(d["usage"]["up_mbps"] for d in connected)
+```
+
+`create_burst_reporter` takes no body parameter and invalidates that network's devices cache, so
+the `get_devices(refresh_cache=True)` call re-reads the list. There is no network-level throughput
+field; summing the connected devices is the only way to get a WAN-side figure. Treat a missing or
+non-numeric `usage` value as unknown, not zero — the [Live WAN Throughput](Examples#live-wan-throughput)
+recipe shows the guarded version.
+
 > **Note**: `get_burst_reporters()` was removed in v8.0.0 — the endpoint returns 404; the
-> resource is POST-only. `client._api.burst_reporters.create_burst_reporter(...)` remains
-> available.
+> resource is POST-only. The domain method's `reporter_data` argument is deprecated and removed in
+> 9.0.0 — see [Deprecations](Deprecations).
 
 ### Insights
 
@@ -888,8 +987,16 @@ or set a preferred network first (see [Network Targeting](Network-Targeting)).
 blacklist = await client.get_blacklist(network_id=None)
 ```
 
-`block_device` / `unblock_device` (above) are the facade's add/remove; the domain
-`BlacklistAPI.add_to_blacklist` / `remove_from_blacklist` are what they delegate to.
+```python
+await client.add_to_blacklist("<mac>", network_id=None)                 # form-encoded mac; live-verified (#140)
+await client.remove_from_blacklist("<mac-or-device-id>", network_id=None)   # live-verified (#109)
+```
+
+`add_to_blacklist` is the direct form of the form-encoded blacklist POST, and `block_device`
+(above) is the device-centric alias that delegates to it. `remove_from_blacklist` accepts a raw MAC
+or the colon-stripped device id, and `unblock_device` is its alias. `add_to_blacklist` invalidates
+that device's cache entry and the device list. The domain `BlacklistAPI.add_to_blacklist` /
+`remove_from_blacklist` are what the facade methods call.
 
 ---
 

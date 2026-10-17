@@ -351,6 +351,58 @@ class DataUsageAPI(AuthenticatedAPI):
             cadence_required=True,
         )
 
+    async def get_eeros_usage(
+        self,
+        network_id: str,
+        *,
+        start: str,
+        end: str,
+        cadence: str,
+        timezone: Optional[str] = None,
+        parent: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[ClientTimeout] = None,
+    ) -> Dict[str, Any]:
+        """Get data usage for every Eero device on a network - returns raw Eero API response.
+
+        The API requires ``start``, ``end``, and ``cadence`` as query
+        parameters on this endpoint. This path is not in the observed spec;
+        it is used by a downstream integration and exposed here on that
+        basis.
+
+        Args:
+            network_id: ID of the network to get usage from.
+            start: Window start, ISO 8601 timestamp.
+            end: Window end, ISO 8601 timestamp.
+            cadence: Bucket size for the returned series, ``"daily"`` or
+                ``"hourly"``.
+            timezone: Optional IANA timezone name.
+            parent: The cached network envelope, if the caller has one.
+                Preferred over `network_id` to resolve the base URL when
+                supplied. Never mutated.
+            timeout: Optional per-call ``aiohttp.ClientTimeout`` replacing the
+                transport default (total 30 s, 10 s socket read) for this
+                request only. Omitted from the request when ``None``.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated.
+            EeroValidationException: If ``cadence`` is not a valid value.
+            EeroAPIException: If the API returns an error.
+        """
+        return await self._get_usage(
+            "eeros",
+            network_id,
+            start=start,
+            end=end,
+            cadence=cadence,
+            timezone=timezone,
+            parent=parent,
+            timeout=timeout,
+            cadence_required=True,
+        )
+
     async def get_eeros_summary(
         self,
         network_id: str,

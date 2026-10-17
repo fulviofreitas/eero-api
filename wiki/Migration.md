@@ -352,7 +352,7 @@ There is no deprecation window for this release — every removed call now raise
 | `SecurityAPI.set_thread`, `configure_security(thread=...)` | Remove the call/argument — the API does not accept a `thread` field on the settings write | `client.set_thread_enabled(enabled)` — same facade name, now a JSON `{"enabled": bool}` PUT to `networks/{id}/thread` via `ThreadAPI` (unverified write); also `update_thread(...)` and `regenerate_thread_credentials()` |
 | `SettingsAPI` (module) / `EeroClient.get_settings` | Replace with a network read | `client.get_network()` — the same fields live on the network envelope |
 | `PasswordAPI` (module) / `EeroClient.get_password` | Replace with a network read | `client.get_network()` — the network envelope carries the same fields |
-| `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | Remove the call — the endpoint returns 404 | None; the resource is POST-only — `client._api.burst_reporters.create_burst_reporter(...)` remains available |
+| `BurstReportersAPI.get_burst_reporters` / `EeroClient.get_burst_reporters` | Remove the call — the endpoint returns 404 | None; the resource is POST-only — `client.create_burst_reporter()` (added in v8.4.0; earlier 8.x releases had only the domain method `BurstReportersAPI.create_burst_reporter`) |
 
 ```python
 # Before (v7.x) — silent no-op
@@ -401,7 +401,8 @@ Checklist:
 - [ ] Grep for `get_settings(` and `client._api.settings` — replace with `get_network()`.
 - [ ] Grep for `get_password(` and `client._api.password` — replace with `get_network()`.
 - [ ] Grep for `get_burst_reporters(` and `client._api.burst_reporters.get_burst_reporters` —
-      remove; `create_burst_reporter` is unaffected.
+      remove; `create_burst_reporter` is unaffected (call `client.create_burst_reporter()` from
+      v8.4.0).
 
 ### Resource links and `parent=`
 
@@ -455,7 +456,7 @@ ones (`set_led`, `set_led_brightness`, `set_guest_network`, `set_guest_password`
 | `set_guest_network(enabled, name=, password=)` | One JSON PUT carrying the password | `set_guest_network(*, enabled, name=None)` — form-encoded PUT to the `guestnetwork` link with `enabled` and, when given, `name`. **`password=` is gone** — use `set_guest_password(password)` / `clear_guest_password()` (form PUT / DELETE on the *guest network's* `password` link). All three verified live on 2026-09-20 |
 | `block_device(device_id, blocked)` | One method toggling both directions | `block_device(mac)` sends a form-encoded `mac` to `POST networks/{id}/blacklist`; `unblock_device(mac)` is a separate `DELETE networks/{id}/blacklist/{mac}`. The form encoding is unverified (a JSON body was verified in the past); the DELETE is verified |
 | `set_sqm_enabled` / `configure_sqm` / `set_sqm_bandwidth` / `set_sqm_auto` | JSON bodies with bandwidth / mode fields the API never declared | **Removed.** `set_sqm(enabled)` — PUT with no body to the `settings` link, value in the `sqm` query parameter. Settings-class: may reboot the mesh |
-| `reboot_network()` (domain API only — `client._api.networks.reboot_network(...)`), `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `reboot_eero` and `run_speed_test` are verified live on 2026-09-20 (only the targeted node rebooted; the speed test result appeared in `get_speed_tests` about a minute later). `apply_update` is new on `EeroClient` and reboots every node |
+| `reboot_network()` (domain API only until v8.4.0; `client.reboot_network()` since), `reboot_eero()`, `run_speed_test()`, `apply_update()` | A different body encoding | `POST` with the two-character JSON-string body `""` to the published `reboot` / `speedtest` / `updates` link. `reboot_eero` and `run_speed_test` are verified live on 2026-09-20 (only the targeted node rebooted; the speed test result appeared in `get_speed_tests` about a minute later). `apply_update` is new on `EeroClient` and reboots every node |
 | `set_nightlight(...)` | JSON PUT to the eero's own URL with `brightness`, `schedule_enabled`, `schedule_on`, `schedule_off`, `ambient_light_enabled` | JSON PUT to the nightlight sub-resource (`data.nightlight.url`) with only `enabled`, `brightness_percentage`, `schedule` — the fields the API declares. `set_nightlight_schedule(schedule)` forwards the schedule object unchanged; `set_nightlight_brightness(brightness_percentage)`. Raises `EeroFeatureUnavailableException` on an eero without a nightlight |
 | `run_diagnostics()` | Empty POST | JSON POST with whichever of `device=` / `symptom=` you supply (an empty object otherwise). Additive |
 | Thread writes | `SecurityAPI.set_thread` wrote a `thread` field the settings endpoint ignores | `set_thread_enabled(enabled)` (JSON `{"enabled": bool}`), `update_thread(*, thread_enable=, enable_credential_syncing=)`, `regenerate_thread_credentials()` (`""` POST) — all to the literal `networks/{id}/thread` path |
@@ -788,6 +789,50 @@ Checklist (transport, auth, errors, parameters):
 - [ ] Grep for `get_ouicheck(` — pass `serial=` and `version=`.
 - [ ] Long-running processes: remove any home-grown periodic refresh; handle a terminal
       `EeroAuthenticationException` by re-seeding a token or re-running the OTP flow.
+
+---
+
+## v8.3 → v8.4.0
+
+**What broke**: nothing. This minor release is additive; no existing call changes behaviour except
+the two noted under "Changed behaviour" below.
+
+### New `EeroClient` wrappers
+
+Each one wraps the same-named domain method. Calls that previously had to go through the domain
+APIs no longer do.
+
+| New method | Notes |
+|---|---|
+| `create_burst_reporter()` | Requests a live-usage burst (POST `""`); the device list's `usage.down_mbps` / `usage.up_mbps` refresh about 12 seconds later. At most one per minute per network |
+| `reboot_network()` | Reboots **every** eero. Never retry it in a loop |
+| `resend_verification_code()` | Needs a pending `login()` |
+| `clear_auth_data()` | Removes every stored credential record from every backend without contacting the API |
+| `add_to_blacklist(mac)` / `remove_from_blacklist(mac_or_device_id)` | Direct forms; `block_device` / `unblock_device` are the aliases |
+| `set_weekday_bedtime(...)` / `set_weekend_bedtime(...)` | Each call **creates** a new schedule; see [Python API](Python-API#schedules--bedtime) |
+| `request_support(request_data)` | Body forwarded unchanged; callers own validation |
+| `set_ipv6_upstream(enabled)` | Writes `ipv6_upstream` only; `set_ipv6` writes both upstream and downstream |
+| `get_eeros_data_usage(*, start, end, cadence)` | Read-only |
+| `set_network_ad_block(enabled, *, profiles=None)` / `set_network_block_malware(enabled)` | Premium; unverified writes |
+
+### Changed behaviour
+
+- **`create_burst_reporter` now sends the `""` body**, like the other parameterless POSTs. The
+  `reporter_data` argument of `BurstReportersAPI.create_burst_reporter` is **deprecated**: it
+  emits `DeprecationWarning` and is removed in 9.0.0. While it lasts, a supplied non-empty value is
+  still forwarded as the JSON body. Drop the argument; see [Deprecations](Deprecations).
+- **`set_thread_enabled` is now an alias of `update_thread(thread_enable=enabled)`.** The body is
+  `{"thread_enable": bool}`; the `enabled` key it sent before is not in the observed spec. The
+  write is still unverified.
+
+### Checklist
+
+- [ ] Replace any reach-through into the domain APIs for burst reporters, network reboot,
+      resending the verification code, clearing auth data, weekday/weekend bedtime and support
+      requests with the `EeroClient` methods above.
+- [ ] Grep for `reporter_data` and stop passing it.
+- [ ] If you relied on `set_weekday_bedtime` / `set_weekend_bedtime` replacing an existing
+      schedule, note that they only ever created one; delete the old pause first.
 
 ---
 

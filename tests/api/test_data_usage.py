@@ -112,6 +112,78 @@ class TestDataUsageAPIGetDataUsage:
             )
 
 
+class TestDataUsageAPIGetEerosUsage:
+    """Tests for get_eeros_usage (required cadence, fleet-wide eeros path)."""
+
+    @pytest.mark.asyncio
+    async def test_url_params_and_raw_envelope(self, data_usage_api, mock_session):
+        """Test the URL, method, query parameters, and raw envelope passthrough."""
+        envelope = api_success_response({"eeros": [{"id": "eero_1"}]})
+        mock_session.request.return_value = create_mock_response(200, envelope)
+
+        result = await data_usage_api.get_eeros_usage(
+            "network_123", start=START, end=END, cadence="daily"
+        )
+
+        assert result == envelope
+        call_args = mock_session.request.call_args
+        assert call_args[0][0] == "GET"
+        assert call_args[0][1].endswith("/2.2/networks/network_123/data_usage/eeros")
+        assert call_args[1]["params"] == {"start": START, "end": END, "cadence": "daily"}
+        assert "json" not in call_args[1] or call_args[1]["json"] is None
+
+    @pytest.mark.asyncio
+    async def test_timezone_included_when_supplied(self, data_usage_api, mock_session):
+        """Test timezone is included in params when supplied."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await data_usage_api.get_eeros_usage(
+            "network_123", start=START, end=END, cadence="hourly", timezone="UTC"
+        )
+
+        call_args = mock_session.request.call_args
+        assert call_args[1]["params"] == {
+            "start": START,
+            "end": END,
+            "cadence": "hourly",
+            "timezone": "UTC",
+        }
+
+    @pytest.mark.asyncio
+    async def test_timezone_omitted_when_none(self, data_usage_api, mock_session):
+        """Test timezone key is absent from params when not supplied."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+
+        await data_usage_api.get_eeros_usage("network_123", start=START, end=END, cadence="daily")
+
+        call_args = mock_session.request.call_args
+        assert "timezone" not in call_args[1]["params"]
+
+    @pytest.mark.asyncio
+    async def test_prefers_parent_url(self, data_usage_api, mock_session):
+        """Test the parent's own url is preferred over the default template."""
+        mock_session.request.return_value = create_mock_response(200, api_success_response({}))
+        parent = {"url": "/2.3/networks/network_123"}
+
+        await data_usage_api.get_eeros_usage(
+            "network_123", start=START, end=END, cadence="daily", parent=parent
+        )
+
+        call_args = mock_session.request.call_args
+        assert call_args[0][1].endswith("/2.3/networks/network_123/data_usage/eeros")
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self, data_usage_api, mock_session):
+        """Test raises before any request when not authenticated."""
+        data_usage_api._auth_api.get_auth_token = AsyncMock(return_value=None)
+
+        with pytest.raises(EeroAuthenticationException, match="Not authenticated"):
+            await data_usage_api.get_eeros_usage(
+                "network_123", start=START, end=END, cadence="daily"
+            )
+        mock_session.request.assert_not_called()
+
+
 class TestDataUsageAPIOptionalCadenceFamily:
     """Parametrised tests for reads where cadence is optional (not API-required)."""
 
@@ -207,6 +279,7 @@ class TestDataUsageAPIRequiredCadenceFamily:
         "method_name, args, path_suffix",
         [
             ("get_device_usage", ("device_mac_aa",), "data_usage/devices/device_mac_aa"),
+            ("get_eeros_usage", (), "data_usage/eeros"),
             ("get_eeros_summary", (), "data_usage/eeros/summary"),
             ("get_eero_usage", ("eero_1",), "data_usage/eeros/eero_1"),
             ("get_profile_usage", ("profile_1",), "data_usage/profiles/profile_1"),
@@ -232,6 +305,7 @@ class TestDataUsageAPIRequiredCadenceFamily:
         "method_name, args",
         [
             ("get_device_usage", ("device_mac_aa",)),
+            ("get_eeros_usage", ()),
             ("get_eeros_summary", ()),
             ("get_eero_usage", ("eero_1",)),
             ("get_profile_usage", ("profile_1",)),
@@ -250,6 +324,7 @@ class TestDataUsageAPIRequiredCadenceFamily:
         "method_name, args",
         [
             ("get_device_usage", ("device_mac_aa",)),
+            ("get_eeros_usage", ()),
             ("get_eeros_summary", ()),
             ("get_eero_usage", ("eero_1",)),
             ("get_profile_usage", ("profile_1",)),
@@ -308,6 +383,7 @@ _TIMEOUT_READS = [
     ("get_breakdown", (), {}),
     ("get_devices_usage", (), {}),
     ("get_device_usage", ("device_mac_aa",), {"cadence": "daily"}),
+    ("get_eeros_usage", (), {"cadence": "daily"}),
     ("get_eeros_summary", (), {"cadence": "daily"}),
     ("get_eero_usage", ("eero_1",), {"cadence": "daily"}),
     ("get_profile_usage", ("profile_1",), {"cadence": "daily"}),

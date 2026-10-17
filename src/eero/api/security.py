@@ -247,6 +247,9 @@ class SecurityAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Enable or disable IPv6 - returns raw Eero API response.
 
+        Writes both ``ipv6_upstream`` and ``ipv6_downstream``; use
+        `set_ipv6_upstream` to change the upstream flag alone.
+
         .. warning::
             This is a settings-class write. Its side effects have not been
             confirmed against a live network, and the DNS write on the
@@ -296,6 +299,64 @@ class SecurityAPI(AuthenticatedAPI):
             },
         )
 
+    async def set_ipv6_upstream(
+        self, network_id: str, enabled: bool, *, parent: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Enable or disable IPv6 on the upstream (WAN) side only - returns raw Eero API response.
+
+        This is the upstream connectivity toggle, not IPv6 DNS. `set_ipv6`
+        writes both ``ipv6_upstream`` and ``ipv6_downstream``, and
+        `configure_security` with ``ipv6=`` does the same; this method
+        writes only ``ipv6_upstream`` and leaves ``ipv6_downstream``
+        untouched.
+
+        .. warning::
+            This is a settings-class write. Its side effects have not been
+            confirmed against a live network, and the DNS write on the
+            sibling ``networks/{id}/settings`` endpoint is confirmed to
+            reboot every eero on the mesh. Treat this write as capable of
+            doing the same: read the current configuration first, skip the
+            write when it already matches, and never retry a failed write
+            in a loop.
+
+        Args:
+            network_id: A bare network ID, API-returned path, or absolute URL.
+            enabled: True to enable upstream IPv6, False to disable
+            parent: The network's own cached envelope, if the caller has
+                one; when supplied, its published ``settings`` link is used
+                instead of the default template. Read only; never mutated.
+
+        Returns:
+            Raw API response: {"meta": {...}, "data": {...}}
+
+        Raises:
+            EeroAuthenticationException: If not authenticated
+            EeroAPIException: If the API returns an error
+        """
+        auth_token = await self._auth_api.get_auth_token()
+        if not auth_token:
+            raise EeroAuthenticationException("Not authenticated")
+
+        _LOGGER.debug(
+            "%s upstream IPv6 for network %s",
+            "Enabling" if enabled else "Disabling",
+            network_id,
+        )
+
+        url = sub_resource_url(
+            network_id, "networks/{id}/settings", link="settings", parent=as_envelope(parent)
+        )
+        warn_uncharacterised_write(
+            _LOGGER,
+            "set IPv6 upstream for network "
+            "-- may reboot every eero, like the confirmed DNS write path",
+        )
+        return await self.put(
+            url,
+            auth_token=auth_token,
+            json={"ipv6_upstream": enabled},
+        )
+
     async def configure_security(
         self,
         network_id: str,
@@ -307,6 +368,9 @@ class SecurityAPI(AuthenticatedAPI):
         parent: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Configure multiple security settings at once - returns raw Eero API response.
+
+        ``ipv6`` writes both ``ipv6_upstream`` and ``ipv6_downstream``; use
+        `set_ipv6_upstream` to change the upstream flag alone.
 
         .. warning::
             This is a settings-class write. Its side effects have not been

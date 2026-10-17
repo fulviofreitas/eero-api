@@ -72,8 +72,10 @@ class ThreadAPI(AuthenticatedAPI):
     ) -> Dict[str, Any]:
         """Enable or disable Thread - returns raw Eero API response.
 
-        Issues a JSON PUT (``{"enabled": bool}``) to the literal
-        ``networks/{id}/thread`` path.
+        Alias of ``update_thread(thread_enable=...)``: issues a JSON PUT
+        (``{"thread_enable": bool}``) to the literal ``networks/{id}/thread``
+        path. The ``enabled`` key this method used to send is not in the
+        observed spec.
 
         .. warning::
             This write has not been confirmed against a live network. Follow
@@ -94,13 +96,7 @@ class ThreadAPI(AuthenticatedAPI):
             EeroAuthenticationException: If not authenticated
             EeroAPIException: If the API returns an error
         """
-        auth_token = await self._auth_api.get_auth_token()
-        if not auth_token:
-            raise EeroAuthenticationException("Not authenticated")
-
-        url = resource_url(network_id, "networks/{id}/thread")
-        warn_uncharacterised_write(_LOGGER, "set thread enabled for network")
-        return await self.put(url, auth_token=auth_token, json={"enabled": enabled})
+        return await self.update_thread(network_id, thread_enable=enabled, parent=parent)
 
     async def update_thread(
         self,
