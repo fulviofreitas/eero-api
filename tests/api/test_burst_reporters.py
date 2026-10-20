@@ -123,13 +123,26 @@ class TestBurstReportersAPICreateReporter:
         assert result == envelope
 
     @pytest.mark.asyncio
-    async def test_warns_uncharacterised_write(self, burst_api, mock_session, ok_response, caplog):
-        """Test the uncharacterised-write warning fires with the live-usage wording."""
+    async def test_does_not_warn_as_uncharacterised(
+        self, burst_api, mock_session, ok_response, caplog
+    ):
+        """Test the live-verified write (2026-10-20) no longer logs the uncharacterised warning."""
         with caplog.at_level(logging.WARNING):
             await burst_api.create_burst_reporter("network_123")
 
+        assert not any("not been fully characterised" in m for m in caplog.messages)
+
+    @pytest.mark.asyncio
+    async def test_deprecated_body_still_warns_as_uncharacterised(
+        self, burst_api, mock_session, ok_response, caplog
+    ):
+        """Test a non-empty reporter_data body keeps the warning: only the "" body was verified."""
+        with caplog.at_level(logging.WARNING), pytest.warns(DeprecationWarning):
+            await burst_api.create_burst_reporter("network_123", {"type": "burst"})
+
         assert any(
-            "request live-usage burst for network" in m and "not been fully characterised" in m
+            "request live-usage burst with a deprecated body for network" in m
+            and "not been fully characterised" in m
             for m in caplog.messages
         )
         assert not any("network_123" in m for m in caplog.messages if "characterised" in m)

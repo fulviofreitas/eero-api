@@ -285,7 +285,7 @@ def _total(devices: list[dict[str, Any]], key: str) -> Optional[float]:
 async def main() -> None:
     async with EeroClient() as client:
         try:
-            burst = await client.create_burst_reporter()   # POST ""; unverified write, logs a warning
+            burst = await client.create_burst_reporter()   # POST ""; live-verified write (2026-10-20)
         except EeroException as err:
             print(f"Burst request failed: {err}")
             return
@@ -308,8 +308,8 @@ A few things to keep in mind:
 
 - **One burst per minute per network.** Do not call `create_burst_reporter` in a tight loop; poll
   no faster than once a minute.
-- **The write is unverified.** It does not run a speed test and changes no setting, but it is an
-  uncharacterised write that logs the usual warning. Never retry it in a loop.
+- **The write is live-verified (2026-10-20).** It does not run a speed test and changes no
+  setting; usage refreshed within 12 seconds and no node rebooted. Still, never retry it in a loop.
 - **Unknown is not zero.** A connected device with a missing, non-numeric, negative or non-finite
   `usage` value makes the total "unknown" rather than being counted as 0; disconnected devices are
   skipped.

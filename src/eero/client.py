@@ -1555,9 +1555,12 @@ class EeroClient:
         the 60 s cache TTL should still pass ``refresh_cache=True`` on the
         follow-up :meth:`get_devices`.
 
-        .. warning::
-            This write has not been confirmed against a live network: its
-            side effects are unverified. Never retry it in a loop.
+        .. note::
+            Live-verified 2026-10-20: the usage values refreshed within 12
+            seconds and had largely decayed again by 30 seconds, no WAN-level
+            usage field appeared on the network envelope, and no node
+            rebooted. Read the device list about 12 seconds after the POST,
+            not later. Never retry it in a loop.
 
         Args:
             network_id: ID of the network (uses preferred if None)

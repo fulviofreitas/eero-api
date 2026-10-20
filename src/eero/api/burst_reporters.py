@@ -53,9 +53,17 @@ class BurstReportersAPI(AuthenticatedAPI):
         not change any setting. At most one burst may be requested per
         minute per network.
 
-        .. warning::
-            This write has not been confirmed against a live network: its
-            side effects are unverified. Never retry it in a loop.
+        .. note::
+            Live-verified 2026-10-20: one POST returned 200 with
+            ``data.next_burst``; 12 seconds later 103 of 116 connected
+            devices carried non-zero ``usage`` values (all were zero before),
+            the values had largely decayed again by 30 seconds, no WAN-level
+            usage field appeared on the network envelope, and no node's
+            reboot marker moved in the following five minutes. Read the
+            device list about 12 seconds after the POST, not later. Never
+            retry it in a loop. The check covered the ``""`` body only: a
+            deprecated non-empty ``reporter_data`` body remains
+            uncharacterised and still logs the warning.
 
         Args:
             network_id: A bare network ID, API-returned path, or absolute URL.
@@ -93,9 +101,11 @@ class BurstReportersAPI(AuthenticatedAPI):
             link="burst_reporters",
             parent=as_envelope(parent),
         )
-        warn_uncharacterised_write(_LOGGER, "request live-usage burst for network")
         _LOGGER.debug("Requesting live-usage burst for network %s", network_id)
         if reporter_data:
+            warn_uncharacterised_write(
+                _LOGGER, "request live-usage burst with a deprecated body for network"
+            )
             return await self.post(url, auth_token=auth_token, json=reporter_data)
         return await self.post(
             url, auth_token=auth_token, encoding=RequestEncoding.EMPTY_JSON_STRING

@@ -115,6 +115,11 @@ _VERIFIED_WRITE_ALLOWLIST = {
     # returns 202 with data: null, and a new result appears in
     # get_speed_tests about a minute later.
     ("NetworksAPI", "run_speed_test"),
+    # burst_reporters.py: create_burst_reporter was live-verified on
+    # 2026-10-20: one POST of the "" body returned 200 with data.next_burst,
+    # per-device usage refreshed within 12 s (all zero before), and no node's
+    # reboot marker moved in the following five minutes.
+    ("BurstReportersAPI", "create_burst_reporter"),
 }
 
 # Per-(method name, parameter name) placeholder overrides for parameters

@@ -185,7 +185,8 @@ Read this before automating any write.
    `clear_guest_password`. **Every other write logs it**, including the DNS writes (their
    field paths are confirmed, but each one reboots the mesh, so the warning stays), the
    security toggles, `reboot_network`, the profile writes, the reservation and forward CRUD,
-   `create_burst_reporter`, and `request_support`. Absence of the warning is not a claim that
+   and `request_support`; `create_burst_reporter` was live-verified on 2026-10-20 and no longer
+   logs it. Absence of the warning is not a claim that
    the write has been verified — the per-method status column in the
    [API Reference](API-Reference) is.
 3. **Settings-class writes may reboot the whole mesh.** A DNS write is confirmed to restart
@@ -931,8 +932,10 @@ integration.
 
 Per-device `usage.down_mbps` / `usage.up_mbps` are zero or stale until a burst is requested. A burst
 POSTs `""` to the network's `burst_reporters` link; about 12 seconds later the device list carries
-fresh values. It does not run a speed test and changes no setting, but it is an unverified write
-and logs the warning. Request at most **one burst per minute per network**.
+fresh values. It does not run a speed test and changes no setting. Live-verified 2026-10-20: usage
+refreshed within 12 seconds and had largely decayed again by 30 seconds, no WAN-level field appeared
+on the network envelope, and no node rebooted, so read the device list about 12 seconds after the
+POST. Request at most **one burst per minute per network**.
 
 ```python
 import asyncio
