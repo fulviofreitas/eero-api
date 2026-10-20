@@ -3451,17 +3451,15 @@ class TestBurstReporterWrapper:
         assert result == fresh
         wrapper_client._api.devices.get_devices.assert_awaited_once()
 
-    async def test_uncharacterised_warning_propagates(
-        self, real_domain_client, mock_session, caplog
-    ):
-        """The real domain method's uncharacterised-write warning is still logged."""
+    async def test_no_uncharacterised_warning(self, real_domain_client, mock_session, caplog):
+        """The live-verified (2026-10-20) domain method logs no uncharacterised warning."""
         mock_session.request.return_value = create_mock_response(200, _DOMAIN_ENVELOPE)
 
         with caplog.at_level(logging.WARNING):
             result = await real_domain_client.create_burst_reporter()
 
         assert result == _DOMAIN_ENVELOPE
-        assert any("not been fully characterised" in m for m in caplog.messages)
+        assert not any("not been fully characterised" in m for m in caplog.messages)
         mock_session.request.assert_called_once()
         assert mock_session.request.call_args.args[1].endswith(
             "/2.2/networks/network_123/burst_reporters"
