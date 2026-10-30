@@ -34,6 +34,7 @@
 - [ ] My changes generate no new warnings
 - [ ] I have added tests that prove my fix/feature works
 - [ ] New and existing tests pass locally
+- [ ] All commits are signed off (`git commit -s`) per the [Developer Certificate of Origin](https://developercertificate.org/)
 
 ## 📝 Commit Message
 

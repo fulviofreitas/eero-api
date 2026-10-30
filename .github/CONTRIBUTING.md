@@ -8,6 +8,7 @@ Thank you for your interest in contributing to Eero API! This document provides 
 - [Getting Started](#-getting-started)
 - [Development Workflow](#-development-workflow)
 - [Commit Messages](#-commit-messages)
+- [Sign Your Commits](#-sign-your-commits)
 - [Pull Requests](#-pull-requests)
 - [Release Process](#-release-process)
 
@@ -161,6 +162,25 @@ uv sync --extra dev
 
 # Make a commit interactively
 uv run cz commit
+```
+
+## 🔏 Sign Your Commits
+
+Every commit must carry a `Signed-off-by:` line certifying the [Developer Certificate of Origin](https://developercertificate.org/). The **DCO** check blocks any pull request that contains an unsigned commit.
+
+Sign off as you commit by adding `-s`:
+
+```bash
+git commit -s -m "feat: add network diagnostics endpoint"
+```
+
+This appends `Signed-off-by: Your Name <you@example.com>`, using your `user.name` and `user.email` from git config.
+
+**Forgot to sign off?** Add the line to the last `N` commits, then force-push your branch:
+
+```bash
+git rebase --signoff HEAD~N
+git push --force-with-lease
 ```
 
 ## 🔀 Pull Requests
