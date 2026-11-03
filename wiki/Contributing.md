@@ -141,16 +141,6 @@ The wiki is **generated from the repository**, not edited on GitHub. Source live
 
 ---
 
-## 🤖 Automation
-
-Two AI-driven workflows run on issue events:
-
-- **Issue triage** labels new issues and posts an acknowledgement.
-- **Draft-fix** opens a draft PR for issues labelled `try-fix`, runs lint and tests, and links
-  the issue. Every draft PR is reviewed by a maintainer before merge.
-
----
-
 ## 🔗 Related Pages
 
 - [Home](Home) — Overview and quick start
