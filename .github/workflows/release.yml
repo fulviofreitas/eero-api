@@ -11,7 +11,9 @@
 name: 🚀 Release
 
 on:
-  workflow_run:
+  # Reviewed: the release job only runs for push-event CI runs from this
+  # repository (see its `if:`), so fork PRs can never reach the secrets.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["🧪 CI Pipeline"]
     types: [completed]
     branches: [master]
@@ -30,10 +32,10 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+# Least privilege: no default GITHUB_TOKEN scopes; each job opts in.
+# semantic-release pushes, tags and comments with the scoped App token, so
+# the GITHUB_TOKEN itself only ever needs read access.
+permissions: {}
   # Note: id-token: write is intentionally NOT set at workflow level.
   # It is granted only to the publish-testpypi and publish-pypi jobs, which
   # are bound to GitHub Environments (testpypi/pypi) with branch protection.
@@ -49,9 +51,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    permissions:
+      contents: read
+
+    # workflow_run `branches:` matches the triggering run's head branch NAME,
+    # which a fork PR can spoof; also require a push run from this repo.
     if: |
       (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
       !contains(github.event.workflow_run.head_commit.message, '[skip ci]') &&
       !contains(github.event.workflow_run.head_commit.message, 'chore(release)'))
 
@@ -66,6 +75,11 @@ jobs:
         with:
           client-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          # semantic-release: push release commit + tag, create the GitHub
+          # release (contents), comment on/label released issues and PRs.
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
 
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -216,6 +230,9 @@ jobs:
         repo:
           - eero-prometheus-exporter
           - eeroctl
+
+    permissions:
+      contents: read
 
     steps:
       - name: 📥 Checkout repository

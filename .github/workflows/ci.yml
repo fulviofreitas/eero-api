@@ -23,10 +23,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# Least privilege: read-only by default; only the Semgrep job (SARIF upload
+# to code scanning) gets security-events: write.
 permissions:
   contents: read
-  security-events: write
-  pull-requests: write
 
 env:
   PYTHON_VERSION: "3.12"
@@ -144,6 +144,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: lint
+    permissions:
+      contents: read
+      security-events: write # security-semgrep uploads SARIF
 
     steps:
       - name: 📥 Checkout code
