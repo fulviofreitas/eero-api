@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -76,7 +76,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -98,7 +98,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
         uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
@@ -123,7 +123,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
         uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
@@ -147,7 +147,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -179,7 +179,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
         uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@eee7f1c54c62d09ca5834e113ac6f8fd31431f57 # master @ 2026-10-10
