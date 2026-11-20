@@ -2,7 +2,7 @@
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
 
   // Base configuration
-  extends: ["config:recommended", ":semanticCommits"],
+  extends: ["config:recommended", ":semanticCommits", "helpers:pinGitHubActionDigests"],
 
   // Timezone for scheduling (used for prCreation hours if needed)
   timezone: "America/Los_Angeles",
