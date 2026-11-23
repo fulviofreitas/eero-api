@@ -81,7 +81,7 @@ jobs:
           fetch-depth: 0
 
       - name: 📝 Validate commits
-        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/commitlint@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           from-sha: ${{ github.event.pull_request.base.sha }}
           to-sha: ${{ github.event.pull_request.head.sha }}
@@ -101,13 +101,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🧹 Run Python lint
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-lint@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-lint@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           src-path: "src/"
           tests-path: "tests/"
@@ -126,12 +126,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 🔍 Run type check
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-typecheck@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-typecheck@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           src-path: "src/"
           fail-on-error: "true"
@@ -155,13 +155,13 @@ jobs:
           fetch-depth: 0
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           install-dev: "false"
 
       - name: 🛡️ Run security scan
-        uses: fulviofreitas/workflow-arsenal/.github/actions/security-semgrep@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/security-semgrep@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           config: "p/python p/security-audit"
           target-path: "src/"
@@ -185,12 +185,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Setup Python
-        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/setup-python@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: 🧪 Run tests
-        uses: fulviofreitas/workflow-arsenal/.github/actions/python-test@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+        uses: fulviofreitas/workflow-arsenal/.github/actions/python-test@7fcefdc57681a54229f0ae2c846f13d47e436e19 # v1.0.0
         with:
           test-path: "tests/"
           src-path: "src/eero"
