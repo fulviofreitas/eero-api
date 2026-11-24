@@ -25,7 +25,7 @@ jobs:
     # its own GitHub App token.
     permissions:
       contents: read
-    uses: fulviofreitas/workflow-arsenal/.github/workflows/reusable-metrics.yml@2087aa01c13f842fc566101ceeb9a4a49ec2a370 # master
+    uses: fulviofreitas/workflow-arsenal/.github/workflows/reusable-metrics.yml@7fcefdc57681a54229f0ae2c846f13d47e436e19 # master
     with:
       repo: eero-api
       branch: master
